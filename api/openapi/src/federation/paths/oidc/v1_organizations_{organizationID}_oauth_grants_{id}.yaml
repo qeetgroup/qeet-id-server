@@ -1,0 +1,33 @@
+delete:
+  operationId: revokeOauthGrant
+  description: >-
+    Revokes a specific user-to-client consent grant in the organization; the action is
+    audited. The affected client must obtain consent again at its next
+    authorization request. Pairs with the grant list.
+  summary: Revoke grant
+  tags:
+    - OIDC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "204":
+      description: Grant revoked
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

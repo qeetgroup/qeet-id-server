@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -29,7 +29,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	// Nothing about this request is trusted until its redirect_uri is one the
 	// client registered: until then the error is shown here, never sent there.
 	if !h.Service.RegisteredRedirect(r.Context(), clientID, redirect) {
-		httpx.WriteError(w, r, errs.ErrOIDCRedirectURINotRegistered)
+		httpx.WriteError(w, r, ErrRedirectURINotRegistered)
 		return
 	}
 	if err := checkAuthorizeRequest(q); err != nil {
@@ -46,7 +46,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("login_required", "no active sign-in"))
 		return
 	case !ok:
-		auth.SetSignInClientCookie(w, clientID, h.CookieSecure)
+		authentication.SetSignInClientCookie(w, clientID, h.CookieSecure)
 		http.Redirect(w, r, h.LoginBaseURL+"/sign-in?return_to="+url.QueryEscape(h.currentURL(r)), http.StatusFound)
 		return
 	case signInRequired(q, loginAfter, signedInAt, now) && silent:
@@ -58,49 +58,10 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The application's organisation may require a second factor this sign-in
-	// didn't meet. The hosted sign-in asks for the requirement of the
-	// application it serves, so the browser signs in again for this request,
-	// once; a fresh sign-in that still hasn't met one is refused.
-	switch err := h.factorShortfall(r.Context(), loginSessionID, userID, clientID); {
-	case err == nil:
-	case !isFactorShortfall(err):
-		h.authorizeError(w, r, clientID, redirect, state, err)
-		return
-	case silent:
-		h.authorizeError(w, r, clientID, redirect, state, oauthErr("interaction_required", "the organisation requires a second factor"))
-		return
-	case !signedInForRequest(loginAfter, signedInAt):
-		h.reauth(w, r, now)
-		return
-	default:
-		h.authorizeError(w, r, clientID, redirect, state, oauthErr("access_denied", "the organisation requires a second factor"))
+	if h.factorsAnswered(w, r, loginSessionID, userID, clientID, redirect, state, silent, loginAfter, signedInAt, now) {
 		return
 	}
-
-	has, err := h.Service.HasConsent(r.Context(), userID, clientID, scopes)
-	if err != nil {
-		h.authorizeError(w, r, clientID, redirect, state, err)
-		return
-	}
-	if !has && silent {
-		h.authorizeError(w, r, clientID, redirect, state, oauthErr("consent_required", "consent is required"))
-		return
-	}
-	if !has || slices.Contains(prompts(q), "consent") {
-		// Hand off to the hosted consent screen with only the id of the request
-		// stored here; the decision acts on the stored values, not on anything
-		// the browser sends back.
-		id, err := h.Service.StartConsentRequest(r.Context(), loginSessionID, userID, ConsentRequest{
-			ClientID: clientID, RedirectURI: redirect, Scopes: scopes, State: state,
-			Nonce: q.Get("nonce"), CodeChallenge: q.Get("code_challenge"), CodeChallengeMethod: q.Get("code_challenge_method"),
-			Resource: q.Get("resource"),
-		})
-		if err != nil {
-			h.authorizeError(w, r, clientID, redirect, state, err)
-			return
-		}
-		http.Redirect(w, r, h.LoginBaseURL+"/consent?request_id="+url.QueryEscape(id.String()), http.StatusFound)
+	if h.consentAnswered(w, r, q, loginSessionID, userID, clientID, redirect, state, scopes, silent) {
 		return
 	}
 
@@ -114,8 +75,69 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// RFC 9207: identify the issuer in the authorization response.
-	auth.ClearSignInClientCookie(w, r, h.CookieSecure)
+	authentication.ClearSignInClientCookie(w, r, h.CookieSecure)
 	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound) // #nosec G710 -- redirect_uri matched against the registered list (a loopback port aside)
+}
+
+// factorsAnswered answers the authorization request when the application's organization requires a
+// second factor this sign-in didn't meet, and reports whether it did. The hosted sign-in asks for the
+// requirement of the application it serves, so the browser signs in again, once; a fresh sign-in
+// that still hasn't met it is refused.
+func (h *Handler) factorsAnswered(w http.ResponseWriter, r *http.Request, loginSessionID, userID uuid.UUID, clientID, redirect, state string, silent bool, loginAfter, signedInAt, now time.Time) bool {
+	switch err := h.factorShortfall(r.Context(), loginSessionID, userID, clientID); {
+	case err == nil:
+		return false
+	case !isFactorShortfall(err):
+		h.authorizeError(w, r, clientID, redirect, state, err)
+	case silent:
+		h.authorizeError(w, r, clientID, redirect, state, oauthErr("interaction_required", "the organization requires a second factor"))
+	case !signedInForRequest(loginAfter, signedInAt):
+		h.reauth(w, r, now)
+	default:
+		h.authorizeError(w, r, clientID, redirect, state, oauthErr("access_denied", "the organization requires a second factor"))
+	}
+	return true
+}
+
+// consentAnswered answers the authorization request when the person hasn't consented to scopes, or
+// prompt asks again, and reports whether it did: it hands off to the hosted consent screen with only
+// the stored request's id, and the decision acts on the stored values, never on what the browser sends.
+func (h *Handler) consentAnswered(w http.ResponseWriter, r *http.Request, q url.Values, loginSessionID, userID uuid.UUID, clientID, redirect, state string, scopes []string, silent bool) bool {
+	has, err := h.Service.HasConsent(r.Context(), userID, clientID, scopes)
+	if err != nil {
+		h.authorizeError(w, r, clientID, redirect, state, err)
+		return true
+	}
+	if !has && silent {
+		h.authorizeError(w, r, clientID, redirect, state, oauthErr("consent_required", "consent is required"))
+		return true
+	}
+	if has && !slices.Contains(prompts(q), "consent") {
+		return false
+	}
+	id, err := h.Service.StartConsentRequest(r.Context(), loginSessionID, userID, ConsentRequest{
+		ClientID: clientID, RedirectURI: redirect, Scopes: scopes, State: state,
+		Nonce: q.Get("nonce"), CodeChallenge: q.Get("code_challenge"), CodeChallengeMethod: q.Get("code_challenge_method"),
+		Resource: q.Get("resource"),
+	})
+	if err != nil {
+		h.authorizeError(w, r, clientID, redirect, state, err)
+		return true
+	}
+	http.Redirect(w, r, h.LoginBaseURL+"/consent?request_id="+url.QueryEscape(id.String()), http.StatusFound)
+	return true
+}
+
+// authorizeByPost serves the authorization endpoint's form POST, which OpenID
+// Connect Core 3.1.2.1 requires beside GET. It goes on as the same request by
+// GET: a cross-site POST doesn't carry the sign-in cookie, so the one handler
+// that reads it runs on the GET.
+func (h *Handler) authorizeByPost(w http.ResponseWriter, r *http.Request) {
+	if err := httpx.ParseForm(r, 0); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, httpx.PublicOrigin(r, h.PublicBaseURL)+r.URL.Path+"?"+r.Form.Encode(), http.StatusSeeOther) // #nosec G710 -- this endpoint itself, on this server's origin
 }
 
 // authorizeError reports a failure before a code was issued. Per RFC 6749
@@ -131,19 +153,19 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 	switch {
 	case errors.As(err, &oe):
 		oauthCode = oe.Code
-	case errors.Is(err, errs.ErrOIDCUserTenantMismatch),
+	case errors.Is(err, ErrUserOrganizationMismatch),
 		errors.Is(err, errs.ErrAuthAddressNotAllowed):
 		oauthCode = "access_denied"
-	case errors.Is(err, errs.ErrOIDCScopeNotPermitted):
+	case errors.Is(err, ErrScopeNotPermitted):
 		oauthCode = "invalid_scope"
-	case errors.Is(err, errs.ErrOIDCGrantTypeNotAllowed):
+	case errors.Is(err, ErrGrantTypeNotAllowed):
 		oauthCode = "unauthorized_client"
-	case errors.Is(err, errs.ErrOIDCCodeChallengeRequired),
-		errors.Is(err, errs.ErrOIDCCodeChallengeInvalid),
-		errors.Is(err, errs.ErrOIDCCodeChallengeMethodUnsupported),
-		errors.Is(err, errs.ErrOIDCNonceInvalid):
+	case errors.Is(err, ErrCodeChallengeRequired),
+		errors.Is(err, ErrCodeChallengeInvalid),
+		errors.Is(err, ErrCodeChallengeMethodUnsupported),
+		errors.Is(err, ErrNonceInvalid):
 		oauthCode = "invalid_request"
-	case errors.Is(err, errs.ErrOIDCRedirectURIInvalid):
+	case errors.Is(err, ErrRedirectURIInvalid):
 		// The URI validated as registered above, so this is some other
 		// redirect-shaped rejection; do not bounce it back.
 		httpx.WriteError(w, r, err)
@@ -194,7 +216,7 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(in.RequestID)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrOIDCConsentRequestInvalid)
+		httpx.WriteError(w, r, ErrConsentRequestInvalid)
 		return
 	}
 	req, err := h.Service.TakeConsentRequest(r.Context(), id, loginSessionID)
@@ -203,12 +225,12 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.UserID != userID || !in.matches(req) {
-		httpx.WriteError(w, r, errs.ErrOIDCConsentRequestInvalid)
+		httpx.WriteError(w, r, ErrConsentRequestInvalid)
 		return
 	}
 	// The client may have dropped the address since the request was stored.
 	if !h.Service.RegisteredRedirect(r.Context(), req.ClientID, req.RedirectURI) {
-		httpx.WriteError(w, r, errs.ErrOIDCRedirectURINotRegistered)
+		httpx.WriteError(w, r, ErrRedirectURINotRegistered)
 		return
 	}
 	if !in.Approve {
@@ -250,7 +272,7 @@ func (h *Handler) consentRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(r.URL.Query().Get("request_id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrOIDCConsentRequestInvalid)
+		httpx.WriteError(w, r, ErrConsentRequestInvalid)
 		return
 	}
 	req, err := h.Service.GetConsentRequest(r.Context(), id, loginSessionID)
@@ -266,14 +288,14 @@ func (h *Handler) consentRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 // factorShortfall is what stops a code or token being issued for clientID's
-// organisation through the hosted-login session: nil, or the second factor
-// the organisation still requires (see auth.Service.LoginSessionFactorShortfall).
+// organization through the hosted-login session: nil, or the second factor
+// the organization still requires (see authentication.Service.LoginSessionFactorShortfall).
 func (h *Handler) factorShortfall(ctx context.Context, loginSessionID, userID uuid.UUID, clientID string) error {
-	tenantID, err := h.Service.ClientTenant(ctx, clientID)
+	organizationID, err := h.Service.ClientOrganization(ctx, clientID)
 	if err != nil {
 		return err
 	}
-	return h.Sessions.LoginSessionFactorShortfall(ctx, loginSessionID, userID, tenantID)
+	return h.Sessions.LoginSessionFactorShortfall(ctx, loginSessionID, userID, organizationID)
 }
 
 // isFactorShortfall reports whether err is a second factor still required.

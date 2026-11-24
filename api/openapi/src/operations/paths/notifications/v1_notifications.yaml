@@ -1,0 +1,35 @@
+get:
+  operationId: listNotifications
+  description: >-
+    Returns the authenticated user's most recent notifications together with the
+    current unread count. Results are scoped to the calling user, and no organization
+    is required. Pair with the mark-all-read operation to clear the unread
+    state.
+  summary: List notifications
+  tags:
+    - Notifications
+  security:
+    - bearerAuth: []
+  responses:
+    "200":
+      description: Notification inbox
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+              - unread_count
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/Notification.yaml
+              unread_count:
+                type: integer
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

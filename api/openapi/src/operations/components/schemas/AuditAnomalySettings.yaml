@@ -1,0 +1,20 @@
+type: object
+required:
+  - organization_id
+  - enabled
+  - score_threshold
+  - min_baseline_events
+properties:
+  organization_id:
+    type: string
+    format: uuid
+  enabled:
+    type: boolean
+  score_threshold:
+    type: number
+    description: 0..1; an event scoring at or above this is flagged.
+  min_baseline_events:
+    type: integer
+    description: >-
+      Cold-start guard — an actor needs this many historical events before
+      anything is flagged for them.

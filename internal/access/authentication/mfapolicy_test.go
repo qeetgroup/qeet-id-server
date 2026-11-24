@@ -1,10 +1,8 @@
-package auth
+package authentication
 
 import (
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
 )
@@ -12,7 +10,7 @@ import (
 func TestDecideMFARequirement(t *testing.T) {
 	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	on := now.Add(-5 * 24 * time.Hour) // the requirement was turned on five days ago
-	since := pgtype.Timestamptz{Time: on, Valid: true}
+	since := &on
 	before, after := on.Add(-time.Hour), on.Add(time.Hour)
 
 	for name, tc := range map[string]struct {
@@ -21,17 +19,17 @@ func TestDecideMFARequirement(t *testing.T) {
 		grace  bool
 	}{
 		"optional":                       {row: dbgen.MFARequirementRow{Enforcement: "optional", JoinedAt: before}},
-		"required":                       {row: dbgen.MFARequirementRow{Enforcement: "required", JoinedAt: before}, reason: mfaReasonTenantRequired},
+		"required":                       {row: dbgen.MFARequirementRow{Enforcement: "required", JoinedAt: before}, reason: mfaReasonOrganizationRequired},
 		"admin_only, an administrator":   {row: dbgen.MFARequirementRow{Enforcement: "admin_only", IsAdmin: true, JoinedAt: before}, reason: mfaReasonAdminRequired},
 		"admin_only, not one":            {row: dbgen.MFARequirementRow{Enforcement: "admin_only", JoinedAt: before}},
-		"marked, organisation optional":  {row: dbgen.MFARequirementRow{Enforcement: "optional", MfaRequired: true, JoinedAt: before}, reason: mfaReasonUserRequired},
+		"marked, organization optional":  {row: dbgen.MFARequirementRow{Enforcement: "optional", MfaRequired: true, JoinedAt: before}, reason: mfaReasonUserRequired},
 		"marked accounts get no grace":   {row: dbgen.MFARequirementRow{Enforcement: "required", MfaRequired: true, GraceDays: 30, MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonUserRequired},
-		"grace running, existing":        {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 30, MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonTenantRequired, grace: true},
+		"grace running, existing":        {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 30, MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonOrganizationRequired, grace: true},
 		"grace running, admin":           {row: dbgen.MFARequirementRow{Enforcement: "admin_only", IsAdmin: true, GraceDays: 30, MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonAdminRequired, grace: true},
-		"grace running, created after":   {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 30, MfaEnforcedSince: since, JoinedAt: after}, reason: mfaReasonTenantRequired},
-		"grace ended":                    {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 3, MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonTenantRequired},
-		"no grace period":                {row: dbgen.MFARequirementRow{Enforcement: "required", MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonTenantRequired},
-		"grace without a start recorded": {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 30, JoinedAt: before}, reason: mfaReasonTenantRequired},
+		"grace running, created after":   {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 30, MfaEnforcedSince: since, JoinedAt: after}, reason: mfaReasonOrganizationRequired},
+		"grace ended":                    {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 3, MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonOrganizationRequired},
+		"no grace period":                {row: dbgen.MFARequirementRow{Enforcement: "required", MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonOrganizationRequired},
+		"grace without a start recorded": {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 30, JoinedAt: before}, reason: mfaReasonOrganizationRequired},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := decideMFARequirement(tc.row, now)
@@ -54,7 +52,7 @@ func TestMFAGate(t *testing.T) {
 	}{
 		"nothing held or required": {gate: mfaGate{}, reason: mfaReasonEnrolled},
 		"held, not required":       {gate: mfaGate{factors: totp}, challenged: true, reason: mfaReasonEnrolled},
-		"held and required":        {gate: mfaGate{factors: totp, req: mfaRequirement{reason: mfaReasonTenantRequired}}, challenged: true, reason: mfaReasonTenantRequired},
+		"held and required":        {gate: mfaGate{factors: totp, req: mfaRequirement{reason: mfaReasonOrganizationRequired}}, challenged: true, reason: mfaReasonOrganizationRequired},
 		"required, none held":      {gate: mfaGate{req: mfaRequirement{reason: mfaReasonAdminRequired}}, challenged: true, enrollment: true, reason: mfaReasonAdminRequired},
 		"marked, none held":        {gate: mfaGate{req: mfaRequirement{reason: mfaReasonUserRequired}}, challenged: true, enrollment: true, reason: mfaReasonUserRequired},
 	} {

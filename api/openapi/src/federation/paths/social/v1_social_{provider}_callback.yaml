@@ -1,0 +1,116 @@
+get:
+  operationId: completeSocialSignIn
+  description: >-
+    Completes a social sign-in: exchanges the provider's code, then signs in the
+    account linked to that provider identity, adopts the organization's existing
+    account for a verified address, or creates an account. The callback
+    completes only in the browser that began the sign-in, which holds the
+    binding cookie from GET /v1/social/{provider}/start: the same return link
+    opened in another browser, or without the cookie, is refused and nothing is
+    issued — the browser is sent to the hosted login with error=other_browser
+    and the return_to (the console flow gets social_error=other_browser). A link
+    ceremony (POST /v1/social/{provider}/link/start) attaches nothing here: the
+    browser is sent to the account page with a one-time link_code and the
+    provider, which the account that began the link completes at POST
+    /v1/social/link/complete. Creating one is self-registration: when the
+    organization does not allow it, nothing is created, the attempt is audited
+    (social.signup_refused, naming the provider and the address), and the
+    browser is sent to the hosted login with error=registration_closed and the
+    original return_to. Nor is an account created on a domain another
+    organization has verified (error=social), or on one whose organization
+    requires single sign-on (error=sso_required and the original return_to,
+    so the hosted login can send the person to the organization's single
+    sign-on; like the password sign-in's 403 auth.sso_required it depends only
+    on the domain). The console's own sign-up (intent=signup) creates
+    no account on a domain an organization has verified either (error=social).
+    An address the organization's address rules refuse is
+    sent there with error=address_not_allowed and the return_to, and no
+    hosted-login session is opened. An existing account whose address has never
+    been verified, unless the organization's directory provisioned it (SCIM), is
+    not adopted by the provider's word (error=account_unverified; the console
+    flow gets social_error=account_unverified): it must verify the address, or
+    reset its password from the emailed link, first. An OpenID Connect
+    provider's word counts as verified only for an address on a domain the
+    organization has verified (see POST /v1/social/providers). A suspended or deleted
+    account gets error=account_inactive (the console flow gets
+    social_error=account_inactive). When the sign-in must meet a second factor
+    first (the account holds one, the organization requires one, or the sign-in
+    is risky; a remembered device may skip it as for a password sign-in), no
+    hosted-login session is opened either: the browser is sent to the hosted
+    login with the return_to, and the challenge in the URL fragment (mfa_token,
+    methods, factors — the JSON list a password sign-in's challenge carries,
+    with an email or SMS factor's id and masked destination — and
+    enrollment_required / enrollment_due_at for one to set up), to complete at
+    POST /v1/auth/session/mfa. Other failures send it there with error=social.
+    An organization's own provider signs in only an account whose home is that
+    organization, whether linked before or adopted by email. Neither it nor the
+    console's own sign-in signs in, adopts or links an account on a domain
+    whose organization requires single sign-on, except its break-glass members
+    (error=sso_required and the return_to; the console flow is sent to the
+    hosted login with error=sso_required too): only that organization's
+    identity provider signs its people in. Nor does any
+    provider adopt by email an account that owns or administers the
+    organization (social.account_administers; the browser gets error=social):
+    it keeps its own credentials and connects the provider from its account.
+  summary: Social login callback
+  tags:
+    - Social
+  parameters:
+    - name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[^/\\]+$'
+  security: []
+  responses:
+    "302":
+      description: OK
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: completeSocialSignInWithFormPost
+  summary: Social login callback using form_post
+  description: >-
+    Sign in with Apple returns the authorization response as a bounded form
+    POST. Successful callbacks redirect with a one-time Qeet login code. The
+    browser must hold the binding cookie, as for the GET callback.
+  tags:
+    - Social
+  security: []
+  parameters:
+    - name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[^/\\]+$'
+  requestBody:
+    required: true
+    content:
+      application/x-www-form-urlencoded:
+        schema:
+          type: object
+          required:
+            - state
+            - code
+          properties:
+            state:
+              type: string
+            code:
+              type: string
+  responses:
+    "302":
+      description: Redirect to the hosted login or account application
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "413":
+      description: Form body too large
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

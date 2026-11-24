@@ -1,0 +1,45 @@
+type: object
+required:
+  - accepted_at
+  - created_at
+  - email
+  - expires_at
+  - id
+  - role_id
+  - status
+  - organization_id
+properties:
+  accepted_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  created_at:
+    type: string
+    format: date-time
+  delivery:
+    $ref: ./Delivery.yaml
+  email:
+    type: string
+  expires_at:
+    type: string
+    format: date-time
+  id:
+    type: string
+    format: uuid
+  role_id:
+    type:
+      - string
+      - "null"
+    format: uuid
+  status:
+    type: string
+    enum:
+      - pending
+      - accepted
+      - declined
+      - expired
+      - revoked
+  organization_id:
+    type: string
+    format: uuid

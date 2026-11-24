@@ -1,0 +1,299 @@
+openapi: 3.1.0
+info:
+  title: Qeet ID — Operations API (audit, billing, analytics)
+  version: 0.2.0
+  description: >-
+    Observability, governance, and commercial operations for Qeet ID.
+
+
+    ## Start here
+
+
+    1. **Health** first — `GET /healthz` and `/readyz` need no authentication
+    and are the easiest successful call for a new integrator.
+
+    2. **Observe** — activity feed, usage analytics, and universal search.
+
+    3. **Investigate & govern** — audit log, compliance evidence, data
+    retention, GDPR erasure, and SIEM log sinks.
+
+    4. **Commercial** — billing, plans, and entitlements.
+
+
+    ## Authentication
+
+
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization:
+    ApiKey <key>` — legacy scheme), `scimBearer` (per-organization SCIM token),
+    `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).
+    CSRF protection applies only to cookie sessions (`ssoCookie`): requests
+    authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the
+    token endpoint (POST /v1/oauth/token) and the directory
+    sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the
+    request. Basic credentials do not bypass it. A request that fails the check
+    is refused with 403 `csrf_failed`.
+
+
+    Responses that carry a token, a sign-in session or a newly created secret
+    are sent with `Cache-Control: no-store` and `Pragma: no-cache`; no operation
+    in this API returns one.
+
+
+    Every response carries an `X-Request-Id` header naming the request; quote it
+    when reporting a problem. An error body repeats it as `error.request_id`.
+    A path with an encoded slash or backslash (`%2F`, `%5C`) is refused with
+    400 `bad_request`.
+
+
+    ## Related APIs
+
+
+    - **Authentication & Access API** — login, passkeys, MFA, authorization
+
+    - **Identity Management API** — organizations, users, groups, invitations
+
+    - **Federation API** — OIDC/OAuth provider, SAML, SCIM, LDAP, social
+
+    - **Developer API** — API keys, agents, webhooks, vaults
+
+
+    ## Contract maintenance
+
+
+    This document covers routes mounted by internal/bootstrap/router.go.
+    internal/bootstrap/openapi_coverage_test.go walks the production mount
+    helpers and fails when a mounted operation is undocumented, a documented
+    operation is stale, or API-auth security declarations disagree with runtime
+    classification.
+servers:
+  - url: https://api.id.qeet.in
+    description: Production
+  - url: http://localhost:4001
+    description: Local (make dev)
+tags:
+  - name: Health
+    description: Liveness, readiness, and Prometheus metrics.
+  - name: Activity
+    description: >-
+      Live Activity feed — a real-time SSE event stream and cursor-paginated
+      history, both sourced from the hash-chained audit log and the NATS outbox.
+      Organization-scoped; requires audit.read. The SSE stream fans out domain events
+      from the transactional outbox; reconnects replay missed events via
+      Last-Event-ID.
+  - name: Analytics
+    description: >-
+      Per-organization usage analytics, and the dashboard's overview of what is
+      set up.
+  - name: Search
+    description: >-
+      Universal organization-scoped fuzzy search across all resource types. Results
+      are RBAC-gated per type — the caller only sees resources their role allows
+      them to read.
+  - name: Audit
+    description: Append-only, hash-chained audit log query and integrity verification.
+  - name: Compliance
+    description: >-
+      SOC 2 and ISO 27001 live evidence generation from real organization system
+      state.
+  - name: Data Retention
+    description: Per-organization auto-purge of soft-deleted users.
+  - name: GDPR
+    description: Right-to-erasure purge requests.
+  - name: Log Sinks
+    description: >-
+      SIEM log-sink connectors — forward audit and event streams to external
+      SIEM destinations.
+  - name: Notifications
+    description: In-app notifications — list notifications and mark them read.
+  - name: Rate Limits
+    description: Per-organization rate-limit overrides (organization / user / API-key buckets).
+  - name: Email Templates
+    description: Per-organization transactional email template overrides.
+  - name: Qeet AI
+    description: >-
+      AI qeetai inference service — streaming conversation turns, conversation
+      management, and configuration status. Tool execution runs client-side
+      under the user's own token (RBAC/RLS/audit inherited). API key is
+      server-side only and never returned by any endpoint.
+  - name: Billing
+    description: Subscription plans, subscriptions, and invoices.
+  - name: Entitlements
+    description: >-
+      An organization's resolved plan capability set — boolean feature flags and
+      numeric limits. Read by the console to gate the UI off the same source of
+      truth the backend enforces on. Gated create endpoints return 402 with a
+      stable code (billing.plan_limit / billing.upgrade_required) when a plan
+      cap is reached.
+  - name: Sales
+    description: Contact-sales lead capture (public marketing endpoint).
+paths:
+  /healthz:
+    $ref: paths/health/healthz.yaml
+  /metrics:
+    $ref: paths/health/metrics.yaml
+  /readyz:
+    $ref: paths/health/readyz.yaml
+  /version:
+    $ref: paths/health/version.yaml
+  /v1/activity:
+    $ref: paths/activity/v1_activity.yaml
+  /v1/activity/stream:
+    $ref: paths/activity/v1_activity_stream.yaml
+  /v1/activity/summary:
+    $ref: paths/activity/v1_activity_summary.yaml
+  /v1/activity/{id}/related:
+    $ref: paths/activity/v1_activity_{id}_related.yaml
+  /v1/organizations/{organizationID}/activity/{id}:
+    $ref: paths/activity/v1_organizations_{organizationID}_activity_{id}.yaml
+  /v1/organizations/{organizationID}/service-health:
+    $ref: paths/health/v1_organizations_{organizationID}_service-health.yaml
+  /v1/organizations/{organizationID}/analytics/overview:
+    $ref: paths/analytics/v1_organizations_{organizationID}_analytics_overview.yaml
+  /v1/organizations/{organizationID}/overview:
+    $ref: paths/analytics/v1_organizations_{organizationID}_overview.yaml
+  /v1/search:
+    $ref: paths/search/v1_search.yaml
+  /v1/organizations/{organizationID}/audit:
+    $ref: paths/audit/v1_organizations_{organizationID}_audit.yaml
+  /v1/audit/verify:
+    $ref: paths/audit/v1_audit_verify.yaml
+  /v1/organizations/{organizationID}/audit/verification:
+    $ref: paths/audit/v1_organizations_{organizationID}_audit_verification.yaml
+  /v1/organizations/{organizationID}/audit/verify:
+    $ref: paths/audit/v1_organizations_{organizationID}_audit_verify.yaml
+  /v1/organizations/{organizationID}/audit/anomalies:
+    $ref: paths/audit/v1_organizations_{organizationID}_audit_anomalies.yaml
+  /v1/organizations/{organizationID}/audit/anomalies/summary:
+    $ref: paths/audit/v1_organizations_{organizationID}_audit_anomalies_summary.yaml
+  /v1/organizations/{organizationID}/audit/anomalies/{id}/resolve:
+    $ref: paths/audit/v1_organizations_{organizationID}_audit_anomalies_{id}_resolve.yaml
+  /v1/organizations/{organizationID}/audit/anomaly-settings:
+    $ref: paths/audit/v1_organizations_{organizationID}_audit_anomaly-settings.yaml
+  /v1/organizations/{organizationID}/compliance/{framework}/evidence:
+    $ref: paths/compliance/v1_organizations_{organizationID}_compliance_{framework}_evidence.yaml
+  /v1/organizations/{organizationID}/compliance/controls/owners:
+    $ref: paths/compliance/v1_organizations_{organizationID}_compliance_controls_owners.yaml
+  /v1/organizations/{organizationID}/compliance/controls/{controlID}/owner:
+    $ref: paths/compliance/v1_organizations_{organizationID}_compliance_controls_{controlID}_owner.yaml
+  /v1/organizations/{organizationID}/compliance/audits:
+    $ref: paths/compliance/v1_organizations_{organizationID}_compliance_audits.yaml
+  /v1/organizations/{organizationID}/compliance/audits/{id}:
+    $ref: paths/compliance/v1_organizations_{organizationID}_compliance_audits_{id}.yaml
+  /v1/organizations/{organizationID}/compliance/evidence/{id}:
+    $ref: paths/compliance/v1_organizations_{organizationID}_compliance_evidence_{id}.yaml
+  /v1/organizations/{organizationID}/retention:
+    $ref: paths/data-retention/v1_organizations_{organizationID}_retention.yaml
+  /v1/organizations/{organizationID}/retention/preview:
+    $ref: paths/data-retention/v1_organizations_{organizationID}_retention_preview.yaml
+  /v1/organizations/{organizationID}/retention/run:
+    $ref: paths/data-retention/v1_organizations_{organizationID}_retention_run.yaml
+  /v1/gdpr/purge:
+    $ref: paths/gdpr/v1_gdpr_purge.yaml
+  /v1/gdpr/purge/{id}:
+    $ref: paths/gdpr/v1_gdpr_purge_{id}.yaml
+  /v1/organizations/{organizationID}/gdpr/purge:
+    $ref: paths/gdpr/v1_organizations_{organizationID}_gdpr_purge.yaml
+  /v1/gdpr/export:
+    $ref: paths/gdpr/v1_gdpr_export.yaml
+  /v1/organizations/{organizationID}/gdpr/export:
+    $ref: paths/gdpr/v1_organizations_{organizationID}_gdpr_export.yaml
+  /v1/organizations/{organizationID}/gdpr/export/{id}:
+    $ref: paths/gdpr/v1_organizations_{organizationID}_gdpr_export_{id}.yaml
+  /v1/account/export:
+    $ref: paths/gdpr/v1_account_export.yaml
+  /v1/account/delete:
+    $ref: paths/gdpr/v1_account_delete.yaml
+  /v1/organizations/{organizationID}/log-sinks:
+    $ref: paths/log-sinks/v1_organizations_{organizationID}_log-sinks.yaml
+  /v1/organizations/{organizationID}/log-sinks/test:
+    $ref: paths/log-sinks/v1_organizations_{organizationID}_log-sinks_test.yaml
+  /v1/organizations/{organizationID}/log-sinks/{id}/test:
+    $ref: paths/log-sinks/v1_organizations_{organizationID}_log-sinks_{id}_test.yaml
+  /v1/organizations/{organizationID}/log-sinks/{id}:
+    $ref: paths/log-sinks/v1_organizations_{organizationID}_log-sinks_{id}.yaml
+  /v1/notifications:
+    $ref: paths/notifications/v1_notifications.yaml
+  /v1/notifications/mark-all-read:
+    $ref: paths/notifications/v1_notifications_mark-all-read.yaml
+  /v1/organizations/{organizationID}/rate-limits:
+    $ref: paths/rate-limits/v1_organizations_{organizationID}_rate-limits.yaml
+  /v1/organizations/{organizationID}/email/messages:
+    $ref: paths/email-templates/v1_organizations_{organizationID}_email_messages.yaml
+  /v1/organizations/{organizationID}/email/suppressions:
+    $ref: paths/email-templates/v1_organizations_{organizationID}_email_suppressions.yaml
+  /v1/organizations/{organizationID}/email/suppressions/{id}:
+    $ref: paths/email-templates/v1_organizations_{organizationID}_email_suppressions_{id}.yaml
+  /v1/organizations/{organizationID}/email-templates:
+    $ref: paths/email-templates/v1_organizations_{organizationID}_email-templates.yaml
+  /v1/organizations/{organizationID}/email-templates/{key}:
+    $ref: paths/email-templates/v1_organizations_{organizationID}_email-templates_{key}.yaml
+  /v1/organizations/{organizationID}/email-templates/{key}/preview:
+    $ref: paths/email-templates/v1_organizations_{organizationID}_email-templates_{key}_preview.yaml
+  /v1/organizations/{organizationID}/email-templates/{key}/test:
+    $ref: paths/email-templates/v1_organizations_{organizationID}_email-templates_{key}_test.yaml
+  /v1/organizations/{organizationID}/qeetai/usage:
+    $ref: paths/qeet-ai/v1_organizations_{organizationID}_qeetai_usage.yaml
+  /v1/organizations/{organizationID}/qeetai/settings:
+    $ref: paths/qeet-ai/v1_organizations_{organizationID}_qeetai_settings.yaml
+  /v1/qeetai/status:
+    $ref: paths/qeet-ai/v1_qeetai_status.yaml
+  /v1/qeetai/conversations:
+    $ref: paths/qeet-ai/v1_qeetai_conversations.yaml
+  /v1/qeetai/conversations/{conversationID}:
+    $ref: paths/qeet-ai/v1_qeetai_conversations_{conversationID}.yaml
+  /v1/qeetai/conversations/{conversationID}/messages:
+    $ref: paths/qeet-ai/v1_qeetai_conversations_{conversationID}_messages.yaml
+  /v1/qeetai/provider-config:
+    $ref: paths/qeet-ai/v1_qeetai_provider-config.yaml
+  /v1/qeetai/provider-config/test:
+    $ref: paths/qeet-ai/v1_qeetai_provider-config_test.yaml
+  /v1/organizations/{organizationID}/billing/checkout:
+    $ref: paths/billing/v1_organizations_{organizationID}_billing_checkout.yaml
+  /v1/webhooks/ses:
+    $ref: paths/email-templates/v1_webhooks_ses.yaml
+  /v1/billing/webhooks/{provider}:
+    $ref: paths/billing/v1_billing_webhooks_{provider}.yaml
+  /v1/billing/plans:
+    $ref: paths/billing/v1_billing_plans.yaml
+  /v1/organizations/{organizationID}/billing/invoices:
+    $ref: paths/billing/v1_organizations_{organizationID}_billing_invoices.yaml
+  /v1/organizations/{organizationID}/billing/invoices/{invoiceID}/pay:
+    $ref: paths/billing/v1_organizations_{organizationID}_billing_invoices_{invoiceID}_pay.yaml
+  /v1/organizations/{organizationID}/billing/payment-method:
+    $ref: paths/billing/v1_organizations_{organizationID}_billing_payment-method.yaml
+  /v1/organizations/{organizationID}/billing/subscription:
+    $ref: paths/billing/v1_organizations_{organizationID}_billing_subscription.yaml
+  /v1/organizations/{organizationID}/billing/subscription/cancel:
+    $ref: paths/billing/v1_organizations_{organizationID}_billing_subscription_cancel.yaml
+  /v1/signup/checkout:
+    $ref: paths/billing/v1_signup_checkout.yaml
+  /v1/billing/razorpay/verify:
+    $ref: paths/billing/v1_billing_razorpay_verify.yaml
+  /v1/billing/sandbox/checkout:
+    $ref: paths/billing/v1_billing_sandbox_checkout.yaml
+  /v1/billing/sandbox/pay:
+    $ref: paths/billing/v1_billing_sandbox_pay.yaml
+  /v1/organizations/{organizationID}/billing/profile:
+    $ref: paths/billing/v1_organizations_{organizationID}_billing_profile.yaml
+  /v1/organizations/{organizationID}/billing/trial:
+    $ref: paths/billing/v1_organizations_{organizationID}_billing_trial.yaml
+  /v1/organizations/{organizationID}/entitlements:
+    $ref: paths/entitlements/v1_organizations_{organizationID}_entitlements.yaml
+  /v1/organizations/{organizationID}/entitlements/usage:
+    $ref: paths/entitlements/v1_organizations_{organizationID}_entitlements_usage.yaml
+  /v1/sales/leads:
+    $ref: paths/sales/v1_sales_leads.yaml
+  /v1/organizations/{organizationID}/critical-events:
+    $ref: paths/audit/v1_organizations_{organizationID}_critical-events.yaml
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: ../shared/securitySchemes/bearerAuth.yaml
+    apiKeyAuth:
+      $ref: ../shared/securitySchemes/apiKeyAuth.yaml
+    scimBearer:
+      $ref: ../shared/securitySchemes/scimBearer.yaml
+    clientCredentials:
+      $ref: ../shared/securitySchemes/clientCredentials.yaml
+    ssoCookie:
+      $ref: ../shared/securitySchemes/ssoCookie.yaml

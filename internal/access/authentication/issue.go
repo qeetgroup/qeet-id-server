@@ -1,4 +1,4 @@
-package auth
+package authentication
 
 import (
 	"context"
@@ -10,59 +10,53 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
-	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// signInHook runs the login hook for userID signing in to tenantID, or to
-// their own organisation for uuid.Nil. Every sign-in runs it once its first
+// signInHook runs the login hook for userID signing in to organizationID, or to
+// their own organization for uuid.Nil. Every sign-in runs it once its first
 // factor is proven, so a refusal applies whatever the method.
-func (s *Service) signInHook(ctx context.Context, userID, tenantID uuid.UUID) (map[string]any, error) {
-	if s.loginHook == nil {
-		return nil, nil
-	}
+func (s *Service) signInHook(ctx context.Context, userID, organizationID uuid.UUID) (map[string]any, error) {
 	u, err := s.users.Get(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	if tenantID == uuid.Nil {
-		tenantID = u.TenantID
+	if organizationID == uuid.Nil {
+		organizationID = u.OrganizationID
 	}
-	return s.hookClaims(ctx, tenantID, u)
+	return s.hookClaims(ctx, organizationID, u)
 }
 
-// hookClaims runs the login hook for a sign-in of u to tenantID: the tenant's
-// policy endpoint may deny it, or supply claims to carry into the token. No
-// hook wired: no claims.
-func (s *Service) hookClaims(ctx context.Context, tenantID uuid.UUID, u *user.User) (map[string]any, error) {
-	if s.loginHook == nil {
-		return nil, nil
-	}
-	return s.loginHook.Run(ctx, tenantID, u.ID, u.Email)
+// hookClaims runs the login hook for a sign-in of u to organizationID: the organization's
+// policy endpoint may deny it, or supply claims to carry into the token.
+func (s *Service) hookClaims(ctx context.Context, organizationID uuid.UUID, u *user.User) (map[string]any, error) {
+	return s.loginHook.Run(ctx, organizationID, u.ID, u.Email)
 }
 
 // IssuePair runs the login hook, then creates a session, issues an access and
 // refresh token pair carrying the hook's claims, and records the sign-in
 // method in an audit row in the same transaction. The hook may refuse the
 // sign-in.
-func (s *Service) IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string) (*TokenPair, error) {
-	claims, err := s.signInHook(ctx, userID, tenantID)
+func (s *Service) IssuePair(ctx context.Context, userID, organizationID uuid.UUID, ip, ua, method string) (*TokenPair, error) {
+	claims, err := s.signInHook(ctx, userID, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	return s.issuePair(ctx, userID, tenantID, ip, ua, method, claims)
+	return s.issuePair(ctx, userID, organizationID, ip, ua, method, claims)
 }
 
 // IssuePairWithClaims is IssuePair for a sign-in whose login hook has already
 // run: claims are its answer, injected into the access token.
-func (s *Service) IssuePairWithClaims(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string, claims map[string]any) (*TokenPair, error) {
-	return s.issuePair(ctx, userID, tenantID, ip, ua, method, claims)
+func (s *Service) IssuePairWithClaims(ctx context.Context, userID, organizationID uuid.UUID, ip, ua, method string, claims map[string]any) (*TokenPair, error) {
+	return s.issuePair(ctx, userID, organizationID, ip, ua, method, claims)
 }
 
-func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string, claims map[string]any) (*TokenPair, error) {
-	if err := s.refuseSignIn(ctx, userID, tenantID, method, ip, ua); err != nil {
+func (s *Service) issuePair(ctx context.Context, userID, organizationID uuid.UUID, ip, ua, method string, claims map[string]any) (*TokenPair, error) {
+	if err := s.refuseSignIn(ctx, userID, organizationID, method, ip, ua); err != nil {
 		return nil, err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -70,13 +64,14 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	pair, err := s.issuePairTx(ctx, tx, userID, tenantID, ip, ua, method, claims, nil, time.Time{})
+	pair, err := s.issuePairTx(ctx, tx, userID, organizationID, ip, ua, method, claims, nil, time.Time{})
 	if err != nil {
 		return nil, s.signInFailed(ctx, tx, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	countSignIn(method)
 	return pair, nil
 }
 
@@ -84,20 +79,10 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 // refuseSignIn has passed and committed by the caller. Hook claims are stored
 // with the session so renewals issue them again; auditMeta (may be nil) joins
 // the audit record; the session ends no later than notAfter (zero: no bound).
-func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID, ip, ua, method string, claims, auditMeta map[string]any, notAfter time.Time) (*TokenPair, error) {
+func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, organizationID uuid.UUID, ip, ua, method string, claims, auditMeta map[string]any, notAfter time.Time) (*TokenPair, error) {
 	sessionID := uuid.New()
-	var ipArg any
-	if ip != "" {
-		ipArg = ip
-	}
-	// uuid.Nil = tenant-less: store NULL (the zero UUID would violate the FK).
-	var tenantArg any
-	var tenantPtr *uuid.UUID
-	if tenantID != uuid.Nil {
-		t := tenantID
-		tenantArg = t
-		tenantPtr = &t
-	}
+	// uuid.Nil = organization-less: store NULL (the zero UUID would violate the FK).
+	organizationPtr := orNil(organizationID)
 	var hookClaims []byte
 	if len(claims) > 0 {
 		raw, err := json.Marshal(claims)
@@ -106,32 +91,25 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 		}
 		hookClaims = raw
 	}
-	// The organisation's limit on one person's simultaneous sessions.
-	if tenantID != uuid.Nil {
-		if err := s.enforceSessionLimit(ctx, tx, userID, tenantID, ip, ua); err != nil {
+	// The organization's limit on one person's simultaneous sessions.
+	if organizationID != uuid.Nil {
+		if err := s.enforceSessionLimit(ctx, tx, userID, organizationID, ip, ua); err != nil {
 			return nil, err
 		}
 	}
-	// The organisation's own session bounds, else the platform's; taken now,
+	// The organization's own session bounds, else the platform's; taken now,
 	// so a later change to the policy applies to new sessions only.
 	maxAge, idle := s.sessionDefaults()
-	var sessionExp, idleExp time.Time
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, hook_claims, expires_at, idle_timeout, country,
-		                           second_factor, city)
-		SELECT $1, $2, $3, NULLIF($4,'')::inet, $5, $6,
-		       LEAST(NOW() + COALESCE(sp.session_max_age, make_interval(secs => $7::float8)),
-		             COALESCE($9::timestamptz, 'infinity'::timestamptz)),
-		       COALESCE(sp.session_idle_timeout, make_interval(secs => $8::float8)),
-		       NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, '')
-		FROM (VALUES (1)) AS one
-		LEFT JOIN tenant.security_policies sp ON sp.tenant_id = $3
-		RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)
-	`, sessionID, userID, tenantArg, ipArg, ua, hookClaims, maxAge.Seconds(), idle.Seconds(), notAfterArg(notAfter),
-		httpx.GeoCountry(ctx), secondFactorOfMethod(method), httpx.GeoCity(ctx)).Scan(&sessionExp, &idleExp); err != nil {
+	bounds, err := s.q.WithTx(tx).InsertSession(ctx, dbgen.InsertSessionParams{
+		ID: sessionID, UserID: userID, OrganizationID: organizationPtr, Ip: ip, UserAgent: &ua, HookClaims: hookClaims,
+		MaxAgeS: maxAge.Seconds(), IdleS: idle.Seconds(), NotAfter: postgres.NullIfZero(notAfter),
+		Country: httpx.GeoCountry(ctx), SecondFactor: secondFactorOfMethod(method), City: httpx.GeoCity(ctx),
+	})
+	if err != nil {
 		return nil, err
 	}
-	access, exp, err := s.tokens.IssueSessionAccess(userID, tenantID, sessionID, claims, sessionExp)
+	sessionExp, idleExp := bounds.ExpiresAt, bounds.IdleExpiresAt
+	access, exp, err := s.tokens.IssueSessionAccess(userID, organizationID, sessionID, claims, sessionExp)
 	if err != nil {
 		return nil, err
 	}
@@ -153,10 +131,10 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 		}
 		auditMeta["second_factor"] = factor
 	}
-	if err := audit.Record(ctx, tx, signInEvent(userID, tenantID, "session", sessionID, ip, ua, method, auditMeta)); err != nil {
+	if err := audit.Record(ctx, tx, signInEvent(userID, organizationID, "session", sessionID, ip, ua, method, auditMeta)); err != nil {
 		return nil, err
 	}
-	if err := user.RecordActive(ctx, tx, tenantID, userID); err != nil {
+	if err := user.RecordActive(ctx, tx, organizationID, userID); err != nil {
 		return nil, err
 	}
 	return &TokenPair{
@@ -168,15 +146,15 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 		IdleExpiresAt:    idleExp,
 		SessionID:        sessionID,
 		UserID:           userID,
-		TenantID:         tenantPtr,
+		OrganizationID:   organizationPtr,
 	}, nil
 }
 
 // signInEvent is the auth.login_succeeded record of a sign-in by method to
-// tenantID (uuid.Nil: none) that opened the session resourceType/sessionID.
+// organizationID (uuid.Nil: none) that opened the session resourceType/sessionID.
 // Every sign-in writes one, and the dashboard counts them; extra joins its
 // metadata.
-func signInEvent(userID, tenantID uuid.UUID, resourceType string, sessionID uuid.UUID, ip, ua, method string, extra map[string]any) audit.Event {
+func signInEvent(userID, organizationID uuid.UUID, resourceType string, sessionID uuid.UUID, ip, ua, method string, extra map[string]any) audit.Event {
 	if method == "" {
 		method = "unknown"
 	}
@@ -184,29 +162,7 @@ func signInEvent(userID, tenantID uuid.UUID, resourceType string, sessionID uuid
 	for k, v := range extra {
 		meta[k] = v
 	}
-	var tenantPtr *uuid.UUID
-	if tenantID != uuid.Nil {
-		tenantPtr = &tenantID
-	}
-	return audit.Event{
-		TenantID:     tenantPtr,
-		ActorUserID:  &userID,
-		ActorType:    "user",
-		Action:       "auth.login_succeeded",
-		ResourceType: resourceType,
-		ResourceID:   &sessionID,
-		IP:           ip,
-		UserAgent:    ua,
-		Metadata:     meta,
-	}
-}
-
-// notAfterArg is a session's latest end for the insert: NULL for none.
-func notAfterArg(t time.Time) any {
-	if t.IsZero() {
-		return nil
-	}
-	return t
+	return asUser(userID, ip, ua).EventIn(orNil(organizationID), "auth.login_succeeded", resourceType, sessionID, meta)
 }
 
 // refreshExpiry is when a refresh token issued now expires: its usual

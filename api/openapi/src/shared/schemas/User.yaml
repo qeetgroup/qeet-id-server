@@ -1,0 +1,149 @@
+type: object
+required:
+  - id
+  - organization_id
+  - email
+  - email_verified_at
+  - phone
+  - phone_verified_at
+  - display_name
+  - avatar_url
+  - status
+  - metadata
+  - created_at
+  - updated_at
+properties:
+  id:
+    type: string
+    format: uuid
+  organization_id:
+    type: string
+    format: uuid
+  email:
+    type: string
+    format: email
+  email_verified_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  phone:
+    type:
+      - string
+      - "null"
+  phone_verified_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  display_name:
+    type:
+      - string
+      - "null"
+  avatar_url:
+    type:
+      - string
+      - "null"
+    description: The person's picture as a data:image/ URL, or null for none.
+  status:
+    type: string
+    description: >-
+      deleted only for someone since deleted, on a members list that asked to
+      include them (include_deleted).
+    enum:
+      - active
+      - invited
+      - suspended
+      - deleted
+  metadata:
+    type:
+      - object
+      - "null"
+    additionalProperties: true
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time
+  roles:
+    type: array
+    items:
+      type: string
+    description: >-
+      Role names in the organization reading the user, on the list and GET
+      /v1/users/{id}.
+  assigned_roles:
+    type: array
+    description: The same roles with their IDs.
+    items:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+  mfa_enabled:
+    type: boolean
+    description: >-
+      True if the user has a confirmed TOTP, a verified OTP factor, or a push
+      device; on the list and GET /v1/users/{id}.
+  groups_count:
+    type: integer
+    description: >-
+      Number of groups the user belongs to in this organization; on the list and GET
+      /v1/users/{id}.
+  last_seen_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+    description: >-
+      Their most recent session activity or sign-in in this organization, or null; on
+      the list and GET /v1/users/{id}.
+  last_seen_ip:
+    type:
+      - string
+      - "null"
+    description: The address of that session or sign-in, or null.
+  home_organization_name:
+    type:
+      - string
+      - "null"
+    description: The name of the organization that manages the account (organization_id).
+  deleted_at:
+    type: string
+    format: date-time
+    description: >-
+      When someone since deleted was, on a members list that asked to include
+      them (include_deleted); absent for everyone else.
+  suspension:
+    type:
+      - object
+      - "null"
+    description: >-
+      On GET /v1/users/{id}, for a suspended person whose home is this organization;
+      absent otherwise.
+    properties:
+      reason:
+        type: string
+      source:
+        type: string
+      suspended_at:
+        type:
+          - string
+          - "null"
+        format: date-time
+      suspended_by:
+        type:
+          - string
+          - "null"
+        format: uuid
+        description: >-
+          The person who last suspended them by hand; null for a suspension by
+          policy or provisioning.
+      suspended_by_email:
+        type:
+          - string
+          - "null"

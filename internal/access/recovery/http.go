@@ -10,16 +10,17 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// tokenIssuer is the part of auth.Service this handler needs. A consumed magic
+// tokenIssuer is the part of authentication.Service this handler needs. A consumed magic
 // link signs in through the same second-factor decision as a password.
 type tokenIssuer interface {
-	BeginMagicLinkSignIn(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*auth.LoginResult, error)
-	BeginMagicLinkSession(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, trustedToken, country string) (*auth.LoginSessionResult, error)
+	BeginMagicLinkSignIn(ctx context.Context, userID, organizationID uuid.UUID, ip, ua string) (*authentication.LoginResult, error)
+	BeginMagicLinkSession(ctx context.Context, userID, organizationID uuid.UUID, ip, ua, trustedToken, country string) (*authentication.LoginSessionResult, error)
 }
 
 // Handler serves the password-reset and magic-link routes. DevMode, for local
@@ -44,15 +45,15 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/magic-link/resend", h.magicResend)
 }
 
-// forgotInput is the forgot-password body. TenantID is accepted, because hosted
+// forgotInput is the forgot-password body. OrganizationID is accepted, because hosted
 // login and the React SDK send it, but unused: email is globally unique. App
 // "hosted_login" sends the link to hosted login's reset page, continuing at
 // ReturnTo if authorizeReturnTo keeps it.
 type forgotInput struct {
-	Email    string `json:"email"`
-	TenantID string `json:"tenant_id,omitempty"`
-	App      string `json:"app,omitempty"`
-	ReturnTo string `json:"return_to,omitempty"`
+	Email          string `json:"email"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	App            string `json:"app,omitempty"`
+	ReturnTo       string `json:"return_to,omitempty"`
 }
 
 // authorizeReturnTo returns raw if it is this service's own OAuth authorize
@@ -80,7 +81,7 @@ func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
 	raw, err := h.Service.StartPasswordReset(r.Context(), in.Email, ResetOrigin{
 		App:      in.App,
 		ReturnTo: h.authorizeReturnTo(r, in.ReturnTo),
-		Audit:    AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)},
+		Actor:    audit.ActorOf(r),
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -109,8 +110,7 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ac := AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if err := h.Service.ConfirmPasswordReset(r.Context(), in.Token, in.NewPassword, ac); err != nil {
+	if err := h.Service.ConfirmPasswordReset(r.Context(), in.Token, in.NewPassword, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -119,14 +119,14 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// magicStartInput is the magic-link request body. TenantID is the organisation
+// magicStartInput is the magic-link request body. OrganizationID is the organization
 // whose sign-in page asks, omitted from the console's. App "hosted_login" opens
 // the link in hosted login, continuing at ReturnTo if authorizeReturnTo keeps it.
 type magicStartInput struct {
-	TenantID uuid.UUID `json:"tenant_id"`
-	Email    string    `json:"email"`
-	App      string    `json:"app,omitempty"`
-	ReturnTo string    `json:"return_to,omitempty"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Email          string    `json:"email"`
+	App            string    `json:"app,omitempty"`
+	ReturnTo       string    `json:"return_to,omitempty"`
 }
 
 // requestFloor is how long a forgot-password or magic-link request takes at
@@ -141,12 +141,11 @@ func (h *Handler) magicStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Service.RequestMagicLink(r.Context(), MagicLinkRequest{
-		Email:     in.Email,
-		TenantID:  in.TenantID,
-		App:       in.App,
-		ReturnTo:  h.authorizeReturnTo(r, in.ReturnTo),
-		Caller:    httpx.ClientIP(r),
-		UserAgent: r.UserAgent(),
+		Email:          in.Email,
+		OrganizationID: in.OrganizationID,
+		App:            in.App,
+		ReturnTo:       h.authorizeReturnTo(r, in.ReturnTo),
+		Actor:          audit.ActorOf(r),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -167,13 +166,12 @@ func (h *Handler) magicConsume(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ac := AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	res, err := h.Service.ConsumeMagicLink(r.Context(), in.Token, ac)
+	res, err := h.Service.ConsumeMagicLink(r.Context(), in.Token, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	signIn, err := h.AuthService.BeginMagicLinkSignIn(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent())
+	signIn, err := h.AuthService.BeginMagicLinkSignIn(r.Context(), res.UserID, res.OrganizationID, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -200,17 +198,16 @@ func (h *Handler) magicSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ac := AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	res, err := h.Service.ConsumeHostedMagicLink(r.Context(), in.Token, ac)
+	res, err := h.Service.ConsumeHostedMagicLink(r.Context(), in.Token, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	trusted := ""
-	if c, cerr := r.Cookie(auth.TrustedDeviceCookie); cerr == nil {
+	if c, cerr := r.Cookie(authentication.TrustedDeviceCookie); cerr == nil {
 		trusted = c.Value
 	}
-	session, err := h.AuthService.BeginMagicLinkSession(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent(),
+	session, err := h.AuthService.BeginMagicLinkSession(r.Context(), res.UserID, res.OrganizationID, httpx.ClientIP(r), r.UserAgent(),
 		trusted, httpx.GeoCountry(r.Context()))
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -222,7 +219,7 @@ func (h *Handler) magicSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, body)
 		return
 	}
-	auth.SetLoginSessionCookie(w, session.RawCookie, h.CookieSecure)
+	authentication.SetLoginSessionCookie(w, session.RawCookie, h.CookieSecure)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": res.UserID, "return_to": res.ReturnTo})
 }
 
@@ -235,7 +232,13 @@ func (h *Handler) magicResend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.ResendMagicLink(r.Context(), in.Token, httpx.ClientIP(r)); err != nil {
+	// An empty token names no link, so it is refused like any invalid one; the neutral answer below
+	// is for a well-formed token, which can't reveal whether the link exists.
+	if strings.TrimSpace(in.Token) == "" {
+		httpx.WriteError(w, r, ErrMagicLinkInvalid)
+		return
+	}
+	if err := h.Service.ResendMagicLink(r.Context(), in.Token, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

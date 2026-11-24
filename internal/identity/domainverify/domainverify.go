@@ -1,7 +1,7 @@
-// Package domainverify lets a tenant prove it owns an email domain with a DNS
+// Package domainverify lets an organization prove it owns an email domain with a DNS
 // TXT record, checked only when an admin asks, and reports the provisioning
 // state of its custom login hostname. A verified domain with SSO on sends
-// everyone on it to the tenant's identity provider (see capture.go).
+// everyone on it to the organization's identity provider (see capture.go).
 package domainverify
 
 import (
@@ -14,22 +14,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 // dnsHostPrefix is the subdomain the TXT record lives under, so verification
-// never clobbers a tenant's apex TXT records (SPF, etc.).
+// never clobbers an organization's apex TXT records (SPF, etc.).
 const dnsHostPrefix = "_qeet-verification."
 
 // Service manages the domains. web checks a custom login hostname over HTTPS;
@@ -37,43 +35,64 @@ const dnsHostPrefix = "_qeet-verification."
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
-	resolver interface {
-		LookupTXT(ctx context.Context, name string) ([]string, error)
+	resolver Resolver
+	web      *http.Client
+	gate     entitlements.PlanGate
+	owners   OwnerChecker
+	// memberPermissions are all a member may hold without being an
+	// administrator for domain capture.
+	memberPermissions []string
+}
+
+// Deps are what the domain verification service is built from.
+type Deps struct {
+	Gate   entitlements.PlanGate // decides whether an organization's plan includes custom domains
+	Owners OwnerChecker          // decides who may name break-glass members
+	// MemberPermissions are all a member may hold without being an
+	// administrator single sign-on doesn't adopt by address (identitylink's);
+	// any other permission, and the owner role, make one.
+	MemberPermissions []string
+	// Outbound is where a check of a custom login hostname may go (nil:
+	// public addresses over https).
+	Outbound *egress.Policy
+	// Resolver is where verification looks up TXT records (nil: the system
+	// resolver).
+	Resolver Resolver
+}
+
+// NewService returns the domain verification service built from d.
+func NewService(pool *pgxpool.Pool, d Deps) (*Service, error) {
+	switch {
+	case d.Gate == nil:
+		return nil, errors.New("domainverify: the domain service needs a plan gate")
+	case d.Owners == nil:
+		return nil, errors.New("domainverify: the domain service needs an owner check")
+	case len(d.MemberPermissions) == 0:
+		return nil, errors.New("domainverify: the domain service needs the member permissions")
 	}
-	web    *http.Client
-	gate   PlanGate
-	owners OwnerChecker
-	// adminPermissions make a member an administrator for domain capture.
-	adminPermissions []string
+	var resolver Resolver = net.DefaultResolver
+	if d.Resolver != nil {
+		resolver = d.Resolver
+	}
+	return &Service{pool: pool, q: dbgen.New(pool), resolver: resolver,
+		web: loginProbeClient(egress.PublicPolicy(d.Outbound)), gate: d.Gate, owners: d.Owners,
+		memberPermissions: d.MemberPermissions}, nil
 }
-
-// NewService returns the domain verification service. Its checks of a custom
-// login hostname reach only destinations the given policy (by default public
-// addresses over https) allows.
-func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), resolver: net.DefaultResolver,
-		web: loginProbeClient(egress.PublicPolicy(policies...))}
-}
-
-// PlanGate reports whether a boolean plan feature is in the tenant's plan.
-// Satisfied by *entitlements.Service.
-type PlanGate interface {
-	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
-}
-
-// SetPlanGate sets the plan-feature gate (nil allows all features).
-func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
 // Resolver looks up the TXT records at a DNS name.
 type Resolver interface {
 	LookupTXT(ctx context.Context, name string) ([]string, error)
 }
 
-// SetResolver sets where verification looks up TXT records; by default the
-// system resolver.
-func (s *Service) SetResolver(r Resolver) { s.resolver = r }
+// WithResolver returns a copy of s that looks up TXT records with r, for a
+// tool that answers them itself.
+func (s *Service) WithResolver(r Resolver) *Service {
+	c := *s
+	c.resolver = r
+	return &c
+}
 
-// Domain is a domain a tenant has claimed, and whether it is verified.
+// Domain is a domain an organization has claimed, and whether it is verified.
 type Domain struct {
 	ID                uuid.UUID  `json:"id"`
 	Domain            string     `json:"domain"`
@@ -148,23 +167,14 @@ func newToken() (string, error) {
 	return "qeet-verify-" + hex.EncodeToString(b), nil
 }
 
-// pgtypeToTimePtr converts a pgtype.Timestamptz returned by generated code to *time.Time.
-func pgtypeToTimePtr(p pgtype.Timestamptz) *time.Time {
-	if !p.Valid {
-		return nil
-	}
-	t := p.Time
-	return &t
-}
-
 // rowToDomain builds a Domain from the columns the generated InsertDomain,
 // GetDomainForVerify and MarkDomainVerified rows share.
-func rowToDomain(id uuid.UUID, domain, token string, verifiedAt pgtype.Timestamptz, createdAt time.Time) Domain {
+func rowToDomain(id uuid.UUID, domain, token string, verifiedAt *time.Time, createdAt time.Time) Domain {
 	d := Domain{
 		ID:                id,
 		Domain:            domain,
 		VerificationToken: token,
-		VerifiedAt:        pgtypeToTimePtr(verifiedAt),
+		VerifiedAt:        verifiedAt,
 		CreatedAt:         createdAt,
 	}
 	d.fillDNS()
@@ -172,18 +182,16 @@ func rowToDomain(id uuid.UUID, domain, token string, verifiedAt pgtype.Timestamp
 	return d
 }
 
-// Add registers a domain for a tenant and returns the DNS record to publish,
+// Add registers a domain for an organization and returns the DNS record to publish,
 // recorded as actor's.
-func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string, actor audit.Actor) (*Domain, error) {
+func (s *Service) Add(ctx context.Context, organizationID uuid.UUID, raw string, actor audit.Actor) (*Domain, error) {
 	// Plan gate: custom (verified) domains are a paid feature.
-	if s.gate != nil {
-		ok, err := s.gate.FeatureAllowed(ctx, tenantID, "custom_domain")
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "custom_domain"})
-		}
+	allowed, err := s.gate.FeatureAllowed(ctx, organizationID, "custom_domain")
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "custom_domain"})
 	}
 	domain := normalizeDomain(raw)
 	if !validDomain(domain) {
@@ -199,21 +207,21 @@ func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string, actor
 	}
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).InsertDomain(ctx, dbgen.InsertDomainParams{
-		TenantID:          tenantID,
+		OrganizationID:    organizationID,
 		Domain:            domain,
 		VerificationToken: token,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "uq_tenant_domain") {
-			return nil, errs.ErrDomainVerifyExists
+		if strings.Contains(err.Error(), "uq_organization_domain") {
+			return nil, ErrExists
 		}
 		return nil, err
 	}
 	d := rowToDomain(row.ID, row.Domain, row.VerificationToken, row.VerifiedAt, row.CreatedAt)
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "domain.created", "domain", d.ID, map[string]any{"domain": d.Domain})); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "domain.created", "domain", d.ID, map[string]any{"domain": d.Domain})); err != nil {
 		return nil, err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: d.ID, Topic: "domain.events", EventType: "domain.created", Payload: map[string]any{"domain_id": d.ID, "tenant_id": tenantID, "domain": d.Domain}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: d.ID, Topic: "domain.events", EventType: "domain.created", Payload: map[string]any{"domain_id": d.ID, "organization_id": organizationID, "domain": d.Domain}}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -222,41 +230,36 @@ func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string, actor
 	return &d, nil
 }
 
-// List returns the tenant's domains with their settings and the outcome of the
-// last verification attempt. It is hand-written SQL because the generated
-// ListDomains doesn't select those columns.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Domain, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, domain, verification_token, verified_at, created_at,
-		       last_checked_at, COALESCE(last_error, ''), sso_enabled, jit_enabled
-		FROM tenant.domains
-		WHERE tenant_id = $1
-		ORDER BY domain
-	`, tenantID)
+// domainWithStatus builds a Domain from a row that also carries its switches
+// and the outcome of its last check.
+func domainWithStatus(row dbgen.ListDomainsRow) Domain {
+	d := Domain{
+		ID: row.ID, Domain: row.Domain, VerificationToken: row.VerificationToken, VerifiedAt: row.VerifiedAt,
+		CreatedAt: row.CreatedAt, LastCheckedAt: row.LastCheckedAt, LastError: row.LastError,
+		SSOEnabled: row.SsoEnabled, JITEnabled: row.JitEnabled,
+	}
+	d.fillDNS()
+	d.deriveStatus()
+	return d
+}
+
+// List returns the organization's domains with their settings and the outcome of the
+// last verification attempt.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Domain, error) {
+	rows, err := s.q.ListDomains(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]Domain, 0)
-	for rows.Next() {
-		var d Domain
-		var verifiedAt, lastChecked *time.Time
-		if err := rows.Scan(&d.ID, &d.Domain, &d.VerificationToken, &verifiedAt, &d.CreatedAt,
-			&lastChecked, &d.LastError, &d.SSOEnabled, &d.JITEnabled); err != nil {
-			return nil, err
-		}
-		d.VerifiedAt, d.LastCheckedAt = verifiedAt, lastChecked
-		d.fillDNS()
-		d.deriveStatus()
-		out = append(out, d)
+	out := make([]Domain, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domainWithStatus(row))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // UpdateSettings toggles the per-domain switches.
 func (s *Service) UpdateSettings(
-	ctx context.Context, id, tenantID uuid.UUID,
+	ctx context.Context, id, organizationID uuid.UUID,
 	sso, jit *bool, actor audit.Actor,
 ) (*Domain, error) {
 	tx, err := s.pool.Begin(ctx)
@@ -265,29 +268,18 @@ func (s *Service) UpdateSettings(
 	}
 	defer tx.Rollback(ctx)
 
-	var d Domain
-	var verifiedAt, lastChecked *time.Time
-	err = tx.QueryRow(ctx, `
-		UPDATE tenant.domains SET
-			sso_enabled = COALESCE($3, sso_enabled),
-			jit_enabled = COALESCE($4, jit_enabled)
-		WHERE id = $1 AND tenant_id = $2
-		RETURNING id, domain, verification_token, verified_at, created_at,
-		          last_checked_at, COALESCE(last_error, ''), sso_enabled, jit_enabled
-	`, id, tenantID, sso, jit).
-		Scan(&d.ID, &d.Domain, &d.VerificationToken, &verifiedAt, &d.CreatedAt,
-			&lastChecked, &d.LastError, &d.SSOEnabled, &d.JITEnabled)
+	row, err := s.q.WithTx(tx).UpdateDomainSettings(ctx, dbgen.UpdateDomainSettingsParams{
+		SsoEnabled: sso, JitEnabled: jit, ID: id, OrganizationID: organizationID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrDomainVerifyNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	d.VerifiedAt, d.LastCheckedAt = verifiedAt, lastChecked
-	d.fillDNS()
-	d.deriveStatus()
+	d := domainWithStatus(dbgen.ListDomainsRow(row))
 
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "domain.settings_updated", "domain", d.ID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "domain.settings_updated", "domain", d.ID,
 		map[string]any{"domain": d.Domain, "sso": d.SSOEnabled, "jit": d.JITEnabled})); err != nil {
 		return nil, err
 	}
@@ -299,12 +291,12 @@ func (s *Service) UpdateSettings(
 
 // Verify marks the domain verified if its DNS TXT record holds the token. A
 // failed check is recorded and returns the retryable
-// ErrDomainVerifyDNSRecordMissing; a domain another tenant has verified returns
+// ErrDNSRecordMissing; a domain another organization has verified returns
 // ErrDomainVerifyClaimedByOther.
-func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) (*Domain, error) {
-	row, err := s.q.GetDomainForVerify(ctx, dbgen.GetDomainForVerifyParams{ID: id, TenantID: tenantID})
+func (s *Service) Verify(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) (*Domain, error) {
+	row, err := s.q.GetDomainForVerify(ctx, dbgen.GetDomainForVerifyParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrDomainVerifyNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -332,12 +324,10 @@ func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID, actor audi
 		if lerr != nil {
 			reason = "DNS lookup failed"
 		}
-		if _, uerr := s.pool.Exec(ctx,
-			`UPDATE tenant.domains SET last_checked_at = NOW(), last_error = $3
-			 WHERE id = $1 AND tenant_id = $2`, id, tenantID, reason); uerr != nil {
+		if uerr := s.q.RecordDomainCheck(ctx, dbgen.RecordDomainCheckParams{LastError: &reason, ID: id, OrganizationID: organizationID}); uerr != nil {
 			return nil, uerr
 		}
-		return nil, errs.ErrDomainVerifyDNSRecordMissing
+		return nil, ErrDNSRecordMissing
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -345,12 +335,10 @@ func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID, actor audi
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx,
-		`UPDATE tenant.domains SET last_checked_at = NOW(), last_error = NULL
-		 WHERE id = $1 AND tenant_id = $2`, id, tenantID); err != nil {
+	if err := s.q.WithTx(tx).RecordDomainCheck(ctx, dbgen.RecordDomainCheckParams{ID: id, OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}
-	updated, err := s.q.WithTx(tx).MarkDomainVerified(ctx, dbgen.MarkDomainVerifiedParams{ID: id, TenantID: tenantID})
+	updated, err := s.q.WithTx(tx).MarkDomainVerified(ctx, dbgen.MarkDomainVerifiedParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_verified_domain") {
 			return nil, errs.ErrDomainVerifyClaimedByOther
@@ -358,10 +346,10 @@ func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID, actor audi
 		return nil, err
 	}
 	verified := rowToDomain(updated.ID, updated.Domain, updated.VerificationToken, updated.VerifiedAt, updated.CreatedAt)
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "domain.verified", "domain", verified.ID, map[string]any{"domain": verified.Domain})); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "domain.verified", "domain", verified.ID, map[string]any{"domain": verified.Domain})); err != nil {
 		return nil, err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: verified.ID, Topic: "domain.events", EventType: "domain.verified", Payload: map[string]any{"domain_id": verified.ID, "tenant_id": tenantID, "domain": verified.Domain}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: verified.ID, Topic: "domain.events", EventType: "domain.verified", Payload: map[string]any{"domain_id": verified.ID, "organization_id": organizationID, "domain": verified.Domain}}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -370,147 +358,25 @@ func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID, actor audi
 	return &verified, nil
 }
 
-// Remove deletes one of the tenant's domains, recorded as actor's.
-func (s *Service) Remove(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Remove deletes one of the organization's domains, recorded as actor's.
+func (s *Service) Remove(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	n, err := s.q.WithTx(tx).DeleteDomain(ctx, dbgen.DeleteDomainParams{ID: id, TenantID: tenantID})
+	n, err := s.q.WithTx(tx).DeleteDomain(ctx, dbgen.DeleteDomainParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
-		return errs.ErrDomainVerifyNotFound
+		return ErrNotFound
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "domain.deleted", "domain", id, nil)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "domain.deleted", "domain", id, nil)); err != nil {
 		return err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "domain.events", EventType: "domain.deleted", Payload: map[string]any{"domain_id": id, "tenant_id": tenantID}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "domain.events", EventType: "domain.deleted", Payload: map[string]any{"domain_id": id, "organization_id": organizationID}}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-// Handler serves the domain verification HTTP API.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers the domain verification routes on r.
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/domains", h.list)
-	r.Post("/tenants/{tenantID}/domains", h.add)
-	r.Post("/tenants/{tenantID}/domains/{id}/verify", h.verify)
-	r.Get("/tenants/{tenantID}/login-domain", h.loginDomain)
-	r.Post("/tenants/{tenantID}/login-domain/check", h.checkLoginDomain)
-	r.Patch("/tenants/{tenantID}/domains/{id}", h.updateSettings)
-	r.Delete("/tenants/{tenantID}/domains/{id}", h.remove)
-	r.Get("/tenants/{tenantID}/break-glass-members", h.listBreakGlass)
-	r.Put("/tenants/{tenantID}/break-glass-members/{userID}", h.addBreakGlass)
-	r.Delete("/tenants/{tenantID}/break-glass-members/{userID}", h.removeBreakGlass)
-}
-
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Service.List(r.Context(), tenantID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
-}
-
-type addInput struct {
-	Domain string `json:"domain"`
-}
-
-func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var in addInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	d, err := h.Service.Add(r.Context(), tenantID, in.Domain, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusCreated, d)
-}
-
-func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
-		return
-	}
-	d, err := h.Service.Verify(r.Context(), id, tenantID, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, d)
-}
-
-func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
-		return
-	}
-	if err := h.Service.Remove(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-type updateSettingsInput struct {
-	SSOEnabled *bool `json:"sso_enabled"`
-	JITEnabled *bool `json:"jit_enabled"`
-}
-
-func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
-		return
-	}
-	var in updateSettingsInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	d, err := h.Service.UpdateSettings(r.Context(), id, tenantID, in.SSOEnabled, in.JITEnabled, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, d)
 }

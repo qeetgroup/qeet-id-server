@@ -4,7 +4,10 @@ package gdpr
 
 import (
 	"net/http"
+	"os"
+	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +19,7 @@ import (
 
 // leaveTraces gives the account a row in every table erasure clears, and in
 // those kept by its address, as a person who used every feature would.
-func leaveTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
+func leaveTraces(t *testing.T, organization uuid.UUID, a dbtest.Account) {
 	t.Helper()
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	u, email := a.ID, strings.ToLower(a.Email)
@@ -26,13 +29,12 @@ func leaveTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
 		sql  string
 		args []any
 	}{
-		{`INSERT INTO auth.oidc_clients (tenant_id, client_id, name) VALUES ($1, $2, 'Payroll')`, []any{tenant, client}},
-		{`INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent) VALUES ($1, $2, $3, '203.0.113.7', 'Firefox')`, []any{session, u, tenant}},
+		{`INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, 'Payroll')`, []any{organization, client}},
+		{`INSERT INTO auth.sessions (id, user_id, organization_id, ip, user_agent) VALUES ($1, $2, $3, '203.0.113.7', 'Firefox')`, []any{session, u, organization}},
 		{`INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, name) VALUES ($1, convert_to($2, 'UTF8'), '\x00', 'Phone')`, []any{u, u.String()}},
-		{`INSERT INTO auth.passkey_challenges (user_id, challenge, kind, expires_at) VALUES ($1, '\x00', 'register', $2)`, []any{u, soon}},
 		{`INSERT INTO auth.webauthn_sessions (user_id, kind, data, expires_at) VALUES ($1, 'registration', '{}', $2)`, []any{u, soon}},
 		{`INSERT INTO auth.mfa_otp_factors (user_id, channel, destination) VALUES ($1, 'sms', '+15550100')`, []any{u}},
-		{`INSERT INTO auth.mfa_push_devices (user_id, platform, push_token, device_token) VALUES ($1, 'ios', 'push', 'device')`, []any{u}},
+		{`INSERT INTO auth.mfa_push_devices (user_id, platform, push_token_ct, push_token_nonce, push_token_hash, device_token_hash) VALUES ($1, 'ios', '\x00', '\x00', 'push', 'device')`, []any{u}},
 		{`INSERT INTO auth.mfa_push_pairings (user_id, code_hash, expires_at) VALUES ($1, $2, $3)`, []any{u, dbtest.Unique("pair"), soon}},
 		{`INSERT INTO auth.mfa_push_challenges (user_id, action) VALUES ($1, 'sign_in')`, []any{u}},
 		{`INSERT INTO auth.mfa_verifications (user_id, method, session_id) VALUES ($1, 'totp', $2)`, []any{u, session}},
@@ -41,49 +43,49 @@ func leaveTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
 		{`INSERT INTO auth.mfa_failure_streaks (user_id) VALUES ($1)`, []any{u}},
 		{`INSERT INTO auth.trusted_devices (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`, []any{u, dbtest.Unique("device"), soon}},
 		{`INSERT INTO auth.login_sessions (id, token_hash, user_id, expires_at) VALUES ($1, $2, $3, $4)`, []any{login, dbtest.Unique("login"), u, soon}},
-		{`INSERT INTO auth.login_context_history (tenant_id, user_id, device_key, country) VALUES ($1, $2, 'firefox', 'IN')`, []any{tenant, u}},
-		{`INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, expires_at) VALUES ($1, $2, $3, $4, $5)`, []any{dbtest.Unique("rt"), client, u, tenant, soon}},
+		{`INSERT INTO auth.login_context_history (organization_id, user_id, device_key, country) VALUES ($1, $2, 'firefox', 'IN')`, []any{organization, u}},
+		{`INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, organization_id, expires_at) VALUES ($1, $2, $3, $4, $5)`, []any{dbtest.Unique("rt"), client, u, organization, soon}},
 		{`INSERT INTO auth.oidc_consents (user_id, client_id, scopes) VALUES ($1, $2, '{openid}')`, []any{u, client}},
 		{`INSERT INTO auth.oidc_consent_requests (login_session_id, user_id, client_id, redirect_uri, expires_at) VALUES ($1, $2, $3, 'https://app.example.test/cb', $4)`, []any{login, u, client, soon}},
-		{`INSERT INTO auth.oidc_authorization_codes (code_hash, client_id, user_id, tenant_id, redirect_uri, scopes, expires_at) VALUES ($1, $2, $3, $4, 'https://app.example.test/cb', '{openid}', $5)`, []any{dbtest.Unique("code"), client, u, tenant, soon}},
-		{`INSERT INTO auth.oidc_device_codes (device_code_hash, user_code, client_id, tenant_id, user_id, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`, []any{dbtest.Unique("dc"), dbtest.Unique("uc"), client, tenant, u, soon}},
-		{`INSERT INTO auth.oidc_ciba_requests (auth_req_id_hash, client_id, tenant_id, user_id, expires_at) VALUES ($1, $2, $3, $4, $5)`, []any{dbtest.Unique("ciba"), client, tenant, u, soon}},
-		{`INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, expires_at) VALUES ($1, $2, $3, $4)`, []any{dbtest.Unique("social"), u, tenant, soon}},
-		{`INSERT INTO auth.saml_login_codes (code_hash, user_id, tenant_id, expires_at) VALUES ($1, $2, $3, $4)`, []any{dbtest.Unique("saml"), u, tenant, soon}},
-		{`INSERT INTO tenant.oidc_connections (id, tenant_id, name, issuer, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, $2, 'Entra', 'https://login.example.test', 'qeet', '\x00', '\x00')`, []any{oidc, tenant}},
-		{`INSERT INTO auth.oidc_connection_login_codes (code_hash, connection_id, user_id, expires_at) VALUES ($1, $2, $3, $4)`, []any{dbtest.Unique("oidc"), oidc, u, soon}},
-		{`INSERT INTO auth.credentials (tenant_id, subject, type, claims, user_id) VALUES ($1, $2, 'EmploymentCredential', '{"name": "Asha"}', $3)`, []any{tenant, email, u}},
-		{`INSERT INTO auth.platform_social_codes (code_hash, user_id, expires_at) VALUES ($1, $2, $3)`, []any{dbtest.Unique("psc"), u, soon}},
+		{`INSERT INTO auth.oidc_authorization_codes (code_hash, client_id, user_id, organization_id, redirect_uri, scopes, expires_at) VALUES ($1, $2, $3, $4, 'https://app.example.test/cb', '{openid}', $5)`, []any{dbtest.Unique("code"), client, u, organization, soon}},
+		{`INSERT INTO auth.oidc_device_codes (device_code_hash, user_code, client_id, organization_id, user_id, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`, []any{dbtest.Unique("dc"), dbtest.Unique("uc"), client, organization, u, soon}},
+		{`INSERT INTO auth.oidc_ciba_requests (auth_req_id_hash, client_id, organization_id, user_id, expires_at) VALUES ($1, $2, $3, $4, $5)`, []any{dbtest.Unique("ciba"), client, organization, u, soon}},
+		{`INSERT INTO auth.login_codes (code_hash, kind, user_id, organization_id, provider, expires_at) VALUES ($1, 'social', $2, $3, 'google', $4)`, []any{dbtest.Unique("social"), u, organization, soon}},
+		{`INSERT INTO auth.login_codes (code_hash, kind, user_id, organization_id, connection_id, expires_at) VALUES ($1, 'saml', $2, $3, gen_random_uuid(), $4)`, []any{dbtest.Unique("saml"), u, organization, soon}},
+		{`INSERT INTO organization.oidc_connections (id, organization_id, name, issuer, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, $2, 'Entra', 'https://login.example.test', 'qeet', '\x00', '\x00')`, []any{oidc, organization}},
+		{`INSERT INTO auth.login_codes (code_hash, kind, user_id, organization_id, connection_id, expires_at) VALUES ($1, 'oidc_connection', $2, $3, $4, $5)`, []any{dbtest.Unique("oidc"), u, organization, oidc, soon}},
+		{`INSERT INTO auth.credentials (organization_id, subject, type, claims, user_id) VALUES ($1, $2, 'EmploymentCredential', '{"name": "Asha"}', $3)`, []any{organization, email, u}},
+		{`INSERT INTO auth.login_codes (code_hash, kind, user_id, expires_at) VALUES ($1, 'platform_social', $2, $3)`, []any{dbtest.Unique("psc"), u, soon}},
 		{`INSERT INTO auth.platform_social_link_codes (code_hash, user_id, provider, subject, email, expires_at) VALUES ($1, $2, 'google', 'g-1', $3, $4)`, []any{dbtest.Unique("link"), u, email, soon}},
-		{`INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id) VALUES ($1, 'google', 'v', 'https://id.example.test/cb', $2, $3)`, []any{dbtest.Unique("state"), soon, u}},
+		{`INSERT INTO auth.oauth_states (state_hash, kind, provider, code_verifier, redirect_uri, expires_at, link_user_id) VALUES ($1, 'platform_social', 'google', 'v', 'https://id.example.test/cb', $2, $3)`, []any{dbtest.Unique("state"), soon, u}},
 		{`INSERT INTO auth.platform_social_identities (user_id, provider, subject, email) VALUES ($1, 'google', $2, $3)`, []any{u, dbtest.Unique("g"), email}},
-		{`INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email) VALUES ($1, $2, 'github', $3, $4)`, []any{u, tenant, dbtest.Unique("gh"), email}},
+		{`INSERT INTO account.external_identities (user_id, organization_id, provider, subject, email) VALUES ($1, $2, 'github', $3, $4)`, []any{u, organization, dbtest.Unique("gh"), email}},
 		{`INSERT INTO auth.password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`, []any{u, dbtest.Unique("reset"), soon}},
-		{`INSERT INTO auth.mfa_totp (user_id, secret) VALUES ($1, 'secret')`, []any{u}},
+		{`INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce) VALUES ($1, '\x00', '\x00')`, []any{u}},
 		{`INSERT INTO auth.mfa_recovery_codes (user_id, code_hash) VALUES ($1, 'hash')`, []any{u}},
-		{`INSERT INTO "user".email_verifications (user_id, email, code_hash, expires_at, purpose) VALUES ($1, $2, 'hash', $3, 'verify_email')`, []any{u, email, soon}},
-		{`INSERT INTO "user".phone_verifications (user_id, phone, code_hash, expires_at) VALUES ($1, '+15550100', 'hash', $2)`, []any{u, soon}},
-		{`INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash) VALUES ($1, $2, 'laptop', $3, 'hash')`, []any{tenant, u, dbtest.Unique("qk")}},
-		{`INSERT INTO auth.notifications (user_id, tenant_id, title) VALUES ($1, $2, 'Welcome')`, []any{u, tenant}},
-		{`INSERT INTO tenant.token_vault_grants (tenant_id, user_id, provider, access_token_ct, access_token_nonce) VALUES ($1, $2, 'slack', '\x00', '\x00')`, []any{tenant, u}},
-		{`INSERT INTO tenant.token_vault_connect_states (state, tenant_id, user_id, provider, expires_at) VALUES ($1, $2, $3, 'slack', $4)`, []any{dbtest.Unique("vault"), tenant, u, soon}},
-		{`INSERT INTO tenant.directory_profiles (tenant_id, user_id, connection_id, profile) VALUES ($1, $2, 'okta', '{"title": "Engineer"}')`, []any{tenant, u}},
-		{`INSERT INTO tenant.directory_alerts (id, tenant_id, user_id, name) VALUES ($1, $2, $3, 'Sync failures')`, []any{uuid.New(), tenant, u}},
-		{`INSERT INTO tenant.groups (id, tenant_id, name) VALUES ($1, $2, $3)`, []any{group, tenant, dbtest.Unique("group")}},
-		{`INSERT INTO tenant.group_members (group_id, user_id, tenant_id) VALUES ($1, $2, $3)`, []any{group, u, tenant}},
-		{`INSERT INTO tenant.saml_service_providers (id, tenant_id, name, entity_id, acs_url) VALUES ($1, $2, 'Payroll', $3, 'https://sp.example.test/acs')`, []any{sp, tenant, dbtest.Unique("https://sp.example.test/")}},
-		{`INSERT INTO tenant.saml_sp_user_assignments (tenant_id, sp_id, user_id) VALUES ($1, $2, $3)`, []any{tenant, sp, u}},
-		{`INSERT INTO tenant.saml_idp_persistent_ids (tenant_id, sp_id, user_id, name_id) VALUES ($1, $2, $3, $4)`, []any{tenant, sp, u, dbtest.Unique("pid")}},
-		{`INSERT INTO tenant.break_glass_members (tenant_id, user_id) VALUES ($1, $2)`, []any{tenant, u}},
-		{`INSERT INTO audit.actor_baselines (tenant_id, actor_user_id) VALUES ($1, $2)`, []any{tenant, u}},
-		{`INSERT INTO qeetai.conversations (tenant_id, user_id) VALUES ($1, $2)`, []any{tenant, u}},
-		{`INSERT INTO "user".export_requests (tenant_id, user_id, subject_id, status, payload, completed_at) VALUES ($1, $2, $2, 'ready', '{"profile": {}}', NOW())`, []any{tenant, u}},
+		{`INSERT INTO account.email_verifications (user_id, email, code_hash, expires_at, purpose) VALUES ($1, $2, 'hash', $3, 'verify_email')`, []any{u, email, soon}},
+		{`INSERT INTO account.phone_verifications (user_id, phone, code_hash, expires_at) VALUES ($1, '+15550100', 'hash', $2)`, []any{u, soon}},
+		{`INSERT INTO auth.api_keys (organization_id, user_id, name, prefix, key_hash) VALUES ($1, $2, 'laptop', $3, 'hash')`, []any{organization, u, dbtest.Unique("qk")}},
+		{`INSERT INTO auth.notifications (user_id, organization_id, title) VALUES ($1, $2, 'Welcome')`, []any{u, organization}},
+		{`INSERT INTO organization.token_vault_grants (organization_id, user_id, provider, access_token_ct, access_token_nonce) VALUES ($1, $2, 'slack', '\x00', '\x00')`, []any{organization, u}},
+		{`INSERT INTO organization.token_vault_connect_states (state, organization_id, user_id, provider, expires_at) VALUES ($1, $2, $3, 'slack', $4)`, []any{dbtest.Unique("vault"), organization, u, soon}},
+		{`INSERT INTO organization.directory_profiles (organization_id, user_id, connection_id, profile) VALUES ($1, $2, 'okta', '{"title": "Engineer"}')`, []any{organization, u}},
+		{`INSERT INTO organization.directory_alerts (id, organization_id, user_id, name) VALUES ($1, $2, $3, 'Sync failures')`, []any{uuid.New(), organization, u}},
+		{`INSERT INTO organization.groups (id, organization_id, name) VALUES ($1, $2, $3)`, []any{group, organization, dbtest.Unique("group")}},
+		{`INSERT INTO organization.group_members (group_id, user_id, organization_id) VALUES ($1, $2, $3)`, []any{group, u, organization}},
+		{`INSERT INTO organization.saml_service_providers (id, organization_id, name, entity_id, acs_url) VALUES ($1, $2, 'Payroll', $3, 'https://sp.example.test/acs')`, []any{sp, organization, dbtest.Unique("https://sp.example.test/")}},
+		{`INSERT INTO organization.saml_sp_user_assignments (organization_id, sp_id, user_id) VALUES ($1, $2, $3)`, []any{organization, sp, u}},
+		{`INSERT INTO organization.saml_idp_persistent_ids (organization_id, sp_id, user_id, name_id) VALUES ($1, $2, $3, $4)`, []any{organization, sp, u, dbtest.Unique("pid")}},
+		{`INSERT INTO organization.break_glass_members (organization_id, user_id) VALUES ($1, $2)`, []any{organization, u}},
+		{`INSERT INTO audit.actor_baselines (organization_id, actor_user_id) VALUES ($1, $2)`, []any{organization, u}},
+		{`INSERT INTO qeetai.conversations (organization_id, user_id) VALUES ($1, $2)`, []any{organization, u}},
+		{`INSERT INTO account.export_requests (organization_id, user_id, subject_id, status, payload, completed_at) VALUES ($1, $2, $2, 'ready', '{"profile": {}}', NOW())`, []any{organization, u}},
 		{`INSERT INTO auth.magic_links (email, token_hash, expires_at) VALUES ($1, $2, $3)`, []any{email, dbtest.Unique("magic"), soon}},
 		{`INSERT INTO auth.login_attempts (email) VALUES ($1)`, []any{email}},
 		{`INSERT INTO auth.login_attempts_by_network (email, network, failed_count, first_failed_at, last_failed_at) VALUES ($1, '203.0.113.0/24', 1, NOW(), NOW())`, []any{email}},
 		{`INSERT INTO auth.login_source_failures (network, email, last_failed_at) VALUES ('203.0.113.0/24', $1, NOW())`, []any{email}},
-		{`INSERT INTO tenant.invites (tenant_id, email, token_hash, expires_at, status) VALUES ($1, $2, $3, $4, 'accepted')`, []any{tenant, email, dbtest.Unique("invite"), soon}},
-		{`UPDATE "user".users SET avatar_url = 'https://cdn.example.test/a.png', external_id = 'okta-1', metadata = '{"team": "core"}' WHERE id = $1`, []any{u}},
+		{`INSERT INTO organization.invites (organization_id, email, token_hash, expires_at, status) VALUES ($1, $2, $3, $4, 'accepted')`, []any{organization, email, dbtest.Unique("invite"), soon}},
+		{`UPDATE account.users SET avatar_url = 'https://cdn.example.test/a.png', external_id = 'okta-1', metadata = '{"team": "core"}' WHERE id = $1`, []any{u}},
 	} {
 		if _, err := pool.Exec(ctx, s.sql, s.args...); err != nil {
 			t.Fatalf("%s: %v", s.sql, err)
@@ -95,21 +97,49 @@ func leaveTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
 // may run behind the test's.
 func due(t *testing.T, id uuid.UUID) {
 	t.Helper()
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE "user".purge_requests SET grace_until = NOW() - INTERVAL '1 second' WHERE id = $1`, id); err != nil {
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE account.purge_requests SET grace_until = NOW() - INTERVAL '1 second' WHERE id = $1`, id); err != nil {
 		t.Fatal(err)
 	}
 }
 
 // erasedRow matches one statement of accountData: the table it changes and
 // the column naming the account.
-var erasedRow = regexp.MustCompile(`(?s)(?:FROM|UPDATE)\s+(\S+).*WHERE\s+(\w+)\s*=\s*\$1`)
+var erasedRow = regexp.MustCompile(`(?s)(?:FROM|UPDATE)\s+(\S+).*WHERE\s+(\w+)\s*=\s*@user_id`)
+
+// statement returns the SQL that erase, a method of dbgen.Queries, runs: its
+// query in queries.sql, found by the method's name, without comments.
+func statement(t *testing.T, erase any) string {
+	t.Helper()
+	name := runtime.FuncForPC(reflect.ValueOf(erase).Pointer()).Name()
+	name = name[strings.LastIndex(name, ".")+1:]
+	raw, err := os.ReadFile("queries.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, block := range strings.Split(string(raw), "-- name: ")[1:] {
+		head, body, _ := strings.Cut(block, "\n")
+		if strings.Fields(head)[0] != name {
+			continue
+		}
+		var sql []string
+		for _, line := range strings.Split(body, "\n") {
+			if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+				sql = append(sql, line)
+			}
+		}
+		return strings.Join(sql, "\n")
+	}
+	t.Fatalf("no query %s in queries.sql", name)
+	return ""
+}
 
 // tracesLeft returns, for each table erasure clears, how many of the
 // account's rows are left (an export with its payload counts as one).
 func tracesLeft(t *testing.T, userID uuid.UUID, email string) map[string]int {
 	t.Helper()
 	left := map[string]int{}
-	for _, stmt := range accountData {
+	for _, erase := range accountData {
+		stmt := statement(t, erase)
 		m := erasedRow.FindStringSubmatch(stmt)
 		if m == nil {
 			t.Fatalf("can't read the table of %s", stmt)
@@ -122,7 +152,7 @@ func tracesLeft(t *testing.T, userID uuid.UUID, email string) map[string]int {
 			left[m[1]] = n
 		}
 	}
-	for _, table := range []string{"auth.magic_links", "auth.login_attempts", "auth.login_attempts_by_network", "auth.login_source_failures", "tenant.invites"} {
+	for _, table := range []string{"auth.magic_links", "auth.login_attempts", "auth.login_attempts_by_network", "auth.login_source_failures", "organization.invites"} {
 		if n := dbtest.Count(t, `SELECT count(*) FROM `+table+` WHERE lower(email) = $1`, strings.ToLower(email)); n > 0 {
 			left[table] = n
 		}
@@ -135,17 +165,17 @@ func tracesLeft(t *testing.T, userID uuid.UUID, email string) map[string]int {
 // audit trail, and that another member's data is untouched.
 func TestErasureRemovesEveryTrace(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	erased, bystander := account(t, tenant), account(t, tenant)
-	leaveTraces(t, tenant, erased)
-	leaveTraces(t, tenant, bystander)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	erased, bystander := account(t, organization), account(t, organization)
+	leaveTraces(t, organization, erased)
+	leaveTraces(t, organization, bystander)
 	if left := tracesLeft(t, erased.ID, erased.Email); len(left) != len(accountData)+len(addressData) {
 		t.Fatalf("the traces cover %d tables, want every one erasure clears (%d)", len(left), len(accountData)+len(addressData))
 	}
 
-	svc := NewService(dbtest.Pool(t), time.Nanosecond)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+	svc := testService(t, dbtest.Pool(t), time.Nanosecond)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
 	rec := dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/purge", map[string]any{"user_id": erased.ID})
 	var req Request
 	dbtest.Decode(t, rec, &req)
@@ -159,16 +189,16 @@ func TestErasureRemovesEveryTrace(t *testing.T) {
 	if left := tracesLeft(t, erased.ID, erased.Email); len(left) > 0 {
 		t.Errorf("erasure left %v", left)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email LIKE 'redacted-%' AND avatar_url IS NULL AND external_id IS NULL AND metadata = '{}'`, erased.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email LIKE 'redacted-%' AND avatar_url IS NULL AND external_id IS NULL AND metadata = '{}'`, erased.ID); n != 1 {
 		t.Error("the user row wasn't redacted")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM auth.credentials WHERE tenant_id = $1 AND subject = 'erased' AND claims = '{}' AND revoked_at IS NOT NULL`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.credentials WHERE organization_id = $1 AND subject = 'erased' AND claims = '{}' AND revoked_at IS NOT NULL`, organization); n != 1 {
 		t.Errorf("%d credentials revoked and cleared, want the erased person's one", n)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE resource_id = $1`, req.ID); n != 2 {
 		t.Errorf("%d audit events about the request, want them kept (2)", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".export_requests WHERE user_id = $1 AND status = 'expired'`, erased.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.export_requests WHERE user_id = $1 AND status = 'expired'`, erased.ID); n != 1 {
 		t.Error("the erased person's export wasn't marked expired")
 	}
 	if left := tracesLeft(t, bystander.ID, bystander.Email); len(left) != len(accountData)+len(addressData) {
@@ -177,12 +207,12 @@ func TestErasureRemovesEveryTrace(t *testing.T) {
 }
 
 // TestDeleteOwnAccountRemovesEveryTrace checks that self-service deletion
-// erases as much as an organisation's erasure does.
+// erases as much as an organization's erasure does.
 func TestDeleteOwnAccountRemovesEveryTrace(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	a := account(t, tenant)
-	leaveTraces(t, tenant, a)
-	h := dbtest.Serve(dbtest.Principal(a.ID, tenant), (&Handler{Service: NewService(dbtest.Pool(t), 0)}).Mount)
+	organization := dbtest.Organization(t)
+	a := account(t, organization)
+	leaveTraces(t, organization, a)
+	h := dbtest.Serve(dbtest.Principal(a.ID, organization), handler(t, testService(t, dbtest.Pool(t), 0), noPassword{}).Mount)
 	if rec := dbtest.Do(t, h, http.MethodPost, "/account/delete", nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete own account: %d %s", rec.Code, rec.Body.String())
 	}
@@ -199,7 +229,7 @@ func TestErasureCoversEveryAccountTable(t *testing.T) {
 		SELECT replace(c.conrelid::regclass::text, '"', ''), a.attname
 		FROM pg_constraint c
 		JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
-		WHERE c.contype = 'f' AND c.confrelid = '"user".users'::regclass AND c.confdeltype = 'c'
+		WHERE c.contype = 'f' AND c.confrelid = 'account.users'::regclass AND c.confdeltype = 'c'
 		  AND cardinality(c.conkey) = 1
 	`)
 	if err != nil {
@@ -207,8 +237,8 @@ func TestErasureCoversEveryAccountTable(t *testing.T) {
 	}
 	defer rows.Close()
 	covered := map[string]bool{}
-	for _, stmt := range accountData {
-		if m := erasedRow.FindStringSubmatch(stmt); m != nil {
+	for _, erase := range accountData {
+		if m := erasedRow.FindStringSubmatch(statement(t, erase)); m != nil {
 			covered[strings.ReplaceAll(m[1], `"`, "")+"."+m[2]] = true
 		}
 	}
@@ -236,17 +266,17 @@ func TestErasureCoversEveryAccountTable(t *testing.T) {
 // account.
 func TestErasureOfAnAccountAlreadyGone(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	gone := account(t, tenant)
-	svc := NewService(pool, time.Nanosecond)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	gone := account(t, organization)
+	svc := testService(t, pool, time.Nanosecond)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
 	var req Request
 	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/purge", map[string]any{"user_id": gone.ID}), &req)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET deleted_at = NOW(), status = 'deleted' WHERE id = $1`, gone.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET deleted_at = NOW(), status = 'deleted' WHERE id = $1`, gone.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `DELETE FROM "user".users WHERE id = $1`, gone.ID); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM account.users WHERE id = $1`, gone.ID); err != nil {
 		t.Fatalf("delete an account awaiting erasure: %v", err)
 	}
 	due(t, req.ID)
@@ -256,9 +286,9 @@ func TestErasureOfAnAccountAlreadyGone(t *testing.T) {
 	var list struct {
 		Items []Request `json:"items"`
 	}
-	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+tenant.String()+"/gdpr/purge", nil), &list)
+	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/organizations/"+organization.String()+"/gdpr/purge", nil), &list)
 	if len(list.Items) != 1 || list.Items[0].Status != "completed" || list.Items[0].UserID != gone.ID {
 		t.Errorf("requests %+v; want the one, completed, naming the deleted account", list.Items)
 	}
-	recorded(t, tenant, req.ID, "gdpr.erasure_completed", nil, gone.ID)
+	recorded(t, organization, req.ID, "gdpr.erasure_completed", nil, gone.ID)
 }

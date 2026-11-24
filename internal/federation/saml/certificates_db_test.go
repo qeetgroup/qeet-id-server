@@ -11,6 +11,7 @@ import (
 	"github.com/beevik/etree"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -33,16 +34,16 @@ func dropKeyInfo(response *etree.Element) {
 // current and next certificates accepts an assertion signed with either, with
 // or without KeyInfo, and only the next once the current is removed; that the
 // last certificate can't be removed nor one added twice; and that another
-// organisation can neither add nor remove them.
+// organization can neither add nor remove them.
 func TestSAMLCertificateRollover(t *testing.T) {
 	sp := newSPSide(t)
 	idp, next := newUpstreamIdP(t), newUpstreamIdP(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, member.ID)
-	admin, outsider := sp.asAdmin(t, tenant), sp.asAdmin(t, other)
-	path := "/tenants/" + tenant.String() + "/saml/" + conn.ID.String()
+	admin, outsider := sp.asAdmin(t, organization), sp.asAdmin(t, other)
+	path := "/organizations/" + organization.String() + "/saml/" + conn.ID.String()
 	refused := func(name string, a answer, want string) {
 		t.Helper()
 		a.inResponseTo, a.email = sp.begin(t, conn.ID), member.Email
@@ -64,8 +65,8 @@ func TestSAMLCertificateRollover(t *testing.T) {
 		t.Fatalf("add the next certificate: %d %s", rec.Code, rec.Body.String())
 	}
 	for want, cert := range map[string]string{
-		errs.CodeSAMLCertificateExists:  next.certPEM,
-		errs.CodeSAMLCertificateInvalid: "not a certificate",
+		CodeCertificateExists:  next.certPEM,
+		CodeCertificateInvalid: "not a certificate",
 	} {
 		if rec := dbtest.Do(t, admin, http.MethodPost, path+"/certificates", map[string]any{"certificate": cert}); rec.Code/100 != 4 || !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("add %q: %d %s, want %s", cert[:10], rec.Code, rec.Body.String(), want)
@@ -84,16 +85,16 @@ func TestSAMLCertificateRollover(t *testing.T) {
 	}
 
 	for _, method := range []string{http.MethodPost, http.MethodDelete} {
-		target := "/tenants/" + other.String() + "/saml/" + conn.ID.String() + "/certificates"
+		target := "/organizations/" + other.String() + "/saml/" + conn.ID.String() + "/certificates"
 		if method == http.MethodDelete {
 			target += "/" + added.ID.String()
 		}
 		if rec := dbtest.Do(t, outsider, method, target, map[string]any{"certificate": next.certPEM}); rec.Code != http.StatusNotFound {
-			t.Errorf("another organisation %s on the connection's certificates: %d %s, want 404", method, rec.Code, rec.Body.String())
+			t.Errorf("another organization %s on the connection's certificates: %d %s, want 404", method, rec.Code, rec.Body.String())
 		}
 	}
 	if rec := dbtest.Do(t, outsider, http.MethodDelete, path+"/certificates/"+added.ID.String(), nil); rec.Code != http.StatusForbidden {
-		t.Errorf("another organisation removing through this organisation's path: %d, want 403", rec.Code)
+		t.Errorf("another organization removing through this organization's path: %d, want 403", rec.Code)
 	}
 
 	if rec := dbtest.Do(t, admin, http.MethodDelete, path+"/certificates/"+conn.Certificates[0].ID.String(), nil); rec.Code != http.StatusNoContent {
@@ -108,13 +109,13 @@ func TestSAMLCertificateRollover(t *testing.T) {
 		t.Errorf("after the rollover: idp_certificate %q, %d certificates; want only the next one", got.IdpCertificate, len(got.Certificates))
 	}
 	if rec := dbtest.Do(t, admin, http.MethodDelete, path+"/certificates/"+added.ID.String(), nil); rec.Code != http.StatusConflict ||
-		!strings.Contains(rec.Body.String(), errs.CodeSAMLCertificateLast) {
-		t.Errorf("remove the last certificate: %d %s, want 409 %s", rec.Code, rec.Body.String(), errs.CodeSAMLCertificateLast)
+		!strings.Contains(rec.Body.String(), CodeCertificateLast) {
+		t.Errorf("remove the last certificate: %d %s, want 409 %s", rec.Code, rec.Body.String(), CodeCertificateLast)
 	}
 	if rec := dbtest.Do(t, admin, http.MethodDelete, path+"/certificates/"+uuid.NewString(), nil); rec.Code != http.StatusNotFound {
 		t.Errorf("remove an unknown certificate: %d, want 404", rec.Code)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND resource_id = $2 AND action IN ('saml.certificate_added', 'saml.certificate_removed')`, tenant, conn.ID); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND resource_id = $2 AND action IN ('saml.certificate_added', 'saml.certificate_removed')`, organization, conn.ID); n != 2 {
 		t.Errorf("%d certificate changes recorded, want the addition and the removal", n)
 	}
 
@@ -136,4 +137,25 @@ func mustParseCertificate(t *testing.T, raw string) *x509.Certificate {
 		t.Fatal(err)
 	}
 	return cert
+}
+
+// TestSAMLCertificateRolloverByOwnerKeepsLinks checks that an owner, who
+// outranks no one but acts on owners, still rolls a connection's certificate
+// over, and its linked accounts stay linked.
+func TestSAMLCertificateRolloverByOwnerKeepsLinks(t *testing.T) {
+	sp := newSPSide(t)
+	pool := dbtest.Pool(t)
+	sp.handler.ActOnCheck = rbac.NewRepository(pool).CheckActOn
+	idp, next := newUpstreamIdP(t), newUpstreamIdP(t)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	linked := linkOwner(t, organization, conn.ID)
+	owner := newOwner(t, organization)
+	as := dbtest.Serve(dbtest.Principal(owner.ID, organization), sp.handler.Mount)
+	if rec := dbtest.Do(t, as, http.MethodPost, "/organizations/"+organization.String()+"/saml/"+conn.ID.String()+"/certificates", map[string]any{"certificate": next.certPEM}); rec.Code != http.StatusCreated {
+		t.Fatalf("an owner adds the next certificate: %d %s, want 201", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND connection_id = $2`, linked.ID, conn.ID); n != 1 {
+		t.Errorf("the linked owner has %d links to the connection, want 1", n)
+	}
 }

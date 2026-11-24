@@ -1,0 +1,53 @@
+type: object
+properties:
+  id:
+    type: string
+    format: uuid
+  organization_id:
+    type: string
+    format: uuid
+  user_id:
+    type:
+      - string
+      - "null"
+    format: uuid
+  name:
+    type: string
+  prefix:
+    type: string
+  scopes:
+    type: array
+    items:
+      type: string
+  expires_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  last_used_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  revoked_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  created_at:
+    type: string
+    format: date-time
+  created_by:
+    type:
+      - string
+      - "null"
+    format: uuid
+    description: >-
+      The person who created the key, or rotated it into being; null for a key
+      made by a machine or before this was kept.
+  rotated_from:
+    type:
+      - string
+      - "null"
+    format: uuid
+    description: The key this one replaced at a rotation.

@@ -3,45 +3,54 @@ package qeetai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/sse"
 )
 
-// Handler serves the Qeet AI routes. A tenant with its own provider key (BYOK)
+// Handler serves the Qeet AI routes. An organization with its own provider key (BYOK)
 // may use the assistant on any plan; otherwise the platform key applies, gated
 // by Plan. With neither, conversation CRUD still works but posting a message
 // returns qeetai_unconfigured.
 type Handler struct {
-	Service      serviceStore     // conversations and messages
-	Orchestrator *Orchestrator    // runs one streamed turn
-	Resolver     ProviderResolver // the tenant's effective provider, for status and gating
-	Config       *ProviderConfig  // backs the BYOK admin endpoints; may be nil in tests
-	Plan         PlanGate         // plan gate for the platform key; nil means no gate
-	Admin        *Service         // usage and settings, for the organisation's admins
+	Service      serviceStore          // conversations and messages
+	Orchestrator *Orchestrator         // runs one streamed turn
+	Resolver     ProviderResolver      // the organization's effective provider, for status and gating
+	Config       *ProviderConfig       // backs the BYOK admin endpoints
+	Plan         entitlements.PlanGate // plan gate for the platform key
+	Admin        *Service              // usage and settings, for the organization's admins
 }
 
-// PlanGate reports whether a boolean feature is included in a tenant's plan.
-type PlanGate interface {
-	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
-}
-
-// planAllows reports whether the tenant's plan includes the qeetai feature.
-// A nil gate (unset) allows it; a resolver error is treated as not allowed.
-func (h *Handler) planAllows(r *http.Request, tenantID uuid.UUID) bool {
-	if h.Plan == nil {
-		return true
+// NewHandler returns h once it has every dependency.
+func NewHandler(h Handler) (*Handler, error) {
+	switch {
+	case h.Service == nil || h.Admin == nil:
+		return nil, errors.New("qeetai: the handler needs its conversation and admin services")
+	case h.Orchestrator == nil:
+		return nil, errors.New("qeetai: the handler needs an orchestrator to run turns")
+	case h.Resolver == nil || h.Config == nil:
+		return nil, errors.New("qeetai: the handler needs the provider config")
+	case h.Plan == nil:
+		return nil, errors.New("qeetai: a plan gate is required, as the platform key is a plan feature")
 	}
-	ok, err := h.Plan.FeatureAllowed(r.Context(), tenantID, "ai_qeetai")
+	return &h, nil
+}
+
+// planAllows reports whether the organization's plan includes the qeetai feature;
+// a resolver error is treated as not allowed.
+func (h *Handler) planAllows(r *http.Request, organizationID uuid.UUID) bool {
+	ok, err := h.Plan.FeatureAllowed(r.Context(), organizationID, "ai_qeetai")
 	return err == nil && ok
 }
 
@@ -63,19 +72,19 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/qeetai/provider-config", h.deleteProviderConfig)
 	r.Post("/qeetai/provider-config/test", h.testProviderConfig)
 
-	// The organisation's use and settings (org admins — see permission map).
-	r.Get("/tenants/{tenantID}/qeetai/usage", h.usage)
-	r.Get("/tenants/{tenantID}/qeetai/settings", h.settings)
-	r.Put("/tenants/{tenantID}/qeetai/settings", h.putSettings)
+	// The organization's use and settings (org admins — see permission map).
+	r.Get("/organizations/{organizationID}/qeetai/usage", h.usage)
+	r.Get("/organizations/{organizationID}/qeetai/settings", h.settings)
+	r.Put("/organizations/{organizationID}/qeetai/settings", h.putSettings)
 }
 
-// status reports the tenant's Qeet AI state, never key material. source is
-// "tenant" (BYOK), "platform" or "none"; only the platform key is plan-gated.
+// status reports the organization's Qeet AI state, never key material. source is
+// "organization" (BYOK), "platform" or "none"; only the platform key is plan-gated.
 //
 //	GET /v1/qeetai/status → { configured, available, provider, model, source }
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"configured": false, "available": false, "source": string(SourceNone)}
-	tid, err := httpx.RequireTenant(r)
+	tid, err := httpx.RequireOrganization(r)
 	if err == nil && h.Resolver != nil {
 		if eff, rerr := h.Resolver.Resolve(r.Context(), tid); rerr == nil {
 			configured := eff.Source != SourceNone
@@ -83,7 +92,7 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 			if configured {
 				// BYOK unlocks the assistant on any plan; the platform fallback
 				// stays plan-gated.
-				available = eff.Source == SourceTenant || h.planAllows(r, tid)
+				available = eff.Source == SourceOrganization || h.planAllows(r, tid)
 			}
 			resp = map[string]any{
 				"configured": configured,
@@ -97,31 +106,29 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-// qeetaiAllowed reports whether the tenant may use the assistant and the
-// resolved config source. A tenant with its own provider key (SourceTenant) is
+// qeetaiAllowed reports whether the organization may use the assistant and the
+// resolved config source. An organization with its own provider key (SourceOrganization) is
 // allowed on any plan; otherwise the plan gate applies.
-func (h *Handler) qeetaiAllowed(r *http.Request, tenantID uuid.UUID) (source ConfigSource, allowed bool) {
+func (h *Handler) qeetaiAllowed(r *http.Request, organizationID uuid.UUID) (source ConfigSource, allowed bool) {
 	source = SourceNone
-	if h.Resolver != nil {
-		if eff, err := h.Resolver.Resolve(r.Context(), tenantID); err == nil {
-			source = eff.Source
-		}
+	if eff, err := h.Resolver.Resolve(r.Context(), organizationID); err == nil {
+		source = eff.Source
 	}
-	if source == SourceTenant {
+	if source == SourceOrganization {
 		return source, true // BYOK bypasses the plan gate
 	}
-	return source, h.planAllows(r, tenantID)
+	return source, h.planAllows(r, organizationID)
 }
 
 // createConversation creates a new conversation for the authenticated user.
 //
 //	POST /v1/qeetai/conversations
 func (h *Handler) createConversation(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := h.requireTenantUser(w, r)
+	organizationID, userID, ok := h.requireOrganizationUser(w, r)
 	if !ok {
 		return
 	}
-	if _, allowed := h.qeetaiAllowed(r, tenantID); !allowed {
+	if _, allowed := h.qeetaiAllowed(r, organizationID); !allowed {
 		httpx.WriteError(w, r, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "ai_qeetai"}))
 		return
 	}
@@ -130,7 +137,7 @@ func (h *Handler) createConversation(w http.ResponseWriter, r *http.Request) {
 	// empty bodies so the client can POST with no body.
 	_ = httpx.DecodeJSON(r, &in)
 
-	conv, err := h.Service.CreateConversation(r.Context(), tenantID, userID, in)
+	conv, err := h.Service.CreateConversation(r.Context(), organizationID, userID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -142,11 +149,11 @@ func (h *Handler) createConversation(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /v1/qeetai/conversations → { items: Conversation[] }
 func (h *Handler) listConversations(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := h.requireTenantUser(w, r)
+	organizationID, userID, ok := h.requireOrganizationUser(w, r)
 	if !ok {
 		return
 	}
-	items, err := h.Service.ListConversations(r.Context(), tenantID, userID)
+	items, err := h.Service.ListConversations(r.Context(), organizationID, userID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -161,7 +168,7 @@ func (h *Handler) listConversations(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /v1/qeetai/conversations/{conversationID}
 func (h *Handler) getConversation(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := h.requireTenantUser(w, r)
+	organizationID, userID, ok := h.requireOrganizationUser(w, r)
 	if !ok {
 		return
 	}
@@ -170,7 +177,7 @@ func (h *Handler) getConversation(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	conv, msgs, err := h.Service.GetConversation(r.Context(), tenantID, userID, convID)
+	conv, msgs, err := h.Service.GetConversation(r.Context(), organizationID, userID, convID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -188,7 +195,7 @@ func (h *Handler) getConversation(w http.ResponseWriter, r *http.Request) {
 //
 //	PATCH /v1/qeetai/conversations/{conversationID}
 func (h *Handler) patchConversation(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := h.requireTenantUser(w, r)
+	organizationID, userID, ok := h.requireOrganizationUser(w, r)
 	if !ok {
 		return
 	}
@@ -202,7 +209,7 @@ func (h *Handler) patchConversation(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	conv, err := h.Service.PatchConversation(r.Context(), tenantID, userID, convID, in)
+	conv, err := h.Service.PatchConversation(r.Context(), organizationID, userID, convID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -214,7 +221,7 @@ func (h *Handler) patchConversation(w http.ResponseWriter, r *http.Request) {
 //
 //	DELETE /v1/qeetai/conversations/{conversationID}
 func (h *Handler) deleteConversation(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := h.requireTenantUser(w, r)
+	organizationID, userID, ok := h.requireOrganizationUser(w, r)
 	if !ok {
 		return
 	}
@@ -223,7 +230,7 @@ func (h *Handler) deleteConversation(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.DeleteConversation(r.Context(), tenantID, userID, convID); err != nil {
+	if err := h.Service.DeleteConversation(r.Context(), organizationID, userID, convID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -235,7 +242,7 @@ func (h *Handler) deleteConversation(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /v1/qeetai/conversations/{conversationID}/messages
 func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := h.requireTenantUser(w, r)
+	organizationID, userID, ok := h.requireOrganizationUser(w, r)
 	if !ok {
 		return
 	}
@@ -245,11 +252,11 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Gate: a provider must be configured (tenant BYOK key or platform fallback)
+	// Gate: a provider must be configured (organization BYOK key or platform fallback)
 	// to stream; conversation CRUD still works without one.
-	source, allowed := h.qeetaiAllowed(r, tenantID)
+	source, allowed := h.qeetaiAllowed(r, organizationID)
 	if source == SourceNone {
-		httpx.WriteError(w, r, errs.ErrQeetAIUnconfigured.WithMessage(
+		httpx.WriteError(w, r, ErrUnconfigured.WithMessage(
 			"Qeet AI is not configured — add your organization's AI provider key in Settings → Qeet AI (or set QEETAI_PROVIDER/QEETAI_API_KEY)"))
 		return
 	}
@@ -260,9 +267,9 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify ownership before any write or SSE header. GetConversation is scoped
-	// to tenant and user, so another user's conversation returns ErrNotFound and
+	// to organization and user, so another user's conversation returns ErrNotFound and
 	// can't have a prompt injected into it.
-	if _, _, err := h.Service.GetConversation(r.Context(), tenantID, userID, convID); err != nil {
+	if _, _, err := h.Service.GetConversation(r.Context(), organizationID, userID, convID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -283,7 +290,7 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 
 	// One turn at a time in a conversation, on any instance: a second is
 	// refused before anything is stored.
-	release, err := h.Service.BeginTurn(r.Context(), tenantID, convID)
+	release, err := h.Service.BeginTurn(r.Context(), organizationID, convID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -292,83 +299,19 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), turnTimeout)
 	defer cancel()
 
-	// Extend write deadline: the default HTTP_WRITE_TIMEOUT (30s) is too short
-	// for a full streaming turn. Reset it to turnTimeout on this connection.
-	if rc := http.NewResponseController(w); rc != nil {
-		if conn, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && conn != nil {
-			_ = conn // addr obtained; deadline set below via ResponseController
-		}
-		if err := rc.SetWriteDeadline(time.Now().Add(turnTimeout)); err != nil {
-			// Not fatal — log and continue; worst case the connection times out.
-			slog.Warn("qeetai: extend write deadline", "err", err)
-		}
-	}
-
-	// SSE headers — set before the first write.
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no") // prevents Nginx/Caddy buffering
-
-	sse := newSSEWriter(w)
-	if sse == nil {
-		// ResponseWriter does not support flushing — very unlikely in production.
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+	// The stream may stay open for the whole turn, past HTTP_WRITE_TIMEOUT.
+	out := sse.Open(w, turnTimeout)
+	if out == nil {
+		httpx.WriteError(w, r, errs.ErrInternalServer.WithDetail("streaming not supported"))
 		return
 	}
-
 	// Keep-alive pings every 15s so proxies don't drop the connection.
-	// stopKeepAlive runs first (defers are LIFO), so the ping goroutine has
-	// exited before this handler returns and can never write to a released
-	// ResponseWriter.
-	donePing := make(chan struct{})
-	defer sse.stopKeepAlive()
-	defer close(donePing)
-	sse.startKeepAlive(donePing, 15*time.Second)
+	defer out.KeepAlive(15 * time.Second)()
 
-	p := httpx.PrincipalFromCtx(r.Context())
-	actor := audit.Actor{
-		UserID:    p.UserID,
-		Type:      p.ActorType,
-		IP:        httpx.ClientIP(r),
-		UserAgent: r.UserAgent(),
-		RequestID: httpx.RequestID(r),
-	}
+	actor := audit.ActorOf(r)
 
-	// Persist the incoming user turn.
-	if body.Message != "" {
-		userContent := []map[string]any{{"type": "text", "text": body.Message}}
-		contentJSON, err := json.Marshal(userContent)
-		if err != nil {
-			sse.send(EventTypeError, errorData{Code: "internal", Message: "failed to serialize message"})
-			sse.send(EventTypeDone, doneData{Reason: "error"})
-			return
-		}
-		if _, err := h.Service.AppendMessage(r.Context(), tenantID, convID, "user", contentJSON); err != nil {
-			slog.Error("qeetai: persist user message", "err", err)
-			sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to store message"})
-			sse.send(EventTypeDone, doneData{Reason: "error"})
-			return
-		}
-		// Audit: user sent a message to the qeetai.
-		h.recordMessageAudit(r, actor, tenantID, convID)
-	}
-
-	// Persist tool_results as a "tool"-role message (continuation turn).
-	if len(body.ToolResults) > 0 {
-		toolContent := buildToolResultContent(body.ToolResults)
-		contentJSON, err := json.Marshal(toolContent)
-		if err != nil {
-			sse.send(EventTypeError, errorData{Code: "internal", Message: "failed to serialize tool results"})
-			sse.send(EventTypeDone, doneData{Reason: "error"})
-			return
-		}
-		if _, err := h.Service.AppendMessage(r.Context(), tenantID, convID, "tool", contentJSON); err != nil {
-			slog.Error("qeetai: persist tool results", "err", err)
-			sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to store tool results"})
-			sse.send(EventTypeDone, doneData{Reason: "error"})
-			return
-		}
+	if !h.storeTurn(r, out, organizationID, convID, body.Message, body.ToolResults, actor) {
+		return
 	}
 
 	// Run the orchestration loop.
@@ -377,44 +320,52 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 		pageCtx = string(body.Context)
 	}
 	h.Orchestrator.Run(ctx, turnContext{
-		tenantID:       tenantID,
+		organizationID: organizationID,
 		userID:         userID,
 		conversationID: convID,
 		pageContext:    pageCtx,
 		actor:          actor,
-	}, sse)
+	}, out)
 }
 
-// recordMessageAudit writes a qeetai.message.sent audit row.
-func (h *Handler) recordMessageAudit(r *http.Request, actor audit.Actor, tenantID, convID uuid.UUID) {
-	tx, err := h.Service.Pool().Begin(r.Context())
-	if err != nil {
-		slog.Warn("qeetai: audit message tx begin", "err", err)
-		return
+// storeTurn stores the turn's user message, recorded as actor's, and its
+// tool_results as a "tool"-role message (a continuation turn). A turn it
+// can't store ends the stream with an error and returns false.
+func (h *Handler) storeTurn(r *http.Request, out *sse.Writer, organizationID, convID uuid.UUID, message string, toolResults []ToolResultInput, actor audit.Actor) bool {
+	if message != "" {
+		userContent := []map[string]any{{"type": "text", "text": message}}
+		contentJSON, err := json.Marshal(userContent)
+		if err != nil {
+			out.Send(EventTypeError, errorData{Code: "internal", Message: "failed to serialize message"})
+			out.Send(EventTypeDone, doneData{Reason: "error"})
+			return false
+		}
+		if _, err := h.Service.AppendMessage(r.Context(), organizationID, convID, "user", contentJSON); err != nil {
+			slog.Error("qeetai: persist user message", "err", err)
+			out.Send(EventTypeError, errorData{Code: "db_error", Message: "failed to store message"})
+			out.Send(EventTypeDone, doneData{Reason: "error"})
+			return false
+		}
+		if err := h.Service.RecordMessageSent(r.Context(), organizationID, convID, actor); err != nil {
+			slog.Warn("qeetai: audit message.sent", "err", err)
+		}
 	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-
-	tid := tenantID
-	cid := convID
-	err = audit.Record(r.Context(), tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  actor.UserID,
-		ActorType:    actor.Type,
-		Action:       "qeetai.message.sent",
-		ResourceType: "qeetai_conversation",
-		ResourceID:   &cid,
-		IP:           actor.IP,
-		UserAgent:    actor.UserAgent,
-		RequestID:    actor.RequestID,
-		Metadata:     map[string]any{"conversation_id": convID.String()},
-	})
-	if err != nil {
-		slog.Warn("qeetai: audit message.sent", "err", err)
-		return
+	if len(toolResults) > 0 {
+		toolContent := buildToolResultContent(toolResults)
+		contentJSON, err := json.Marshal(toolContent)
+		if err != nil {
+			out.Send(EventTypeError, errorData{Code: "internal", Message: "failed to serialize tool results"})
+			out.Send(EventTypeDone, doneData{Reason: "error"})
+			return false
+		}
+		if _, err := h.Service.AppendMessage(r.Context(), organizationID, convID, "tool", contentJSON); err != nil {
+			slog.Error("qeetai: persist tool results", "err", err)
+			out.Send(EventTypeError, errorData{Code: "db_error", Message: "failed to store tool results"})
+			out.Send(EventTypeDone, doneData{Reason: "error"})
+			return false
+		}
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		slog.Warn("qeetai: audit message.sent commit", "err", err)
-	}
+	return true
 }
 
 // --- BYOK provider configuration (org owner/admin) ---
@@ -433,16 +384,16 @@ func providerConfigResponse(eff EffectiveConfig, platformFallback bool) map[stri
 	}
 }
 
-// getProviderConfig returns the tenant's effective provider config (masked).
+// getProviderConfig returns the organization's effective provider config (masked).
 //
 //	GET /v1/qeetai/provider-config
 func (h *Handler) getProviderConfig(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	eff, err := h.Config.Resolve(r.Context(), tenantID)
+	eff, err := h.Config.Resolve(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -450,11 +401,11 @@ func (h *Handler) getProviderConfig(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, providerConfigResponse(eff, h.Config.PlatformConfigured()))
 }
 
-// putProviderConfig sets (or rotates) the tenant's BYOK provider key.
+// putProviderConfig sets (or rotates) the organization's BYOK provider key.
 //
 //	PUT /v1/qeetai/provider-config { provider, model, api_key, base_url?, max_tokens? }
 func (h *Handler) putProviderConfig(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := h.requireTenantUser(w, r)
+	organizationID, userID, ok := h.requireOrganizationUser(w, r)
 	if !ok {
 		return
 	}
@@ -469,7 +420,7 @@ func (h *Handler) putProviderConfig(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	eff, err := h.Config.Set(r.Context(), tenantID, SetProviderInput{
+	eff, err := h.Config.Set(r.Context(), organizationID, SetProviderInput{
 		Provider:  body.Provider,
 		Model:     body.Model,
 		APIKey:    body.APIKey,
@@ -481,25 +432,25 @@ func (h *Handler) putProviderConfig(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.recordProviderConfigAudit(r, tenantID, userID, "qeetai.provider_config.updated",
+	h.recordProviderConfigAudit(r, organizationID, "qeetai.provider_config.updated",
 		map[string]any{"provider": eff.Provider, "model": eff.Model, "last4": eff.Last4})
 	httpx.WriteJSON(w, http.StatusOK, providerConfigResponse(eff, h.Config.PlatformConfigured()))
 }
 
-// deleteProviderConfig removes the tenant's BYOK key, reverting to the platform
+// deleteProviderConfig removes the organization's BYOK key, reverting to the platform
 // fallback (or unconfigured).
 //
 //	DELETE /v1/qeetai/provider-config
 func (h *Handler) deleteProviderConfig(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := h.requireTenantUser(w, r)
+	organizationID, _, ok := h.requireOrganizationUser(w, r)
 	if !ok {
 		return
 	}
-	if err := h.Config.Clear(r.Context(), tenantID); err != nil {
+	if err := h.Config.Clear(r.Context(), organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.recordProviderConfigAudit(r, tenantID, userID, "qeetai.provider_config.removed", nil)
+	h.recordProviderConfigAudit(r, organizationID, "qeetai.provider_config.removed", nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -508,7 +459,7 @@ func (h *Handler) deleteProviderConfig(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /v1/qeetai/provider-config/test { provider, model, api_key, base_url? }
 func (h *Handler) testProviderConfig(w http.ResponseWriter, r *http.Request) {
-	if _, err := httpx.RequireTenant(r); err != nil {
+	if _, err := httpx.RequireOrganization(r); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -536,50 +487,19 @@ func (h *Handler) testProviderConfig(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// recordProviderConfigAudit writes an audit row for a BYOK config change. The
-// resource is the tenant itself; no key material is ever recorded.
-func (h *Handler) recordProviderConfigAudit(r *http.Request, tenantID, userID uuid.UUID, action string, meta map[string]any) {
-	if h.Config == nil {
-		return
-	}
-	ctx := r.Context()
-	tx, err := h.Config.pool.Begin(ctx)
-	if err != nil {
-		slog.Warn("qeetai: audit provider-config tx begin", "err", err)
-		return
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	tid := tenantID
-	uid := userID
-	actorType := "user"
-	if p := httpx.PrincipalFromCtx(ctx); p != nil && p.ActorType != "" {
-		actorType = p.ActorType
-	}
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  &uid,
-		ActorType:    actorType,
-		Action:       action,
-		ResourceType: "qeetai_provider_config",
-		ResourceID:   &tid,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     meta,
-	}); err != nil {
+// recordProviderConfigAudit records a BYOK config change as an event of its
+// own, after the change. The resource is the organization itself; no key
+// material is ever recorded.
+func (h *Handler) recordProviderConfigAudit(r *http.Request, organizationID uuid.UUID, action string, meta map[string]any) {
+	if err := h.Config.RecordChange(r.Context(), organizationID, action, meta, audit.ActorOf(r)); err != nil {
 		slog.Warn("qeetai: audit provider-config", "err", err, "action", action)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		slog.Warn("qeetai: audit provider-config commit", "err", err)
 	}
 }
 
-// requireTenantUser extracts and validates the tenant and user from the JWT
-// principal. Handlers must never take tenant/user from URL or body.
-func (h *Handler) requireTenantUser(w http.ResponseWriter, r *http.Request) (tenantID, userID uuid.UUID, ok bool) {
-	tenantID, err := httpx.RequireTenant(r)
+// requireOrganizationUser extracts and validates the organization and user from the JWT
+// principal. Handlers must never take organization/user from URL or body.
+func (h *Handler) requireOrganizationUser(w http.ResponseWriter, r *http.Request) (organizationID, userID uuid.UUID, ok bool) {
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return uuid.Nil, uuid.Nil, false
@@ -589,15 +509,62 @@ func (h *Handler) requireTenantUser(w http.ResponseWriter, r *http.Request) (ten
 		httpx.WriteError(w, r, err)
 		return uuid.Nil, uuid.Nil, false
 	}
-	return tenantID, userID, true
+	return organizationID, userID, true
 }
 
 // parseConversationID parses the {conversationID} path parameter.
 func parseConversationID(r *http.Request) (uuid.UUID, error) {
-	raw := chi.URLParam(r, "conversationID")
-	id, err := uuid.Parse(raw)
+	return httpx.PathUUID(r, "conversationID", errs.ErrBadRequest.WithDetail("invalid conversationID"))
+}
+
+// usage handles GET /v1/organizations/{organizationID}/qeetai/usage.
+func (h *Handler) usage(w http.ResponseWriter, r *http.Request) {
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid conversationID")
+		httpx.WriteError(w, r, err)
+		return
 	}
-	return id, nil
+	out, err := h.Admin.UsageOf(r.Context(), organizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// settings handles GET /v1/organizations/{organizationID}/qeetai/settings.
+func (h *Handler) settings(w http.ResponseWriter, r *http.Request) {
+	organizationID, err := httpx.PathOrganization(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Admin.SettingsOf(r.Context(), organizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// putSettings handles PUT /v1/organizations/{organizationID}/qeetai/settings.
+func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
+	organizationID, err := httpx.PathOrganization(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in struct {
+		ConversationRetentionDays *int `json:"conversation_retention_days"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Admin.SetSettings(r.Context(), organizationID, in.ConversationRetentionDays, audit.ActorOf(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }

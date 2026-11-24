@@ -1,0 +1,24 @@
+type: object
+description: An RFC 6749 §5.2 error, as the token, revocation, device and backchannel endpoints answer.
+required:
+  - error
+additionalProperties: false
+properties:
+  error:
+    type: string
+    enum:
+      - invalid_request
+      - invalid_client
+      - invalid_grant
+      - unauthorized_client
+      - unsupported_grant_type
+      - invalid_scope
+      - invalid_target
+      - authorization_pending
+      - slow_down
+      - access_denied
+      - expired_token
+      - unsupported_token_type
+      - unknown_user_id
+  error_description:
+    type: string

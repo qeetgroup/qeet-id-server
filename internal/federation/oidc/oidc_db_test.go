@@ -3,26 +3,34 @@
 package oidc
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
-	"slices"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
 const testRedirect = "https://app.example.test/callback"
 
-// registerClient registers a confidential client in tenant and returns it with
+// registerClient registers a confidential client in organization and returns it with
 // its secret.
-func registerClient(t *testing.T, svc *Service, tenant uuid.UUID) (*Client, string) {
+func registerClient(t *testing.T, svc *Service, organization uuid.UUID) (*Client, string) {
 	t.Helper()
 	ctx := dbtest.Context(t)
 	tx, err := dbtest.Pool(t).Begin(ctx)
@@ -31,7 +39,7 @@ func registerClient(t *testing.T, svc *Service, tenant uuid.UUID) (*Client, stri
 	}
 	defer tx.Rollback(ctx)
 	client, secret, err := svc.RegisterClient(ctx, tx, CreateClientInput{
-		TenantID: tenant, Name: "App", RedirectURIs: []string{testRedirect},
+		OrganizationID: organization, Name: "App", RedirectURIs: []string{testRedirect},
 	})
 	if err != nil {
 		t.Fatalf("register client: %v", err)
@@ -42,99 +50,248 @@ func registerClient(t *testing.T, svc *Service, tenant uuid.UUID) (*Client, stri
 	return client, secret
 }
 
-// TestOIDCClientsStayInTheirTenant checks that one tenant can neither read nor
-// change another tenant's OIDC client, and that its users can't authorize it.
-func TestOIDCClientsStayInTheirTenant(t *testing.T) {
+const (
+	resourceA = "https://api-a.example.test"
+	resourceB = "https://api-b.example.test"
+	deviceIP  = "192.0.2.10"
+)
+
+// registerClientWith registers a client from in and returns it with its secret
+// ("" for a public client).
+func registerClientWith(t *testing.T, svc *Service, in CreateClientInput) (*Client, string) {
+	t.Helper()
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
-	clientA, secretA := registerClient(t, svc, tenantA)
-	adminB := dbtest.User(t, tenantB, tenantB)
-
-	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Service: svc}).Mount)
-	inB := "/tenants/" + tenantB.String() + "/oidc/clients/" + clientA.ID.String()
-	for _, tc := range []struct {
-		method, path string
-		body         any
-		want         int
-	}{
-		{http.MethodGet, inB, nil, http.StatusNotFound},
-		{http.MethodPatch, inB, map[string]any{"name": "Renamed"}, http.StatusNotFound},
-		{http.MethodPost, inB + "/rotate-secret", nil, http.StatusNotFound},
-		{http.MethodDelete, inB, nil, http.StatusNotFound},
-		{http.MethodDelete, "/oidc/clients/" + clientA.ID.String(), nil, http.StatusNotFound},
-		{http.MethodGet, "/tenants/" + tenantA.String() + "/oidc/clients", nil, http.StatusForbidden},
-	} {
-		if rec := dbtest.Do(t, asB, tc.method, tc.path, tc.body); rec.Code != tc.want {
-			t.Errorf("tenant B %s %s: status %d, want %d (%s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
-		}
+	tx, err := dbtest.Pool(t).Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
 	}
-	var page struct {
-		Items []Client `json:"items"`
+	defer tx.Rollback(ctx)
+	if in.Name == "" {
+		in.Name = "App"
 	}
-	dbtest.Decode(t, dbtest.Do(t, asB, http.MethodGet, "/tenants/"+tenantB.String()+"/oidc/clients", nil), &page)
-	if slices.ContainsFunc(page.Items, func(c Client) bool { return c.ID == clientA.ID }) {
-		t.Error("tenant B's client list includes tenant A's client")
+	if in.RedirectURIs == nil {
+		in.RedirectURIs = []string{testRedirect}
 	}
-
-	got, err := svc.GetClient(ctx, tenantA, clientA.ID)
-	if err != nil || got.Name != "App" {
-		t.Fatalf("tenant A's client after tenant B's calls: %+v, %v", got, err)
+	client, secret, err := svc.RegisterClient(ctx, tx, in)
+	if err != nil {
+		t.Fatalf("register client: %v", err)
 	}
-	if _, err := svc.authenticateClient(ctx, clientA.ClientID, secretA); err != nil {
-		t.Errorf("tenant A's client secret stopped working: %v", err)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
-	_, challenge, _ := codes.URLToken()
-	if _, _, err := svc.Authorize(ctx, adminB.ID, clientA.ClientID, testRedirect, []string{"openid"}, "n-1", challenge, "S256"); err == nil {
-		t.Error("a tenant B user authorized tenant A's client")
-	}
+	return client, secret
 }
 
-// TestOIDCAuthorizationCodeWithPKCE checks the authorization code grant: the
-// code redeems only with its PKCE verifier, once, for tokens naming the user.
-func TestOIDCAuthorizationCodeWithPKCE(t *testing.T) {
+// redeemCode runs an authorization and code exchange for user, naming resource
+// at the token endpoint ("" for none), and returns the tokens.
+func redeemCode(t *testing.T, svc *Service, client *Client, secret string, userID uuid.UUID, resource string) *TokenResponse {
+	t.Helper()
 	ctx := dbtest.Context(t)
-	issuer := dbtest.Issuer(t)
-	svc := NewService(dbtest.Pool(t), issuer)
-	tenant := dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, svc, tenant)
-
 	verifier, challenge, err := codes.URLToken()
 	if err != nil {
 		t.Fatalf("pkce: %v", err)
 	}
-	code, gotTenant, err := svc.Authorize(ctx, user.ID, client.ClientID, testRedirect, []string{"openid"}, "n-0S6_WzA2Mj", challenge, "S256")
-	if err != nil || gotTenant != tenant {
-		t.Fatalf("authorize: tenant %s, %v", gotTenant, err)
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, testRedirect, []string{"openid"}, "n-1", challenge, "S256")
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
 	}
-
-	wrongVerifier := strings.Repeat("a", 43)
-	for name, v := range map[string]string{"missing": "", "wrong": wrongVerifier} {
-		if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect, v, ""); err == nil {
-			t.Errorf("exchange with %s verifier succeeded", name)
-		}
-	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, "wrong-secret", code, testRedirect, verifier, ""); err == nil {
-		t.Error("exchange with a wrong client secret succeeded")
-	}
-
-	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect, verifier, "")
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect, verifier, resource)
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
-	if issued.IDToken == "" || issued.RefreshToken == "" {
-		t.Errorf("exchange returned id token %t, refresh token %t; want both", issued.IDToken != "", issued.RefreshToken != "")
-	}
-	claims, err := issuer.VerifyAccessAnyAudience(issued.AccessToken)
-	if err != nil || claims.UserID != user.ID || claims.TenantID != tenant {
-		t.Fatalf("access token claims %+v, %v; want user %s in tenant %s", claims, err, user.ID, tenant)
-	}
+	return issued
+}
 
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect, verifier, ""); !errors.Is(err, errs.ErrOIDCAuthCodeUsed) {
-		t.Errorf("second exchange: %v, want %v", err, errs.ErrOIDCAuthCodeUsed)
+func wantOAuthError(t *testing.T, what string, err error, code string) {
+	t.Helper()
+	var oe *oauthError
+	if !errors.As(err, &oe) || oe.Code != code {
+		t.Errorf("%s: %v, want %s", what, err, code)
 	}
-	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, ""); err == nil {
-		t.Error("refresh token survived the code's replay")
+}
+
+const (
+	loginBase  = "https://login.example.test"
+	publicBase = "https://id.example.test"
+)
+
+// provider is the OpenID provider as browsers and applications reach it: the
+// service, a real hosted-login session service, the public routes and the
+// authenticated ones.
+type provider struct {
+	svc      *Service
+	notices  *LogoutNotices
+	sessions *authentication.Service
+	public   http.Handler
+	mount    func(chi.Router)
+}
+
+// newProvider returns the provider wired as production wires it, sign-out
+// notices included, its dependencies changed by each of with.
+func newProvider(t *testing.T, with ...func(d *Deps, sessions *authentication.Service)) *provider {
+	t.Helper()
+	return newProviderOver(t, func(*authentication.Deps) {}, with...)
+}
+
+// newProviderOver is newProvider with its hosted-login session service's
+// dependencies changed by sessionsChange.
+func newProviderOver(t *testing.T, sessionsChange func(*authentication.Deps), with ...func(d *Deps, sessions *authentication.Service)) *provider {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	issuer := dbtest.Issuer(t)
+	notices, err := NewLogoutNotices(pool, issuer)
+	if err != nil {
+		t.Fatal(err)
 	}
+	sessions := newSessions(t, issuer, notices, sessionsChange)
+	svc := newTestService(t, pool, issuer, func(d *Deps) {
+		for _, change := range with {
+			change(d, sessions)
+		}
+	})
+	h := &Handler{Service: svc, Sessions: sessions, LoginBaseURL: loginBase, PublicBaseURL: publicBase}
+	public := chi.NewRouter()
+	h.MountPublic(public)
+	h.MountBrowser(public)
+	h.MountToken(public)
+	return &provider{svc: svc, notices: notices, sessions: sessions, public: public, mount: h.Mount}
+}
+
+// newSessions is the hosted-login session service signing with issuer, which
+// tells applications through notices when someone signs out, its
+// dependencies then changed by change.
+func newSessions(t *testing.T, issuer *tokens.Issuer, notices *LogoutNotices, change func(*authentication.Deps)) *authentication.Service {
+	t.Helper()
+	return authtest.New(t, dbtest.Pool(t), func(d *authentication.Deps) { d.Tokens, d.SignOut = issuer, notices }, change)
+}
+
+// signIn opens a hosted-login session for userID and returns the browser's
+// cookie and the session's id.
+func (p *provider) signIn(t *testing.T, userID uuid.UUID) (*http.Cookie, uuid.UUID) {
+	t.Helper()
+	ctx := dbtest.Context(t)
+	raw, err := p.sessions.CreateLoginSession(ctx, userID, "192.0.2.1", "test")
+	if err != nil {
+		t.Fatalf("sign in: %v", err)
+	}
+	sessionID, _, err := p.sessions.ResolveLoginSessionWithID(ctx, raw)
+	if err != nil {
+		t.Fatalf("resolve the session: %v", err)
+	}
+	return &http.Cookie{Name: authentication.LoginSessionCookie, Value: raw}, sessionID
+}
+
+// asApplication serves the authenticated routes to the bearer of an access
+// token issued to an application, as the API's token middleware would.
+func (p *provider) asApplication(t *testing.T, accessToken string) http.Handler {
+	t.Helper()
+	claims, err := p.svc.issuer.VerifyAccessAnyAudience(accessToken)
+	if err != nil {
+		t.Fatalf("verify the access token: %v", err)
+	}
+	principal := dbtest.Principal(claims.UserID, claims.OrganizationID)
+	principal.Scopes = strings.Fields(claims.Scope)
+	return dbtest.Serve(principal, p.mount)
+}
+
+// browse sends a request as a browser holding cookie (nil for none), with
+// body (when not nil) as JSON.
+func browse(t *testing.T, h http.Handler, method, target string, cookie *http.Cookie, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	var raw []byte
+	if body != nil {
+		var err error
+		if raw, err = json.Marshal(body); err != nil {
+			t.Fatalf("encode the body: %v", err)
+		}
+	}
+	req := httptest.NewRequestWithContext(dbtest.Context(t), method, target, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// postForm posts form to path, with Basic credentials when user is not
+// empty.
+func postForm(t *testing.T, h http.Handler, path string, form url.Values, user, pass string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(dbtest.Context(t), http.MethodPost, path, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if user != "" {
+		req.SetBasicAuth(user, pass)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// redirected returns where a 302 sends the browser, without the query, and
+// the query; any other answer fails t.
+func redirected(t *testing.T, rec *httptest.ResponseRecorder) (string, url.Values) {
+	t.Helper()
+	if rec.Code != http.StatusFound {
+		t.Fatalf("want a redirect, got %d %s", rec.Code, rec.Body.String())
+	}
+	return splitURL(t, rec.Header().Get("Location"))
+}
+
+// verifyDomain records domain as verified by organization.
+func verifyDomain(t *testing.T, organization uuid.UUID, domain string) {
+	t.Helper()
+	if _, err := dbtest.Pool(t).Exec(context.Background(), `
+		INSERT INTO organization.domains (organization_id, domain, verification_token, verified_at) VALUES ($1, $2, 'token', NOW())`, organization, domain); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// pendingBackchannel starts a backchannel request of client for a and returns
+// its auth_req_id and the id a's approval names.
+func pendingBackchannel(t *testing.T, svc *Service, client *Client, secret string, a dbtest.Account) (string, uuid.UUID) {
+	t.Helper()
+	ctx := dbtest.Context(t)
+	started, err := svc.BackchannelAuthorize(ctx, client.ClientID, secret, a.Email, "openid", "")
+	if err != nil {
+		t.Fatalf("backchannel authorize: %v", err)
+	}
+	var id uuid.UUID
+	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT id FROM auth.oidc_ciba_requests WHERE auth_req_id_hash = $1`,
+		codes.Hash(started.AuthReqID)).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return started.AuthReqID, id
+}
+
+// refuseAudit makes recording action in organization fail until t ends, so a
+// test can check that the change the row describes rolls back with it.
+func refuseAudit(t *testing.T, organization uuid.UUID, action string) {
+	t.Helper()
+	owner, ctx := dbtest.Owner(t), dbtest.Context(t)
+	name := "refuse_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	for _, ddl := range []string{
+		`CREATE FUNCTION public.` + name + `() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit refused'; END $$`,
+		`CREATE TRIGGER ` + name + ` BEFORE INSERT ON audit.events FOR EACH ROW
+		 WHEN (NEW.organization_id = '` + organization.String() + `' AND NEW.action = '` + action + `')
+		 EXECUTE FUNCTION public.` + name + `()`,
+	} {
+		if _, err := owner.Exec(ctx, ddl); err != nil {
+			t.Fatalf("refuse %s: %v", action, err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = owner.Exec(context.Background(), `DROP TRIGGER `+name+` ON audit.events`)
+		_, _ = owner.Exec(context.Background(), `DROP FUNCTION public.`+name+`()`)
+	})
+}
+
+// recordedBy counts organization's audit rows of action about resource by
+// actor, from its address.
+func recordedBy(t *testing.T, organization uuid.UUID, action string, resource uuid.UUID, actor audit.Actor) int {
+	t.Helper()
+	return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = $2 AND resource_id = $3
+		AND actor_user_id = $4 AND actor_type = $5 AND host(ip) = $6 AND request_id = $7`,
+		organization, action, resource, actor.UserID, actor.Type, actor.IP, actor.RequestID)
 }

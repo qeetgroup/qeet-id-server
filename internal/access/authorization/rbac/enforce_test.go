@@ -50,7 +50,7 @@ func buildRouter(c Checker, p *httpx.Principal) http.Handler {
 
 func userPrincipal() *httpx.Principal {
 	uid, tid := uuid.New(), uuid.New()
-	return &httpx.Principal{UserID: &uid, TenantID: &tid, ActorType: "user"}
+	return &httpx.Principal{UserID: &uid, OrganizationID: &tid, ActorType: "user"}
 }
 
 func do(h http.Handler, method, path string) int {
@@ -156,7 +156,12 @@ func TestEnforce_MachineActorRequiresMatchingScope(t *testing.T) {
 		t.Run(actorType, func(t *testing.T) {
 			deny := &fakeChecker{allow: false}
 			uid, tid := uuid.New(), uuid.New()
-			principal := &httpx.Principal{UserID: &uid, TenantID: &tid, ActorType: actorType, Scopes: []string{"user.read"}}
+			principal := &httpx.Principal{UserID: &uid, OrganizationID: &tid, ActorType: actorType, Scopes: []string{"user.read"}}
+			if actorType == "api_key" {
+				// A key acting for no one; a personal key is held to its
+				// person's permissions too (enforce_db_test.go).
+				principal.UserID = nil
+			}
 			if got := do(buildRouter(deny, principal), "POST", "/v1/users"); got != http.StatusForbidden {
 				t.Fatalf("read-scoped %s POST /v1/users = %d, want 403", actorType, got)
 			}
@@ -184,7 +189,7 @@ func TestEnforce_UnmappedRouteDenied(t *testing.T) {
 func TestEnforce_UserOnlyRouteRejectsMachineActor(t *testing.T) {
 	allow := &fakeChecker{allow: true}
 	uid, tid := uuid.New(), uuid.New()
-	apiKey := &httpx.Principal{UserID: &uid, TenantID: &tid, ActorType: "api_key", Scopes: []string{"user.read"}}
+	apiKey := &httpx.Principal{UserID: &uid, OrganizationID: &tid, ActorType: "api_key", Scopes: []string{"user.read"}}
 	if got := do(buildRouter(allow, apiKey), "GET", "/v1/me"); got != http.StatusForbidden {
 		t.Fatalf("api_key GET /v1/me = %d, want 403", got)
 	}
@@ -193,12 +198,12 @@ func TestEnforce_UserOnlyRouteRejectsMachineActor(t *testing.T) {
 	}
 }
 
-func TestEnforce_TenantlessUserOnGatedRouteDenied(t *testing.T) {
+func TestEnforce_OrganizationlessUserOnGatedRouteDenied(t *testing.T) {
 	allow := &fakeChecker{allow: true}
 	uid := uuid.New()
-	tenantless := &httpx.Principal{UserID: &uid, ActorType: "user"} // no TenantID
-	if got := do(buildRouter(allow, tenantless), "POST", "/v1/users"); got != http.StatusForbidden {
-		t.Fatalf("tenant-less user on gated route = %d, want 403", got)
+	organizationless := &httpx.Principal{UserID: &uid, ActorType: "user"} // no OrganizationID
+	if got := do(buildRouter(allow, organizationless), "POST", "/v1/users"); got != http.StatusForbidden {
+		t.Fatalf("organization-less user on gated route = %d, want 403", got)
 	}
 }
 
@@ -229,7 +234,7 @@ func TestEnforce_MostLiteralPolicyWins(t *testing.T) {
 		"GET /v1/vault/{name}": HandlerAuthorizedPolicy(true, "vault:read"),
 	}
 	uid, tid := uuid.New(), uuid.New()
-	machine := &httpx.Principal{UserID: &uid, TenantID: &tid, ActorType: "api_key", Scopes: []string{"vault:read"}}
+	machine := &httpx.Principal{UserID: &uid, OrganizationID: &tid, ActorType: "api_key", Scopes: []string{"vault:read"}}
 
 	// Run repeatedly: a map-order bug shows up as a flake, not a hard failure.
 	for i := 0; i < 50; i++ {

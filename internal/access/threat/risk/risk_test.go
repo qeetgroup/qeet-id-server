@@ -20,8 +20,8 @@ func TestDeviceKey(t *testing.T) {
 		{ua: "", want: "other-other"},
 	}
 	for _, tc := range cases {
-		if got := deviceKey(tc.ua); got != tc.want {
-			t.Errorf("deviceKey(%q) = %q, want %q", tc.ua, got, tc.want)
+		if got := DeviceKey(tc.ua); got != tc.want {
+			t.Errorf("DeviceKey(%q) = %q, want %q", tc.ua, got, tc.want)
 		}
 	}
 }

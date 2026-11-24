@@ -12,62 +12,63 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countActivityHistory = `-- name: CountActivityHistory :one
 SELECT count(*)::bigint FROM (
     SELECT 1 FROM audit.events e
-    WHERE e.tenant_id = $1
+    WHERE e.organization_id = $1
       AND ($2::text[] IS NULL OR e.action = ANY($2))
       AND ($3::uuid IS NULL OR e.actor_user_id = $3)
       AND ($4::uuid IS NULL OR e.actor_user_id = $4 OR (e.resource_type = 'user' AND e.resource_id = $4) OR e.metadata->>'user_id' = $4::uuid::text)
       AND ($5::timestamptz IS NULL OR e.created_at >= $5)
       AND ($6::timestamptz IS NULL OR e.created_at <= $6)
       AND ($7::text IS NULL OR e.search_vector @@ audit.search_query($7)
-       OR e.actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape($7::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($7::text) || '%')
-             AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
-      AND ($8::text[] IS NULL OR e.resource_type = ANY($8))
-      AND ($9::uuid IS NULL OR e.resource_id = $9)
-      AND ($10::inet IS NULL OR e.ip = $10)
-      AND ($11::text[] IS NULL OR audit.activity_category(e.action) = ANY($11))
-      AND ($12::text[] IS NULL OR audit.activity_severity(e.action) = ANY($12))
-      AND ($13::text IS NULL
+       OR e.actor_user_id IN (SELECT su.id FROM account.users su
+           WHERE (su.email ILIKE $8::text || '%' OR su.display_name ILIKE '%' || $8::text || '%')
+             AND (su.organization_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.organization_id = $1))))
+      AND ($9::text[] IS NULL OR e.resource_type = ANY($9))
+      AND ($10::uuid IS NULL OR e.resource_id = $10)
+      AND ($11::inet IS NULL OR e.ip = $11)
+      AND ($12::text[] IS NULL OR audit.activity_category(e.action) = ANY($12))
+      AND ($13::text[] IS NULL OR audit.activity_severity(e.action) = ANY($13))
+      AND ($14::text IS NULL
            OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(e.action))
-              >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $13::text))
-    LIMIT $14
+              >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $14::text))
+    LIMIT $15
 ) matched
 `
 
 type CountActivityHistoryParams struct {
-	TenantID      pgtype.UUID
-	Actions       []string
-	ActorID       pgtype.UUID
-	Subject       pgtype.UUID
-	FromTs        pgtype.Timestamptz
-	ToTs          pgtype.Timestamptz
-	Q             *string
-	ResourceTypes []string
-	ResourceID    pgtype.UUID
-	Ip            *netip.Addr
-	Categories    []string
-	Severities    []string
-	MinSeverity   *string
-	CountCap      int32
+	OrganizationID *uuid.UUID
+	Actions        []string
+	ActorID        *uuid.UUID
+	Subject        *uuid.UUID
+	FromTs         *time.Time
+	ToTs           *time.Time
+	Q              *string
+	QLike          *string
+	ResourceTypes  []string
+	ResourceID     *uuid.UUID
+	Ip             *netip.Addr
+	Categories     []string
+	Severities     []string
+	MinSeverity    *string
+	CountCap       int32
 }
 
 // How many events ListActivityHistory's filters match, counted up to
-// count_cap: a count of an organisation's whole history would read all of it.
+// count_cap: a count of an organization's whole history would read all of it.
 func (q *Queries) CountActivityHistory(ctx context.Context, arg CountActivityHistoryParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countActivityHistory,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Actions,
 		arg.ActorID,
 		arg.Subject,
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.QLike,
 		arg.ResourceTypes,
 		arg.ResourceID,
 		arg.Ip,
@@ -83,40 +84,40 @@ func (q *Queries) CountActivityHistory(ctx context.Context, arg CountActivityHis
 
 const getActivityEventByID = `-- name: GetActivityEventByID :one
 SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
-       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.organization_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
-WHERE e.tenant_id = $1 AND e.id = $2
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.organization_id = e.organization_id
+WHERE e.organization_id = $1 AND e.id = $2
 `
 
 type GetActivityEventByIDParams struct {
-	TenantID pgtype.UUID
-	ID       uuid.UUID
+	OrganizationID *uuid.UUID
+	ID             uuid.UUID
 }
 
 type GetActivityEventByIDRow struct {
 	ID               uuid.UUID
-	ActorUserID      pgtype.UUID
+	ActorUserID      *uuid.UUID
 	ActorType        string
 	Action           string
 	ResourceType     string
-	ResourceID       pgtype.UUID
+	ResourceID       *uuid.UUID
 	Ip               string
 	UserAgent        *string
 	RequestID        *string
 	CreatedAt        time.Time
 	Metadata         json.RawMessage
-	TenantID         pgtype.UUID
+	OrganizationID   *uuid.UUID
 	ActorDisplayName *string
 	ActorEmail       *string
 }
 
-// Anchor lookup for related-events correlation, tenant-scoped. Returns
-// pgx.ErrNoRows when the id is unknown OR belongs to another tenant, so a
-// cross-tenant fetch surfaces as 404 (never a leak).
+// Anchor lookup for related-events correlation, organization-scoped. Returns
+// pgx.ErrNoRows when the id is unknown OR belongs to another organization, so a
+// cross-organization fetch surfaces as 404 (never a leak).
 func (q *Queries) GetActivityEventByID(ctx context.Context, arg GetActivityEventByIDParams) (GetActivityEventByIDRow, error) {
-	row := q.db.QueryRow(ctx, getActivityEventByID, arg.TenantID, arg.ID)
+	row := q.db.QueryRow(ctx, getActivityEventByID, arg.OrganizationID, arg.ID)
 	var i GetActivityEventByIDRow
 	err := row.Scan(
 		&i.ID,
@@ -130,7 +131,7 @@ func (q *Queries) GetActivityEventByID(ctx context.Context, arg GetActivityEvent
 		&i.RequestID,
 		&i.CreatedAt,
 		&i.Metadata,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.ActorDisplayName,
 		&i.ActorEmail,
 	)
@@ -140,72 +141,73 @@ func (q *Queries) GetActivityEventByID(ctx context.Context, arg GetActivityEvent
 const listActivityHistory = `-- name: ListActivityHistory :many
 
 SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
-       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.organization_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
-WHERE e.tenant_id = $1
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.organization_id = e.organization_id
+WHERE e.organization_id = $1
   AND ($2::text[] IS NULL OR e.action = ANY($2))
   AND ($3::uuid IS NULL OR e.actor_user_id = $3)
   AND ($4::uuid IS NULL OR e.actor_user_id = $4 OR (e.resource_type = 'user' AND e.resource_id = $4) OR e.metadata->>'user_id' = $4::uuid::text)
   AND ($5::timestamptz IS NULL OR e.created_at >= $5)
   AND ($6::timestamptz IS NULL OR e.created_at <= $6)
   AND ($7::text IS NULL OR e.search_vector @@ audit.search_query($7)
-       OR e.actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape($7::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($7::text) || '%')
-             AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
-  AND ($8::text[] IS NULL OR e.resource_type = ANY($8))
-  AND ($9::uuid IS NULL OR e.resource_id = $9)
-  AND ($10::inet IS NULL OR e.ip = $10)
-  AND ($11::text[] IS NULL OR audit.activity_category(e.action) = ANY($11))
-  AND ($12::text[] IS NULL OR audit.activity_severity(e.action) = ANY($12))
-  AND ($13::text IS NULL
+       OR e.actor_user_id IN (SELECT su.id FROM account.users su
+           WHERE (su.email ILIKE $8::text || '%' OR su.display_name ILIKE '%' || $8::text || '%')
+             AND (su.organization_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.organization_id = $1))))
+  AND ($9::text[] IS NULL OR e.resource_type = ANY($9))
+  AND ($10::uuid IS NULL OR e.resource_id = $10)
+  AND ($11::inet IS NULL OR e.ip = $11)
+  AND ($12::text[] IS NULL OR audit.activity_category(e.action) = ANY($12))
+  AND ($13::text[] IS NULL OR audit.activity_severity(e.action) = ANY($13))
+  AND ($14::text IS NULL
        OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(e.action))
-          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $13::text))
-  AND ($14::timestamptz IS NULL OR e.created_at < $14 OR (e.created_at = $14 AND e.id < $15::uuid))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $14::text))
+  AND ($15::timestamptz IS NULL OR e.created_at < $15 OR (e.created_at = $15 AND e.id < $16::uuid))
 ORDER BY e.created_at DESC, e.id DESC
-LIMIT $16
+LIMIT $17
 `
 
 type ListActivityHistoryParams struct {
-	TenantID      pgtype.UUID
-	Actions       []string
-	ActorID       pgtype.UUID
-	Subject       pgtype.UUID
-	FromTs        pgtype.Timestamptz
-	ToTs          pgtype.Timestamptz
-	Q             *string
-	ResourceTypes []string
-	ResourceID    pgtype.UUID
-	Ip            *netip.Addr
-	Categories    []string
-	Severities    []string
-	MinSeverity   *string
-	CursorTs      pgtype.Timestamptz
-	CursorID      pgtype.UUID
-	RowLimit      int32
+	OrganizationID *uuid.UUID
+	Actions        []string
+	ActorID        *uuid.UUID
+	Subject        *uuid.UUID
+	FromTs         *time.Time
+	ToTs           *time.Time
+	Q              *string
+	QLike          *string
+	ResourceTypes  []string
+	ResourceID     *uuid.UUID
+	Ip             *netip.Addr
+	Categories     []string
+	Severities     []string
+	MinSeverity    *string
+	CursorTs       *time.Time
+	CursorID       *uuid.UUID
+	RowLimit       int32
 }
 
 type ListActivityHistoryRow struct {
 	ID               uuid.UUID
-	ActorUserID      pgtype.UUID
+	ActorUserID      *uuid.UUID
 	ActorType        string
 	Action           string
 	ResourceType     string
-	ResourceID       pgtype.UUID
+	ResourceID       *uuid.UUID
 	Ip               string
 	UserAgent        *string
 	RequestID        *string
 	CreatedAt        time.Time
 	Metadata         json.RawMessage
-	TenantID         pgtype.UUID
+	OrganizationID   *uuid.UUID
 	ActorDisplayName *string
 	ActorEmail       *string
 }
 
 // Queries for the activity domain.
 // Static queries against audit.events; compiled by sqlc into ./dbgen.
-// All queries are scoped by tenant_id (multi-tenancy).
+// All queries are scoped by organization_id (multi-tenancy).
 // Cursor-paginated history, newest first. Optional filters: action type array,
 // actor, subject (actor, user-resource target or metadata.user_id), time range,
 // full-text search (audit.search_query: words, as prefixes, or the actor's name or email), resource types, a resource, an address, and the
@@ -226,13 +228,14 @@ type ListActivityHistoryRow struct {
 // service actors have no user row).
 func (q *Queries) ListActivityHistory(ctx context.Context, arg ListActivityHistoryParams) ([]ListActivityHistoryRow, error) {
 	rows, err := q.db.Query(ctx, listActivityHistory,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Actions,
 		arg.ActorID,
 		arg.Subject,
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.QLike,
 		arg.ResourceTypes,
 		arg.ResourceID,
 		arg.Ip,
@@ -262,7 +265,7 @@ func (q *Queries) ListActivityHistory(ctx context.Context, arg ListActivityHisto
 			&i.RequestID,
 			&i.CreatedAt,
 			&i.Metadata,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.ActorDisplayName,
 			&i.ActorEmail,
 		); err != nil {
@@ -278,11 +281,11 @@ func (q *Queries) ListActivityHistory(ctx context.Context, arg ListActivityHisto
 
 const listRelatedByActor = `-- name: ListRelatedByActor :many
 SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
-       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.organization_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
-WHERE e.tenant_id = $1
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.organization_id = e.organization_id
+WHERE e.organization_id = $1
   AND e.actor_user_id = $2
   AND e.created_at BETWEEN $3 AND $4
   AND e.id <> $5
@@ -291,27 +294,27 @@ LIMIT $6
 `
 
 type ListRelatedByActorParams struct {
-	TenantID  pgtype.UUID
-	ActorID   pgtype.UUID
-	FromTs    time.Time
-	ToTs      time.Time
-	ExcludeID uuid.UUID
-	RowLimit  int32
+	OrganizationID *uuid.UUID
+	ActorID        *uuid.UUID
+	FromTs         time.Time
+	ToTs           time.Time
+	ExcludeID      uuid.UUID
+	RowLimit       int32
 }
 
 type ListRelatedByActorRow struct {
 	ID               uuid.UUID
-	ActorUserID      pgtype.UUID
+	ActorUserID      *uuid.UUID
 	ActorType        string
 	Action           string
 	ResourceType     string
-	ResourceID       pgtype.UUID
+	ResourceID       *uuid.UUID
 	Ip               string
 	UserAgent        *string
 	RequestID        *string
 	CreatedAt        time.Time
 	Metadata         json.RawMessage
-	TenantID         pgtype.UUID
+	OrganizationID   *uuid.UUID
 	ActorDisplayName *string
 	ActorEmail       *string
 }
@@ -320,7 +323,7 @@ type ListRelatedByActorRow struct {
 // excluding the anchor. Ordered newest-first for parity with history.
 func (q *Queries) ListRelatedByActor(ctx context.Context, arg ListRelatedByActorParams) ([]ListRelatedByActorRow, error) {
 	rows, err := q.db.Query(ctx, listRelatedByActor,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ActorID,
 		arg.FromTs,
 		arg.ToTs,
@@ -346,7 +349,7 @@ func (q *Queries) ListRelatedByActor(ctx context.Context, arg ListRelatedByActor
 			&i.RequestID,
 			&i.CreatedAt,
 			&i.Metadata,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.ActorDisplayName,
 			&i.ActorEmail,
 		); err != nil {
@@ -362,11 +365,11 @@ func (q *Queries) ListRelatedByActor(ctx context.Context, arg ListRelatedByActor
 
 const listRelatedByRequestID = `-- name: ListRelatedByRequestID :many
 SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
-       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.organization_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
-WHERE e.tenant_id = $1
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.organization_id = e.organization_id
+WHERE e.organization_id = $1
   AND e.request_id = $2
   AND e.id <> $3
 ORDER BY e.created_at ASC, e.id ASC
@@ -374,25 +377,25 @@ LIMIT $4
 `
 
 type ListRelatedByRequestIDParams struct {
-	TenantID  pgtype.UUID
-	RequestID *string
-	ExcludeID uuid.UUID
-	RowLimit  int32
+	OrganizationID *uuid.UUID
+	RequestID      *string
+	ExcludeID      uuid.UUID
+	RowLimit       int32
 }
 
 type ListRelatedByRequestIDRow struct {
 	ID               uuid.UUID
-	ActorUserID      pgtype.UUID
+	ActorUserID      *uuid.UUID
 	ActorType        string
 	Action           string
 	ResourceType     string
-	ResourceID       pgtype.UUID
+	ResourceID       *uuid.UUID
 	Ip               string
 	UserAgent        *string
 	RequestID        *string
 	CreatedAt        time.Time
 	Metadata         json.RawMessage
-	TenantID         pgtype.UUID
+	OrganizationID   *uuid.UUID
 	ActorDisplayName *string
 	ActorEmail       *string
 }
@@ -401,7 +404,7 @@ type ListRelatedByRequestIDRow struct {
 // anchor's request_id is non-empty.
 func (q *Queries) ListRelatedByRequestID(ctx context.Context, arg ListRelatedByRequestIDParams) ([]ListRelatedByRequestIDRow, error) {
 	rows, err := q.db.Query(ctx, listRelatedByRequestID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.RequestID,
 		arg.ExcludeID,
 		arg.RowLimit,
@@ -425,7 +428,7 @@ func (q *Queries) ListRelatedByRequestID(ctx context.Context, arg ListRelatedByR
 			&i.RequestID,
 			&i.CreatedAt,
 			&i.Metadata,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.ActorDisplayName,
 			&i.ActorEmail,
 		); err != nil {
@@ -441,35 +444,35 @@ func (q *Queries) ListRelatedByRequestID(ctx context.Context, arg ListRelatedByR
 
 const replayActivityHistory = `-- name: ReplayActivityHistory :many
 SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
-       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.organization_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
-WHERE e.tenant_id = $1
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.organization_id = e.organization_id
+WHERE e.organization_id = $1
   AND (e.created_at > $2 OR (e.created_at = $2 AND e.id > $3))
 ORDER BY e.created_at ASC, e.id ASC
 LIMIT 100
 `
 
 type ReplayActivityHistoryParams struct {
-	TenantID pgtype.UUID
-	AfterTs  time.Time
-	AfterID  uuid.UUID
+	OrganizationID *uuid.UUID
+	AfterTs        time.Time
+	AfterID        uuid.UUID
 }
 
 type ReplayActivityHistoryRow struct {
 	ID               uuid.UUID
-	ActorUserID      pgtype.UUID
+	ActorUserID      *uuid.UUID
 	ActorType        string
 	Action           string
 	ResourceType     string
-	ResourceID       pgtype.UUID
+	ResourceID       *uuid.UUID
 	Ip               string
 	UserAgent        *string
 	RequestID        *string
 	CreatedAt        time.Time
 	Metadata         json.RawMessage
-	TenantID         pgtype.UUID
+	OrganizationID   *uuid.UUID
 	ActorDisplayName *string
 	ActorEmail       *string
 }
@@ -479,7 +482,7 @@ type ReplayActivityHistoryRow struct {
 // comparison (created_at, id) > (after_ts, after_id) is expanded — the #1
 // sqlc gotcha with row-value predicates.
 func (q *Queries) ReplayActivityHistory(ctx context.Context, arg ReplayActivityHistoryParams) ([]ReplayActivityHistoryRow, error) {
-	rows, err := q.db.Query(ctx, replayActivityHistory, arg.TenantID, arg.AfterTs, arg.AfterID)
+	rows, err := q.db.Query(ctx, replayActivityHistory, arg.OrganizationID, arg.AfterTs, arg.AfterID)
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +502,7 @@ func (q *Queries) ReplayActivityHistory(ctx context.Context, arg ReplayActivityH
 			&i.RequestID,
 			&i.CreatedAt,
 			&i.Metadata,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.ActorDisplayName,
 			&i.ActorEmail,
 		); err != nil {
@@ -516,41 +519,42 @@ func (q *Queries) ReplayActivityHistory(ctx context.Context, arg ReplayActivityH
 const summarizeActivityByAction = `-- name: SummarizeActivityByAction :many
 SELECT action, count(*)::bigint AS count
 FROM audit.events
-WHERE audit.events.tenant_id = $1
+WHERE audit.events.organization_id = $1
   AND ($2::text[] IS NULL OR action = ANY($2))
   AND ($3::uuid IS NULL OR actor_user_id = $3)
   AND ($4::uuid IS NULL OR actor_user_id = $4 OR (resource_type = 'user' AND resource_id = $4) OR metadata->>'user_id' = $4::uuid::text)
   AND ($5::timestamptz IS NULL OR created_at >= $5)
   AND ($6::timestamptz IS NULL OR created_at <= $6)
   AND ($7::text IS NULL OR search_vector @@ audit.search_query($7)
-       OR actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape($7::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($7::text) || '%')
-             AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
-  AND ($8::text[] IS NULL OR resource_type = ANY($8))
-  AND ($9::uuid IS NULL OR resource_id = $9)
-  AND ($10::inet IS NULL OR ip = $10)
-  AND ($11::text[] IS NULL OR audit.activity_category(action) = ANY($11))
-  AND ($12::text[] IS NULL OR audit.activity_severity(action) = ANY($12))
-  AND ($13::text IS NULL
+       OR actor_user_id IN (SELECT su.id FROM account.users su
+           WHERE (su.email ILIKE $8::text || '%' OR su.display_name ILIKE '%' || $8::text || '%')
+             AND (su.organization_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.organization_id = $1))))
+  AND ($9::text[] IS NULL OR resource_type = ANY($9))
+  AND ($10::uuid IS NULL OR resource_id = $10)
+  AND ($11::inet IS NULL OR ip = $11)
+  AND ($12::text[] IS NULL OR audit.activity_category(action) = ANY($12))
+  AND ($13::text[] IS NULL OR audit.activity_severity(action) = ANY($13))
+  AND ($14::text IS NULL
        OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(action))
-          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $13::text))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $14::text))
 GROUP BY action
 `
 
 type SummarizeActivityByActionParams struct {
-	TenantID      pgtype.UUID
-	Actions       []string
-	ActorID       pgtype.UUID
-	Subject       pgtype.UUID
-	FromTs        pgtype.Timestamptz
-	ToTs          pgtype.Timestamptz
-	Q             *string
-	ResourceTypes []string
-	ResourceID    pgtype.UUID
-	Ip            *netip.Addr
-	Categories    []string
-	Severities    []string
-	MinSeverity   *string
+	OrganizationID *uuid.UUID
+	Actions        []string
+	ActorID        *uuid.UUID
+	Subject        *uuid.UUID
+	FromTs         *time.Time
+	ToTs           *time.Time
+	Q              *string
+	QLike          *string
+	ResourceTypes  []string
+	ResourceID     *uuid.UUID
+	Ip             *netip.Addr
+	Categories     []string
+	Severities     []string
+	MinSeverity    *string
 }
 
 type SummarizeActivityByActionRow struct {
@@ -564,13 +568,14 @@ type SummarizeActivityByActionRow struct {
 // so aggregation by severity cannot be a plain GROUP BY on a column.
 func (q *Queries) SummarizeActivityByAction(ctx context.Context, arg SummarizeActivityByActionParams) ([]SummarizeActivityByActionRow, error) {
 	rows, err := q.db.Query(ctx, summarizeActivityByAction,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Actions,
 		arg.ActorID,
 		arg.Subject,
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.QLike,
 		arg.ResourceTypes,
 		arg.ResourceID,
 		arg.Ip,
@@ -601,43 +606,44 @@ SELECT (to_timestamp(floor(extract(epoch FROM created_at) / $1::bigint) * $1::bi
        action,
        count(*)::bigint AS count
 FROM audit.events
-WHERE audit.events.tenant_id = $2
+WHERE audit.events.organization_id = $2
   AND ($3::text[] IS NULL OR action = ANY($3))
   AND ($4::uuid IS NULL OR actor_user_id = $4)
   AND ($5::uuid IS NULL OR actor_user_id = $5 OR (resource_type = 'user' AND resource_id = $5) OR metadata->>'user_id' = $5::uuid::text)
   AND ($6::timestamptz IS NULL OR created_at >= $6)
   AND ($7::timestamptz IS NULL OR created_at <= $7)
   AND ($8::text IS NULL OR search_vector @@ audit.search_query($8)
-       OR actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape($8::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($8::text) || '%')
-             AND (su.tenant_id = $2 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $2))))
-  AND ($9::text[] IS NULL OR resource_type = ANY($9))
-  AND ($10::uuid IS NULL OR resource_id = $10)
-  AND ($11::inet IS NULL OR ip = $11)
-  AND ($12::text[] IS NULL OR audit.activity_category(action) = ANY($12))
-  AND ($13::text[] IS NULL OR audit.activity_severity(action) = ANY($13))
-  AND ($14::text IS NULL
+       OR actor_user_id IN (SELECT su.id FROM account.users su
+           WHERE (su.email ILIKE $9::text || '%' OR su.display_name ILIKE '%' || $9::text || '%')
+             AND (su.organization_id = $2 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.organization_id = $2))))
+  AND ($10::text[] IS NULL OR resource_type = ANY($10))
+  AND ($11::uuid IS NULL OR resource_id = $11)
+  AND ($12::inet IS NULL OR ip = $12)
+  AND ($13::text[] IS NULL OR audit.activity_category(action) = ANY($13))
+  AND ($14::text[] IS NULL OR audit.activity_severity(action) = ANY($14))
+  AND ($15::text IS NULL
        OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(action))
-          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $14::text))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $15::text))
 GROUP BY bucket, action
 ORDER BY bucket ASC
 `
 
 type SummarizeActivityTimeSeriesParams struct {
-	BucketSeconds int64
-	TenantID      pgtype.UUID
-	Actions       []string
-	ActorID       pgtype.UUID
-	Subject       pgtype.UUID
-	FromTs        pgtype.Timestamptz
-	ToTs          pgtype.Timestamptz
-	Q             *string
-	ResourceTypes []string
-	ResourceID    pgtype.UUID
-	Ip            *netip.Addr
-	Categories    []string
-	Severities    []string
-	MinSeverity   *string
+	BucketSeconds  int64
+	OrganizationID *uuid.UUID
+	Actions        []string
+	ActorID        *uuid.UUID
+	Subject        *uuid.UUID
+	FromTs         *time.Time
+	ToTs           *time.Time
+	Q              *string
+	QLike          *string
+	ResourceTypes  []string
+	ResourceID     *uuid.UUID
+	Ip             *netip.Addr
+	Categories     []string
+	Severities     []string
+	MinSeverity    *string
 }
 
 type SummarizeActivityTimeSeriesRow struct {
@@ -653,13 +659,14 @@ type SummarizeActivityTimeSeriesRow struct {
 func (q *Queries) SummarizeActivityTimeSeries(ctx context.Context, arg SummarizeActivityTimeSeriesParams) ([]SummarizeActivityTimeSeriesRow, error) {
 	rows, err := q.db.Query(ctx, summarizeActivityTimeSeries,
 		arg.BucketSeconds,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Actions,
 		arg.ActorID,
 		arg.Subject,
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.QLike,
 		arg.ResourceTypes,
 		arg.ResourceID,
 		arg.Ip,
@@ -692,40 +699,41 @@ SELECT count(*)::bigint AS total,
        count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'agent')::bigint AS unique_agents,
        count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'service')::bigint AS unique_services
 FROM audit.events
-WHERE audit.events.tenant_id = $1
+WHERE audit.events.organization_id = $1
   AND ($2::text[] IS NULL OR action = ANY($2))
   AND ($3::uuid IS NULL OR actor_user_id = $3)
   AND ($4::uuid IS NULL OR actor_user_id = $4 OR (resource_type = 'user' AND resource_id = $4) OR metadata->>'user_id' = $4::uuid::text)
   AND ($5::timestamptz IS NULL OR created_at >= $5)
   AND ($6::timestamptz IS NULL OR created_at <= $6)
   AND ($7::text IS NULL OR search_vector @@ audit.search_query($7)
-       OR actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape($7::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($7::text) || '%')
-             AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
-  AND ($8::text[] IS NULL OR resource_type = ANY($8))
-  AND ($9::uuid IS NULL OR resource_id = $9)
-  AND ($10::inet IS NULL OR ip = $10)
-  AND ($11::text[] IS NULL OR audit.activity_category(action) = ANY($11))
-  AND ($12::text[] IS NULL OR audit.activity_severity(action) = ANY($12))
-  AND ($13::text IS NULL
+       OR actor_user_id IN (SELECT su.id FROM account.users su
+           WHERE (su.email ILIKE $8::text || '%' OR su.display_name ILIKE '%' || $8::text || '%')
+             AND (su.organization_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.organization_id = $1))))
+  AND ($9::text[] IS NULL OR resource_type = ANY($9))
+  AND ($10::uuid IS NULL OR resource_id = $10)
+  AND ($11::inet IS NULL OR ip = $11)
+  AND ($12::text[] IS NULL OR audit.activity_category(action) = ANY($12))
+  AND ($13::text[] IS NULL OR audit.activity_severity(action) = ANY($13))
+  AND ($14::text IS NULL
        OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(action))
-          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $13::text))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $14::text))
 `
 
 type SummarizeActivityTotalsParams struct {
-	TenantID      pgtype.UUID
-	Actions       []string
-	ActorID       pgtype.UUID
-	Subject       pgtype.UUID
-	FromTs        pgtype.Timestamptz
-	ToTs          pgtype.Timestamptz
-	Q             *string
-	ResourceTypes []string
-	ResourceID    pgtype.UUID
-	Ip            *netip.Addr
-	Categories    []string
-	Severities    []string
-	MinSeverity   *string
+	OrganizationID *uuid.UUID
+	Actions        []string
+	ActorID        *uuid.UUID
+	Subject        *uuid.UUID
+	FromTs         *time.Time
+	ToTs           *time.Time
+	Q              *string
+	QLike          *string
+	ResourceTypes  []string
+	ResourceID     *uuid.UUID
+	Ip             *netip.Addr
+	Categories     []string
+	Severities     []string
+	MinSeverity    *string
 }
 
 type SummarizeActivityTotalsRow struct {
@@ -742,13 +750,14 @@ type SummarizeActivityTotalsRow struct {
 // principals are told apart by the metadata.actor_id their events record.
 func (q *Queries) SummarizeActivityTotals(ctx context.Context, arg SummarizeActivityTotalsParams) (SummarizeActivityTotalsRow, error) {
 	row := q.db.QueryRow(ctx, summarizeActivityTotals,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Actions,
 		arg.ActorID,
 		arg.Subject,
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.QLike,
 		arg.ResourceTypes,
 		arg.ResourceID,
 		arg.Ip,

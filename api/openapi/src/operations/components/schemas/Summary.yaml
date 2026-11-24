@@ -1,0 +1,12 @@
+type: object
+required:
+  - high_score_open
+  - open
+  - resolved_7d
+properties:
+  high_score_open:
+    type: integer
+  open:
+    type: integer
+  resolved_7d:
+    type: integer

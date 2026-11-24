@@ -1,6 +1,6 @@
 package social
 
-// An organisation's provider named github, facebook, x, discord or apple isn't
+// An organization's provider named github, facebook, x, discord or apple isn't
 // OpenID Connect: each has its own authorize, token and user calls, mapped onto
 // the same userInfo. Any other name is an OpenID Connect provider found by its
 // discovery document.
@@ -14,7 +14,31 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
+
+// userInfo is who a provider signed in: what its userinfo endpoint, user API
+// or ID token says.
+type userInfo struct {
+	Subject       string `json:"sub"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
+	Name          string `json:"name"`
+	Picture       string `json:"picture"`
+}
+
+// oauthClient calls the providers that aren't OpenID Connect, GitHub and the
+// OAuth 2.0 adapters, at their fixed endpoints.
+type oauthClient struct {
+	http      *http.Client
+	endpoints map[string]oauth2Endpoints
+}
+
+func newOAuthClient(policy *egress.Policy) *oauthClient {
+	return &oauthClient{http: policy.HTTPClient(10 * time.Second), endpoints: defaultEndpoints}
+}
 
 // Provider kinds: OpenID Connect, or one of the OAuth 2.0 adapters.
 const (

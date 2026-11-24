@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -15,15 +15,15 @@ import (
 // TestPolicyVersionsAreKeptWholeAndRestore checks that each save of a policy
 // is kept whole as its next version with its author, that the policy names
 // its version and last author, and that restoring a version saves it as the
-// next one, in its tenant only.
+// next one, in its organization only.
 func TestPolicyVersionsAreKeptWholeAndRestore(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	asha, ravi := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	svc := newService(t)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	asha, ravi := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	byAsha, byRavi := audit.Actor{UserID: &asha.ID, Type: "user"}, audit.Actor{UserID: &ravi.ID, Type: "user"}
 	first := json.RawMessage(`{"attr":"resource.region","op":"eq","value":"eu"}`)
-	p, err := svc.Create(ctx, tenant, CreateInput{Name: "EU only", Effect: "deny", ResourceType: "invoice", Action: "read",
+	p, err := svc.Create(ctx, organization, CreateInput{Name: "EU only", Effect: "deny", ResourceType: "invoice", Action: "read",
 		Condition: first, Priority: 5, Enabled: true}, byAsha)
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func TestPolicyVersionsAreKeptWholeAndRestore(t *testing.T) {
 	if p.Version != 1 || p.UpdatedBy == nil || *p.UpdatedBy != asha.ID {
 		t.Errorf("a new policy: version %d, updated by %v; want 1, by Asha", p.Version, p.UpdatedBy)
 	}
-	p, err = svc.Update(ctx, p.ID, tenant, UpdateInput{Name: "EU only", Effect: "deny", ResourceType: "invoice", Action: "read",
+	p, err = svc.Update(ctx, p.ID, organization, UpdateInput{Name: "EU only", Effect: "deny", ResourceType: "invoice", Action: "read",
 		Condition: json.RawMessage(`{}`), Priority: 9, Enabled: false}, byRavi)
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestPolicyVersionsAreKeptWholeAndRestore(t *testing.T) {
 	if p.Version != 2 || *p.UpdatedBy != ravi.ID {
 		t.Errorf("a changed policy: version %d, updated by %v; want 2, by Ravi", p.Version, p.UpdatedBy)
 	}
-	versions, err := svc.Versions(ctx, p.ID, tenant)
+	versions, err := svc.Versions(ctx, p.ID, organization)
 	if err != nil || len(versions) != 2 || versions[0].Version != 2 || versions[1].Version != 1 {
 		t.Fatalf("versions: %+v, %v; want 2 then 1", versions, err)
 	}
@@ -47,23 +47,23 @@ func TestPolicyVersionsAreKeptWholeAndRestore(t *testing.T) {
 		t.Errorf("version 1: %+v (%s); want the whole first save, by Asha", v, v.Condition)
 	}
 
-	restored, err := svc.Restore(ctx, p.ID, tenant, 1, byRavi)
+	restored, err := svc.Restore(ctx, p.ID, organization, 1, byRavi)
 	if err != nil {
 		t.Fatalf("restore version 1: %v", err)
 	}
 	if restored.Version != 3 || restored.Priority != 5 || !restored.Enabled || string(restored.Condition) == `{}` {
 		t.Errorf("restored policy %+v; want version 3 with version 1's state", restored)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'abac_policy.restored' AND metadata->>'restored_from' = '1'`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'abac_policy.restored' AND metadata->>'restored_from' = '1'`, organization); n != 1 {
 		t.Errorf("%d restores audited, want 1", n)
 	}
-	if _, err := svc.Restore(ctx, p.ID, tenant, 9, byRavi); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := svc.Restore(ctx, p.ID, organization, 9, byRavi); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("restore a version there isn't: %v, want not found", err)
 	}
 	if _, err := svc.Versions(ctx, p.ID, other); !errors.Is(err, errs.ErrNotFound) {
-		t.Errorf("another tenant's versions: %v, want not found", err)
+		t.Errorf("another organization's versions: %v, want not found", err)
 	}
 	if _, err := svc.Restore(ctx, p.ID, other, 1, byRavi); !errors.Is(err, errs.ErrNotFound) {
-		t.Errorf("restore from another tenant: %v, want not found", err)
+		t.Errorf("restore from another organization: %v, want not found", err)
 	}
 }

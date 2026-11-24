@@ -1,0 +1,40 @@
+type: object
+required:
+  - dns_detail
+  - dns_verified
+  - endpoint_state
+  - login_domain
+  - records
+  - status
+  - tls_detail
+  - tls_state
+properties:
+  checked_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+    description: When this result was found; null without a hostname.
+  dns_checked_at:
+    type: string
+    format: date-time
+  dns_detail:
+    type: string
+  dns_verified:
+    type: boolean
+  endpoint_state:
+    type: string
+  endpoint_url:
+    type: string
+  login_domain:
+    type: string
+  records:
+    type: array
+    items:
+      $ref: ./DNSRecord.yaml
+  status:
+    type: string
+  tls_detail:
+    type: string
+  tls_state:
+    type: string

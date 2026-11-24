@@ -1,0 +1,31 @@
+get:
+  operationId: verifyPlatformAuditChain
+  summary: Verify platform audit chain (public)
+  description: >-
+    Verifies the platform-level audit hash chains (the rows with no organization,
+    spread over 16 chains so their writers don't queue on one) and returns only
+    whether they are all intact and how many rows were checked. Each chain must
+    have a row, and every platform row must be on one of them. Unauthenticated
+    by design so any external party can independently confirm the platform has
+    not tampered with its audit log; per-organization verification is at
+    /v1/organizations/{organizationID}/audit/verify and requires auth.
+  tags:
+    - Audit
+  security: []
+  responses:
+    "200":
+      description: "{ chain_valid: bool, rows_checked: int }"
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              chain_valid:
+                type: boolean
+              rows_checked:
+                type: integer
+            required:
+              - chain_valid
+              - rows_checked
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

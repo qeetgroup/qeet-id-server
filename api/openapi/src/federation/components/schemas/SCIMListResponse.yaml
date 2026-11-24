@@ -1,0 +1,19 @@
+type: object
+properties:
+  schemas:
+    type: array
+    items:
+      type: string
+    example:
+      - urn:ietf:params:scim:api:messages:2.0:ListResponse
+  totalResults:
+    type: integer
+  startIndex:
+    type: integer
+  itemsPerPage:
+    type: integer
+  Resources:
+    type: array
+    items:
+      type: object
+      additionalProperties: true

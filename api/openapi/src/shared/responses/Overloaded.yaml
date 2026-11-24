@@ -1,0 +1,24 @@
+description: >-
+  The server is too busy to check or set a password or code now, so the request
+  was refused and changed nothing (`server.overloaded`, retryable). Try again
+  after the seconds Retry-After gives, also sent as `metadata.retry_after`.
+headers:
+  X-Request-Id:
+    $ref: ../headers/RequestId.yaml
+  Retry-After:
+    description: Seconds to wait before trying again (1 to 3).
+    schema:
+      type: integer
+content:
+  application/json:
+    example:
+      error:
+        code: server.overloaded
+        message: The service is busy. Please try again in a moment.
+        translation_key: server.overloaded
+        retryable: true
+        metadata:
+          retry_after: 2
+        request_id: api-1/Kx9fQ2mW7a-000131
+    schema:
+      $ref: ../schemas/Error.yaml

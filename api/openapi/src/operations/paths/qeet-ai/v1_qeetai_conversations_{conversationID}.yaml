@@ -1,0 +1,116 @@
+get:
+  operationId: getConversation
+  summary: Get conversation with messages
+  description: >-
+    Returns a single conversation and its full message history in chronological
+    order.
+  tags:
+    - Qeet AI
+  parameters:
+    - name: conversationID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+  responses:
+    "200":
+      description: Conversation with messages
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - conversation
+              - messages
+            properties:
+              conversation:
+                $ref: ../../components/schemas/QeetAIConversation.yaml
+              messages:
+                type: array
+                items:
+                  $ref: ../../components/schemas/QeetAIMessage.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+patch:
+  operationId: updateConversation
+  summary: Update conversation
+  description: Rename or pin/unpin a conversation.
+  tags:
+    - Qeet AI
+  parameters:
+    - name: conversationID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            title:
+              type:
+                - string
+                - "null"
+            pinned:
+              type:
+                - boolean
+                - "null"
+  responses:
+    "200":
+      description: Updated conversation
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/QeetAIConversation.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+delete:
+  operationId: deleteConversation
+  summary: Delete conversation
+  description: Deletes a conversation and all its messages.
+  tags:
+    - Qeet AI
+  parameters:
+    - name: conversationID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+  responses:
+    "204":
+      description: Deleted
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

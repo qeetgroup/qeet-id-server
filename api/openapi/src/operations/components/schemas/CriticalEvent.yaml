@@ -1,0 +1,50 @@
+type: object
+required:
+  - id
+  - source
+  - level
+  - action
+  - occurred_at
+properties:
+  id:
+    type: string
+    format: uuid
+    description: The audit event's or the anomaly alert's id.
+  source:
+    type: string
+    enum:
+      - audit
+      - anomaly
+  level:
+    type: string
+    enum:
+      - high
+      - medium
+  action:
+    type: string
+  actor_user_id:
+    type: string
+    format: uuid
+  actor_email:
+    type: string
+  resource_type:
+    type: string
+  resource_id:
+    type: string
+    format: uuid
+  ip:
+    type: string
+  reasons:
+    type: array
+    items:
+      type: string
+    description: For an anomaly, why it stood out.
+  score:
+    type: number
+    description: For an anomaly, how unusual it was, 0 to 1.
+  metadata:
+    type: object
+    additionalProperties: true
+  occurred_at:
+    type: string
+    format: date-time

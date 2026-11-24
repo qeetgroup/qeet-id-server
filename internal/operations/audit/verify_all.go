@@ -13,7 +13,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
 // ErrChainBroken is VerifyAll's error when a chain doesn't verify.
@@ -24,45 +26,39 @@ var verifyFailures = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Scheduled audit-chain verifications that found a broken chain or could not run.",
 })
 
-// BrokenChain is one chain that failed verification: its organisation, or nil
+// BrokenChain is one chain that failed verification: its organization, or nil
 // and its shard for a platform chain, the first row that doesn't verify (nil
 // for a platform chain with no row), and why.
 type BrokenChain struct {
-	TenantID *uuid.UUID
-	Shard    int16
-	EventID  *uuid.UUID
-	Reason   string
+	OrganizationID *uuid.UUID
+	Shard          int16
+	EventID        *uuid.UUID
+	Reason         string
 }
 
-// VerificationRun is one verification of every chain, as VerifyAll stores it
-// in platform.audit_verification_runs. Scope is "all" when it walked every
-// chain from its first row, "incremental" when from their checkpoints. Outcome
-// is "intact", "broken" (a chain does not verify) or "error" (a chain could not
-// be read, which stops the run).
+// VerificationRun is one verification of every chain, stored in platform.audit_verification_runs.
+// Scope is "all" (every chain from its first row) or "incremental" (from checkpoints); Outcome is
+// "intact", "broken" (a chain doesn't verify) or "error" (a chain couldn't be read; the run stops).
 type VerificationRun struct {
-	ID            uuid.UUID
-	StartedAt     time.Time
-	FinishedAt    time.Time
-	Scope         string
-	TenantsWalked int
-	RowsChecked   int
-	Outcome       string
-	Broken        []BrokenChain
-	Err           string
+	ID                  uuid.UUID
+	StartedAt           time.Time
+	FinishedAt          time.Time
+	Scope               string
+	OrganizationsWalked int
+	RowsChecked         int
+	Outcome             string
+	Broken              []BrokenChain
+	Err                 string
 }
 
 // FullVerifyInterval is how often VerifyAll walks every chain from its first
 // row rather than from its checkpoint, so a changed old row is still found.
 const FullVerifyInterval = 7 * 24 * time.Hour
 
-// VerifyAll verifies the platform chains and every organisation's chain, and
-// stores the run. Once its checkpoint row, the last a run found intact, is
-// checked unchanged, a chain is walked on from it; from its first row when it
-// has none, was found broken, or no run has walked every chain from the start
-// within FullVerifyInterval. A broken chain is logged at ERROR; the stored run
-// names the first. A broken or failed run counts toward
-// audit_verify_failures_total and returns an error, so the job records a
-// failure.
+// VerifyAll verifies every platform and organization chain and stores the run: from each chain's
+// checkpoint once it is checked unchanged, else from its first row (no checkpoint, found broken, or no
+// full run within FullVerifyInterval). A broken chain is logged at ERROR; a broken or failed run
+// counts toward audit_verify_failures_total and returns an error, so the job records a failure.
 func (v *Verifier) VerifyAll(ctx context.Context) (VerificationRun, error) {
 	full, err := v.q.CountFullAuditVerificationsSince(ctx, time.Now().Add(-FullVerifyInterval))
 	if err != nil {
@@ -83,17 +79,17 @@ func (v *Verifier) verifyAll(ctx context.Context, fromStart bool) (VerificationR
 	}
 	run.FinishedAt = time.Now()
 
-	walked := run.TenantsWalked
+	walked := run.OrganizationsWalked
 	if walked > math.MaxInt32 {
 		walked = math.MaxInt32
 	}
 	arg := dbgen.InsertAuditVerificationRunParams{
 		ID: run.ID, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Scope: run.Scope,
-		TenantsWalked: int32(walked), RowsChecked: int64(run.RowsChecked), Outcome: run.Outcome,
+		OrganizationsWalked: int32(walked), RowsChecked: int64(run.RowsChecked), Outcome: run.Outcome,
 	}
 	if len(run.Broken) > 0 {
 		first := run.Broken[0]
-		arg.BrokenTenantID, arg.FirstBrokenLink, arg.BrokenReason = pgUUIDNullable(first.TenantID), pgUUIDNullable(first.EventID), &first.Reason
+		arg.BrokenOrganizationID, arg.FirstBrokenLink, arg.BrokenReason = first.OrganizationID, first.EventID, &first.Reason
 	}
 	if run.Err != "" {
 		arg.Error = &run.Err
@@ -118,7 +114,7 @@ func (v *Verifier) verifyAll(ctx context.Context, fromStart bool) (VerificationR
 // returns the error that stopped it, if any, and the last checkpoint it failed
 // to store.
 func (v *Verifier) walkAll(ctx context.Context, run *VerificationRun, fromStart bool) (stopped, unsaved error) {
-	tenants, err := v.q.ListAuditChainTenants(ctx)
+	organizations, err := v.q.ListAuditChainOrganizations(ctx)
 	if err != nil {
 		return err, nil
 	}
@@ -126,12 +122,12 @@ func (v *Verifier) walkAll(ctx context.Context, run *VerificationRun, fromStart 
 	if err != nil {
 		return err, nil
 	}
-	chains := make([]chain, 0, PlatformChainShards+len(tenants))
-	for shard := range int16(PlatformChainShards) {
+	chains := make([]chain, 0, audit.PlatformChainShards+len(organizations))
+	for shard := range int16(audit.PlatformChainShards) {
 		chains = append(chains, chain{shard: shard})
 	}
-	for _, t := range tenants {
-		chains = append(chains, chain{tenant: &t})
+	for _, t := range organizations {
+		chains = append(chains, chain{organization: &t})
 	}
 	for _, c := range chains {
 		began, ok := saved[c.key()]
@@ -141,23 +137,29 @@ func (v *Verifier) walkAll(ctx context.Context, run *VerificationRun, fromStart 
 		}
 		// A chain found broken is walked from the start until its checkpoint
 		// is deleted, so every run reports it again.
-		res, last, err := v.walk(ctx, c.tenant, c.shard, from, fromStart || began.Broken)
+		res, last, err := v.walk(ctx, c.organization, c.shard, from, fromStart || began.Broken)
 		if err != nil {
 			return err, unsaved
 		}
-		if c.tenant != nil {
-			run.TenantsWalked++
+		if c.organization != nil {
+			run.OrganizationsWalked++
 		}
 		run.RowsChecked += res.RowsChecked
 		if !res.OK {
 			run.Outcome = "broken"
-			run.Broken = append(run.Broken, BrokenChain{TenantID: c.tenant, Shard: c.shard, EventID: res.BrokenAtID, Reason: res.BrokenReason})
+			run.Broken = append(run.Broken, BrokenChain{OrganizationID: c.organization, Shard: c.shard, EventID: res.BrokenAtID, Reason: res.BrokenReason})
 			slog.Error("audit chain verification failed: chain broken",
-				"tenant_id", c.label(), "event_id", res.BrokenAtID, "reason", res.BrokenReason)
+				"organization_id", c.label(), "event_id", res.BrokenAtID, "reason", res.BrokenReason)
 		}
 		if err := v.keepCheckpoint(ctx, c, from, last, res.OK); err != nil {
-			slog.Error("audit chain verification: store the checkpoint", "tenant_id", c.label(), "err", err)
+			slog.Error("audit chain verification: store the checkpoint", "organization_id", c.label(), "err", err)
 			unsaved = err
+		}
+		if res.OK && c.organization != nil {
+			if err := v.signPurgeCheckpoint(ctx, *c.organization); err != nil {
+				slog.Error("audit chain verification: sign the purge checkpoint", "organization_id", c.label(), "err", err)
+				unsaved = err
+			}
 		}
 	}
 	stray, err := v.strayPlatformRow(ctx)
@@ -181,67 +183,74 @@ func (v *Verifier) checkpoints(ctx context.Context) (map[chainKey]checkpoint, er
 	}
 	out := make(map[chainKey]checkpoint, len(rows))
 	for _, r := range rows {
-		out[chain{tenant: toUUIDPtr(r.TenantID), shard: r.ChainShard}.key()] = checkpoint{
-			EventID: r.EventID, CreatedAt: r.EventCreatedAt, RowHash: trimmed(&r.RowHash), Broken: r.Broken,
+		out[chain{organization: r.OrganizationID, shard: r.ChainShard}.key()] = checkpoint{
+			EventID: r.EventID, CreatedAt: r.EventCreatedAt, RowHash: trimmed(&r.RowHash),
+			KeyID: strutil.Deref(r.KeyID), MAC: r.Mac, Broken: r.Broken,
 		}
 	}
 	return out, nil
 }
 
 // keepCheckpoint moves c's checkpoint on from began, where this run found it,
-// to last, the last row it found intact, unless another run has moved it
-// since. A broken chain's checkpoint is marked broken instead and stays where
-// it is.
+// to last, the last row it found intact, signed with the current key, unless
+// another run has moved it since; one that didn't move is signed again when
+// another key signed it. A broken chain's checkpoint is marked broken instead.
 func (v *Verifier) keepCheckpoint(ctx context.Context, c chain, began, last *checkpoint, intact bool) error {
-	tid := pgUUIDNullable(c.tenant)
+	tid := c.organization
 	switch {
 	case began != nil && began.Broken:
 		return nil
 	case !intact && began != nil:
 		return v.q.MarkAuditChainCheckpointBroken(ctx, dbgen.MarkAuditChainCheckpointBrokenParams{
-			EventID: began.EventID, ChainShard: c.shard, TenantID: tid,
+			EventID: began.EventID, ChainShard: c.shard, OrganizationID: tid,
 		})
-	case !intact, last == nil, began != nil && last.EventID == began.EventID:
+	case !intact, last == nil:
+		return nil
+	}
+	keyID, mac := signCheckpoint(v.key, chainCheckpointKind, c.organization, c.shard, last)
+	switch {
+	case began != nil && last.EventID == began.EventID && strutil.Deref(keyID) == began.KeyID:
 		return nil
 	case began == nil:
 		return v.q.InsertAuditChainCheckpoint(ctx, dbgen.InsertAuditChainCheckpointParams{
-			TenantID: tid, ChainShard: c.shard, EventID: last.EventID, EventCreatedAt: last.CreatedAt, RowHash: last.RowHash,
+			OrganizationID: tid, ChainShard: c.shard, EventID: last.EventID, EventCreatedAt: last.CreatedAt, RowHash: last.RowHash,
+			KeyID: keyID, Mac: mac,
 		})
 	default:
 		return v.q.AdvanceAuditChainCheckpoint(ctx, dbgen.AdvanceAuditChainCheckpointParams{
-			EventID: last.EventID, EventCreatedAt: last.CreatedAt, RowHash: last.RowHash,
-			FromEventID: began.EventID, ChainShard: c.shard, TenantID: tid,
+			EventID: last.EventID, EventCreatedAt: last.CreatedAt, RowHash: last.RowHash, KeyID: keyID, Mac: mac,
+			FromEventID: began.EventID, ChainShard: c.shard, OrganizationID: tid,
 		})
 	}
 }
 
-// chain names one hash chain: an organisation's, or with a nil tenant platform
+// chain names one hash chain: an organization's, or with a nil organization platform
 // chain shard.
 type chain struct {
-	tenant *uuid.UUID
-	shard  int16
+	organization *uuid.UUID
+	shard        int16
 }
 
-// chainKey is a chain as a map key: its organisation, uuid.Nil for a platform
+// chainKey is a chain as a map key: its organization, uuid.Nil for a platform
 // chain, and its shard.
 type chainKey struct {
-	tenant uuid.UUID
-	shard  int16
+	organization uuid.UUID
+	shard        int16
 }
 
 func (c chain) key() chainKey {
-	if c.tenant == nil {
+	if c.organization == nil {
 		return chainKey{shard: c.shard}
 	}
-	return chainKey{tenant: *c.tenant, shard: c.shard}
+	return chainKey{organization: *c.organization, shard: c.shard}
 }
 
-// label names c in logs: its organisation, or "platform/<shard>".
+// label names c in logs: its organization, or "platform/<shard>".
 func (c chain) label() string {
-	if c.tenant == nil {
+	if c.organization == nil {
 		return "platform/" + strconv.Itoa(int(c.shard))
 	}
-	return c.tenant.String()
+	return c.organization.String()
 }
 
 // VerificationMetrics returns the audit_verify_last_success_timestamp_seconds

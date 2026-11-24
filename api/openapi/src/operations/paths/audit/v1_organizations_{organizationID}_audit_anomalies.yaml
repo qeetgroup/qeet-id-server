@@ -1,0 +1,54 @@
+get:
+  operationId: listAuditAnomalies
+  summary: List audit anomalies
+  description: >-
+    Flagged deviations from a behavioral baseline built per (organization, actor) over
+    audit.events — a first-time action type, an unusual hour, or a new IP.
+    Scored by a background sweep, not synchronously on write.
+  tags:
+    - Audit
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: status
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - open
+          - resolved
+    - name: limit
+      in: query
+      required: false
+      description: Page size, 1 to 200 (default 50). A larger value is lowered to 200; a smaller or malformed one gets the default.
+      schema:
+        type: integer
+        default: 50
+    - $ref: ../../../shared/parameters/Cursor.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Anomalies
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              next_cursor:
+                $ref: ../../../shared/schemas/NextCursor.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/AuditAnomaly.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

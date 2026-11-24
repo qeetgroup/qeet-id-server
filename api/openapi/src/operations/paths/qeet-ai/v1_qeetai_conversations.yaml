@@ -1,0 +1,68 @@
+get:
+  operationId: listConversations
+  summary: List conversations
+  description: >-
+    Returns all qeetai conversations for the authenticated user within their
+    organization, ordered by pinned-first then most-recently-updated.
+  tags:
+    - Qeet AI
+  security:
+    - bearerAuth: []
+  responses:
+    "200":
+      description: Conversation list
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/QeetAIConversation.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: createConversation
+  summary: Create conversation
+  description: Creates a new qeetai conversation thread for the authenticated user.
+  tags:
+    - Qeet AI
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            title:
+              type:
+                - string
+                - "null"
+              description: Optional title; defaults to "New conversation".
+  responses:
+    "201":
+      description: Created conversation
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/QeetAIConversation.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "402":
+      $ref: ../../../shared/responses/PaymentRequired.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -14,15 +14,15 @@ import (
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // TestBotSettingsChangesAreAudited checks that saving the bot-detection
-// settings is recorded in the organisation, as the administrator's, with each
+// settings is recorded in the organization, as the administrator's, with each
 // setting that changed from what was in force and the settings saved.
 func TestBotSettingsChangesAreAudited(t *testing.T) {
 	ctx := dbtest.Context(t)
 	h := &Handler{Service: NewService(dbtest.Pool(t))}
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
-	path := "/tenants/" + tenant.String() + "/security/bots/settings"
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
+	path := "/organizations/" + organization.String() + "/security/bots/settings"
 	type record struct {
 		Changes  map[string]map[string]any `json:"changes"`
 		Settings map[string]any            `json:"settings"`
@@ -31,8 +31,8 @@ func TestBotSettingsChangesAreAudited(t *testing.T) {
 		t.Helper()
 		rows, err := dbtest.Pool(t).Query(ctx, `
 			SELECT metadata FROM audit.events
-			WHERE tenant_id = $1 AND action = 'bot.settings_updated' AND resource_id = $1 AND actor_user_id = $2
-			ORDER BY created_at`, tenant, admin.ID)
+			WHERE organization_id = $1 AND action = 'bot.settings_updated' AND resource_id = $1 AND actor_user_id = $2
+			ORDER BY created_at`, organization, admin.ID)
 		if err != nil {
 			t.Fatal(err)
 		}

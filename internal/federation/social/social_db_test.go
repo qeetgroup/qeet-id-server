@@ -3,123 +3,234 @@
 package social
 
 import (
-	"errors"
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
-	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
-	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
-// TestSocialSignInAdoptsOnlyAnAccountInTheTenant checks that a verified
-// address adopts an existing account only in its home tenant: a tenant where
-// it merely holds a role, like any other, is refused, so that tenant's provider
-// can't sign a guest in and switch into the guest's home.
-func TestSocialSignInAdoptsOnlyAnAccountInTheTenant(t *testing.T) {
-	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), nil, "https://api.id.qeet.in")
-	home, joined, other := dbtest.Tenant(t), dbtest.Tenant(t), dbtest.Tenant(t)
-	account := dbtest.User(t, home, joined)
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, account.ID); err != nil {
+// browse sends a request as a browser holding cookies.
+func browse(t *testing.T, h http.Handler, method, target string, cookies []*http.Cookie, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	var raw []byte
+	if body != nil {
+		raw, _ = json.Marshal(body)
+	}
+	req := httptest.NewRequestWithContext(dbtest.Context(t), method, target, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// socialFixture is a social sign-in service with a fake provider, its public
+// and authenticated routes.
+type socialFixture struct {
+	svc    *Service
+	idp    *identityProvider
+	public http.Handler
+	mount  func(chi.Router)
+}
+
+// fixtureChange changes the fixture's service dependencies, given its fake
+// provider.
+type fixtureChange func(d *Deps, idp *identityProvider)
+
+// newSocialFixture returns the fixture, allowing return to app.example.test,
+// its service's dependencies changed by each of with.
+func newSocialFixture(t *testing.T, with ...fixtureChange) *socialFixture {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	idp := newIdentityProvider(t)
+	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	signIn := func(tenant uuid.UUID) (uuid.UUID, error) {
-		return svc.findOrCreateUser(ctx, tenant, "google", userInfo{Subject: uuid.NewString(), Email: account.Email, EmailVerified: true})
-	}
-
-	if got, err := signIn(home); err != nil || got != account.ID {
-		t.Errorf("sign-in to the home tenant = %s, %v; want the account %s", got, err, account.ID)
-	}
-	for name, tenant := range map[string]uuid.UUID{"joined": joined, "another": other} {
-		if got, err := signIn(tenant); !errors.Is(err, errs.ErrSocialAccountNotInTenant) {
-			t.Errorf("sign-in to the %s tenant = %s, %v; want %v", name, got, err, errs.ErrSocialAccountNotInTenant)
+	svc := newTestService(t, pool, newAuthService(t, registrationPolicies(t)), func(d *Deps) {
+		d.Cipher, d.AppBaseURL, d.Egress = box, "https://console.example.test", egress.DevelopmentPolicy()
+		d.ReturnOrigins = []string{"https://app.example.test"}
+		for _, change := range with {
+			change(d, idp)
 		}
+	})
+	h := &Handler{Service: svc, LoginBaseURL: "https://login.example.test", PublicBaseURL: "https://id.example.test",
+		ActOnCheck: rbac.NewRepository(pool).CheckActOn}
+	public := chi.NewRouter()
+	h.MountPublic(public)
+	return &socialFixture{svc: svc, idp: idp, public: public, mount: h.Mount}
+}
+
+// newAuthService is the sign-in service social sign-in goes through,
+// following registration when it isn't nil (else nobody registers).
+func newAuthService(t *testing.T, registration authentication.RegistrationPolicy) *authentication.Service {
+	t.Helper()
+	return authtest.New(t, dbtest.Pool(t), func(d *authentication.Deps) {
+		if registration != nil {
+			d.Registration = registration
+		}
+	})
+}
+
+// registrationPolicies are the organizations' own registration policies.
+func registrationPolicies(t *testing.T) *authpolicy.Service {
+	t.Helper()
+	policies, err := authpolicy.NewService(dbtest.Pool(t), authpolicy.NoBreachCheck{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1 AND tenant_id <> $2`, account.ID, home); n != 0 {
-		t.Errorf("another tenant's sign-in linked %d identities", n)
+	return policies
+}
+
+// domainCapture is the domain capture bootstrap wires.
+func domainCapture(t *testing.T) *domainverify.Service {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	capture, err := domainverify.NewService(pool, domainverify.Deps{
+		Gate: allDomains{}, Owners: rbac.NewRepository(pool), MemberPermissions: identitylink.MemberPermissions(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return capture
+}
+
+// allDomains includes custom domains in every plan.
+type allDomains struct{}
+
+func (allDomains) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
+
+// platform gives the fixture's service the console provider name, signing in
+// at its fake provider.
+func platform(name string) fixtureChange {
+	return func(d *Deps, idp *identityProvider) {
+		d.Platform = append(d.Platform, PlatformOIDC(name, "qeet", "idp-client-secret", idp.URL+"/.well-known/openid-configuration"))
 	}
 }
 
-// TestSocialSignUpWithOneConnection checks, with only one connection free,
-// that a social sign-in with an address nobody holds creates an account where
-// the organisation allows self-registration, and is refused where it doesn't.
-func TestSocialSignUpWithOneConnection(t *testing.T) {
-	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetRegistrationPolicy(authpolicy.NewService(pool))
-	svc := NewService(pool, authSvc, "https://api.id.qeet.in")
-	open, closed := dbtest.Tenant(t), dbtest.Tenant(t)
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.auth_policy (tenant_id, self_registration_enabled) VALUES ($1, TRUE)`, open); err != nil {
+// signIn runs a browser through a sign-in begun at start, the provider
+// answering as person, and returns the callback's response.
+func (f *socialFixture) signIn(t *testing.T, provider, start string, person userInfo) *httptest.ResponseRecorder {
+	t.Helper()
+	begun := browse(t, f.public, http.MethodGet, start, nil, nil)
+	if begun.Code != http.StatusFound {
+		t.Fatalf("start %s: %d %s", start, begun.Code, begun.Header().Get("Location"))
+	}
+	authURL := begun.Header().Get("Location")
+	code := uuid.NewString()
+	f.idp.expect(t, authURL, code, person)
+	return browse(t, f.public, http.MethodGet, "/social/"+provider+"/callback?state="+url.QueryEscape(stateOf(authURL))+"&code="+code, begun.Result().Cookies(), nil)
+}
+
+// redirectQuery returns a redirect's target and query.
+func redirectQuery(t *testing.T, rec *httptest.ResponseRecorder) (string, url.Values) {
+	t.Helper()
+	u, err := url.Parse(rec.Header().Get("Location"))
+	if rec.Code != http.StatusFound || err != nil {
+		t.Fatalf("want a redirect, got %d %s", rec.Code, rec.Body.String())
+	}
+	return u.Scheme + "://" + u.Host + u.Path, u.Query()
+}
+
+// verified marks a's address verified and returns the provider's claims for a.
+func verified(t *testing.T, a dbtest.Account) userInfo {
+	t.Helper()
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	return userInfo{Subject: "sub-" + a.ID.String(), Email: a.Email, EmailVerified: true, Name: "Asha"}
+}
+
+// openOrganization creates an organization that lets people register themselves.
+func openOrganization(t *testing.T) uuid.UUID {
+	t.Helper()
+	organization := dbtest.Organization(t)
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO organization.auth_policy (organization_id, self_registration_enabled) VALUES ($1, TRUE)`, organization); err != nil {
 		t.Fatalf("policy: %v", err)
 	}
-	signUp := func(tenant uuid.UUID) (string, uuid.UUID, error) {
-		email := dbtest.Unique("social") + "@example.test"
-		id, err := svc.findOrCreateUser(ctx, tenant, "google", userInfo{Subject: uuid.NewString(), Email: email, EmailVerified: true})
-		return email, id, err
-	}
+	return organization
+}
 
-	dbtest.LeaveOneConnection(t)
-	if email, id, err := signUp(open); err != nil || dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email = $2 AND tenant_id = $3`, id, email, open) != 1 {
-		t.Errorf("sign-up where self-registration is on: %s, %v; want an account in the tenant", id, err)
-	}
-	if email, _, err := signUp(closed); !errors.Is(err, errs.ErrAuthSelfRegistrationDisabled) || dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, email) != 0 {
-		t.Errorf("sign-up where self-registration is off: %v; want %v and no account", err, errs.ErrAuthSelfRegistrationDisabled)
+// provisioningService returns the service reading each organization's registration
+// policy and domain capture, as bootstrap wires it.
+func provisioningService(t *testing.T) *Service {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	capture := domainCapture(t)
+	return newTestService(t, pool, newAuthService(t, registrationPolicies(t)), func(d *Deps) { d.Capture = capture })
+}
+
+// addProvider gives organization the fixture's identity provider under name, an
+// OpenID Connect provider found by its discovery URL, through the admin route.
+func addProvider(t *testing.T, f *socialFixture, organization uuid.UUID, name string) {
+	t.Helper()
+	admin := dbtest.User(t, organization, organization)
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, organization), f.mount), http.MethodPost, "/social/providers", map[string]string{
+		"provider": name, "client_id": "qeet", "client_secret": "idp-client-secret",
+		"discovery_url": f.idp.URL + "/.well-known/openid-configuration",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("add provider %s: %d %s", name, rec.Code, rec.Body.String())
 	}
 }
 
-// TestSocialSignInAdoptsADirectoryProvisionedAccount checks that an account
-// the organisation's directory provisioned, its address never proved, is
-// adopted by a verified sign-in and marked verified, while an unproved account
-// registered any other way is still refused.
-func TestSocialSignInAdoptsADirectoryProvisionedAccount(t *testing.T) {
-	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
-	svc := NewService(pool, nil, "https://api.id.qeet.in")
-	tenant := dbtest.Tenant(t)
-	provisioned, registered := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET provisioned_via = 'scim' WHERE id = $1`, provisioned.ID); err != nil {
+// requireSSO makes organization require single sign-on on its verified domains,
+// through an active SAML connection.
+func requireSSO(t *testing.T, organization uuid.UUID) {
+	t.Helper()
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	if _, err := pool.Exec(ctx, `UPDATE organization.domains SET sso_enabled = TRUE WHERE organization_id = $1`, organization); err != nil {
 		t.Fatal(err)
 	}
-	signIn := func(email string) (uuid.UUID, error) {
-		return svc.findOrCreateUser(ctx, tenant, "google", userInfo{Subject: uuid.NewString(), Email: email, EmailVerified: true})
-	}
-	if got, err := signIn(provisioned.Email); err != nil || got != provisioned.ID {
-		t.Errorf("a directory-provisioned account: %s, %v; want it adopted", got, err)
-	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, provisioned.ID); n != 1 {
-		t.Error("the adopted account's address was not marked verified")
-	}
-	if _, err := signIn(registered.Email); !errors.Is(err, errs.ErrSocialAccountUnverified) {
-		t.Errorf("an unproved account registered otherwise: %v, want %v", err, errs.ErrSocialAccountUnverified)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO organization.saml_connections (organization_id, name, idp_entity_id, idp_sso_url, idp_certificate, status)
+		VALUES ($1, 'Okta', 'https://idp.example.test', 'https://idp.example.test/sso', 'cert', 'active')`, organization); err != nil {
+		t.Fatal(err)
 	}
 }
 
-// TestSocialSignInIgnoresConnectionLinks checks that a social provider named
-// like a single sign-on kind (saml, ldap, oidc) doesn't find a person linked
-// through one of the organisation's connections by that subject, so whoever
-// controls such a provider can't sign in as them.
-func TestSocialSignInIgnoresConnectionLinks(t *testing.T) {
-	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), nil, "https://api.id.qeet.in")
-	tenant := dbtest.Tenant(t)
-	linked := dbtest.User(t, tenant, tenant)
-	for _, provider := range []string{"saml", "ldap", "oidc"} {
-		subject := provider + "-subject-" + uuid.NewString()
-		if _, err := dbtest.Pool(t).Exec(ctx, `
-			INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email, connection_id)
-			VALUES ($1, $2, $3, $4, $5, $6)`, linked.ID, tenant, provider, subject, linked.Email, uuid.New()); err != nil {
-			t.Fatal(err)
-		}
-		got, err := svc.findOrCreateUser(ctx, tenant, provider, userInfo{Subject: subject})
-		if got == linked.ID || !errors.Is(err, errs.ErrSocialEmailMissing) {
-			t.Errorf("a social %q sign-in with a connection's subject = %s, %v; want no link found", provider, got, err)
-		}
+// capturing gives the fixture's service the domain capture bootstrap wires.
+func capturing(t *testing.T) fixtureChange {
+	t.Helper()
+	capture := domainCapture(t)
+	return func(d *Deps, _ *identityProvider) { d.Capture = capture }
+}
+
+// breakGlass names a as a member of organization who keeps their own sign-in methods.
+func breakGlass(t *testing.T, organization uuid.UUID, a dbtest.Account) {
+	t.Helper()
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO organization.break_glass_members (organization_id, user_id) VALUES ($1, $2)`, organization, a.ID); err != nil {
+		t.Fatal(err)
 	}
+}
+
+// claims is what a provider asserts for a new subject at email, as verified.
+func claims(email string) userInfo {
+	return userInfo{Subject: uuid.NewString(), Email: email, EmailVerified: true}
+}
+
+// proved reports whether the account's address is marked verified.
+func proved(t *testing.T, id uuid.UUID) bool {
+	t.Helper()
+	return dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email_verified_at IS NOT NULL`, id) == 1
 }

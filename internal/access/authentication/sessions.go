@@ -1,4 +1,4 @@
-package auth
+package authentication
 
 import (
 	"context"
@@ -7,32 +7,33 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
-	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/useragent"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // otherSessionsEnded turns RevokeOtherSessionsForUser's rows into signals.
 func otherSessionsEnded(userID uuid.UUID, rows []dbgen.RevokeOtherSessionsForUserRow) []sessionsignal.Session {
-	ids, tenants := make([]uuid.UUID, len(rows)), make([]pgtype.UUID, len(rows))
+	ids, organizations := make([]uuid.UUID, len(rows)), make([]*uuid.UUID, len(rows))
 	for i, r := range rows {
-		ids[i], tenants[i] = r.ID, r.TenantID
+		ids[i], organizations[i] = r.ID, r.OrganizationID
 	}
-	return endedSessions(userID, ids, tenants)
+	return endedSessions(userID, ids, organizations)
 }
 
 // endedSessions turns the sessions a revocation query returned into signals.
-func endedSessions(userID uuid.UUID, ids []uuid.UUID, tenants []pgtype.UUID) []sessionsignal.Session {
+func endedSessions(userID uuid.UUID, ids []uuid.UUID, organizations []*uuid.UUID) []sessionsignal.Session {
 	out := make([]sessionsignal.Session, len(ids))
 	for i, id := range ids {
 		out[i] = sessionsignal.Session{ID: id, UserID: userID}
-		if tenants[i].Valid {
-			out[i].TenantID = uuid.UUID(tenants[i].Bytes)
+		if organizations[i] != nil {
+			out[i].OrganizationID = postgres.ZeroIfNull(organizations[i])
 		}
 	}
 	return out
@@ -46,7 +47,7 @@ func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error
 		return err
 	}
 	defer tx.Rollback(ctx)
-	tenantID, err := s.q.WithTx(tx).RevokeSessionForUser(ctx, dbgen.RevokeSessionForUserParams{
+	organizationID, err := s.q.WithTx(tx).RevokeSessionForUser(ctx, dbgen.RevokeSessionForUserParams{
 		SessionID: sessionID,
 		UserID:    userID,
 	})
@@ -57,7 +58,7 @@ func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error
 		return err
 	}
 	s.signals.Revoked(ctx, tx, sessionsignal.ReasonLogout,
-		endedSessions(userID, []uuid.UUID{sessionID}, []pgtype.UUID{tenantID})...)
+		endedSessions(userID, []uuid.UUID{sessionID}, []*uuid.UUID{organizationID})...)
 	return tx.Commit(ctx)
 }
 
@@ -67,10 +68,10 @@ func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error
 type RevokeOtherSessionsInput struct {
 	UserID           uuid.UUID
 	CurrentSessionID uuid.UUID
-	TenantID         *uuid.UUID
-	IP               string
-	UserAgent        string
-	RequestID        string
+	OrganizationID   *uuid.UUID
+	// Actor is the request's client address, user agent and request ID, for
+	// its audit record.
+	audit.Actor
 }
 
 // RevokeOtherSessions ends every live session of the user except the current one
@@ -109,12 +110,8 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, in RevokeOtherSession
 	}
 	revoked := int64(len(rows))
 	s.signals.Revoked(ctx, tx, sessionsignal.ReasonOtherSessionsRevoked, otherSessionsEnded(in.UserID, rows)...)
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: in.TenantID, ActorUserID: &in.UserID, ActorType: "user",
-		Action: "auth.other_sessions_revoked", ResourceType: "user", ResourceID: &in.UserID,
-		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
-		Metadata: map[string]any{"revoked_sessions": revoked, "kept_session_id": in.CurrentSessionID},
-	}); err != nil {
+	if err := audit.Record(ctx, tx, as(in.Actor, "user", &in.UserID).EventIn(in.OrganizationID, "auth.other_sessions_revoked", "user", in.UserID,
+		map[string]any{"revoked_sessions": revoked, "kept_session_id": in.CurrentSessionID})); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -130,12 +127,12 @@ type SignInsEnded = user.SignInsEnded
 // RevokeAllSessionsInput names the caller. SessionID must come from the
 // caller's own access token, never from anything the client supplies.
 type RevokeAllSessionsInput struct {
-	UserID    uuid.UUID
-	SessionID uuid.UUID
-	TenantID  *uuid.UUID
-	IP        string
-	UserAgent string
-	RequestID string
+	UserID         uuid.UUID
+	SessionID      uuid.UUID
+	OrganizationID *uuid.UUID
+	// Actor is the request's client address, user agent and request ID, for
+	// its audit record.
+	audit.Actor
 }
 
 // RevokeAllSessions signs the caller out everywhere: API and console sessions,
@@ -163,19 +160,15 @@ func (s *Service) RevokeAllSessions(ctx context.Context, in RevokeAllSessionsInp
 	if err != nil {
 		return SignInsEnded{}, err
 	}
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: in.TenantID, ActorUserID: &in.UserID, ActorType: "user",
-		Action: "auth.all_sessions_revoked", ResourceType: "user", ResourceID: &in.UserID,
-		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
-		Metadata: map[string]any{
+	if err := audit.Record(ctx, tx, as(in.Actor, "user", &in.UserID).EventIn(in.OrganizationID, "auth.all_sessions_revoked", "user", in.UserID,
+		map[string]any{
 			"revoked_sessions":             ended.Sessions,
 			"revoked_login_sessions":       ended.LoginSessions,
 			"revoked_app_grants":           ended.AppGrants,
 			"revoked_trusted_devices":      ended.TrustedDevices,
 			"ended_pending_authorizations": ended.PendingAuthorizations,
 			"session_id":                   in.SessionID,
-		},
-	}); err != nil {
+		})); err != nil {
 		return SignInsEnded{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -213,8 +206,8 @@ func EndSignIns(ctx context.Context, tx pgx.Tx, signals *sessionsignal.Signaller
 	sessions := make([]sessionsignal.Session, len(rows))
 	for i, r := range rows {
 		sessions[i] = sessionsignal.Session{ID: r.ID, UserID: userID}
-		if r.TenantID.Valid {
-			sessions[i].TenantID = uuid.UUID(r.TenantID.Bytes)
+		if r.OrganizationID != nil {
+			sessions[i].OrganizationID = *r.OrganizationID
 		}
 	}
 	signals.Revoked(ctx, tx, reason, sessions...)
@@ -226,12 +219,10 @@ func EndSignIns(ctx context.Context, tx pgx.Tx, signals *sessionsignal.Signaller
 	return ended, nil
 }
 
-// endOtherSignIns ends, inside tx, every way the user signs in besides their
-// API sessions: hosted-login sessions, unused password-reset and sign-in
-// links, remembered devices, which skip the second factor, pending
-// authorisations, which would become grants, and application grants. It also
-// lifts a lock of their second-factor sign-in: the person proved who they are
-// another way. The caller has locked the user row.
+// endOtherSignIns ends, inside tx, every way the user signs in besides their API sessions: hosted-login
+// sessions, unused reset and sign-in links, remembered devices (which skip the second factor), pending
+// authorisations and application grants; and it lifts a second-factor sign-in lock, since the person
+// proved who they are another way. The caller has locked the user row.
 func endOtherSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignInsEnded, error) {
 	var ended SignInsEnded
 	q := dbgen.New(tx)
@@ -249,7 +240,7 @@ func endOtherSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignInsE
 		return SignInsEnded{}, err
 	}
 	denyDevices := func(ctx context.Context, id uuid.UUID) (int64, error) {
-		return q.DenyDeviceAuthorizationsForUser(ctx, pgtype.UUID{Bytes: id, Valid: true})
+		return q.DenyDeviceAuthorizationsForUser(ctx, &id)
 	}
 	for _, deny := range []func(context.Context, uuid.UUID) (int64, error){
 		q.SpendAuthorizationCodesForUser, denyDevices, q.DenyBackchannelRequestsForUser,
@@ -288,14 +279,14 @@ func (s *Service) SignInMethods(ctx context.Context, userID uuid.UUID) (user.Sig
 
 // Session is one of a person's API or console sessions, as listed to them.
 type Session struct {
-	ID         uuid.UUID  `json:"id"`
-	UserID     uuid.UUID  `json:"user_id"`
-	TenantID   uuid.UUID  `json:"tenant_id"`
-	IP         *string    `json:"ip"`
-	UserAgent  *string    `json:"user_agent"`
-	CreatedAt  time.Time  `json:"created_at"`
-	LastSeenAt time.Time  `json:"last_seen_at"`
-	RevokedAt  *time.Time `json:"revoked_at"`
+	ID             uuid.UUID  `json:"id"`
+	UserID         uuid.UUID  `json:"user_id"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+	IP             *string    `json:"ip"`
+	UserAgent      *string    `json:"user_agent"`
+	CreatedAt      time.Time  `json:"created_at"`
+	LastSeenAt     time.Time  `json:"last_seen_at"`
+	RevokedAt      *time.Time `json:"revoked_at"`
 	// ExpiresAt is when the session ends however active it is, and
 	// IdleExpiresAt when it ends unless renewed first. Status is "active",
 	// "revoked" (ended by sign-out or revocation) or "expired" (reached its
@@ -328,12 +319,12 @@ func (s *Service) ListSessions(ctx context.Context, userID uuid.UUID) ([]Session
 	return page.Items, nil
 }
 
-// SessionPage is one page of sessions and the cursor for the next.
+// SessionPage is one page of sessions and the cursor for the next, the last
+// session's ID. HasMore reports there is a next page; Total counts them all.
 type SessionPage struct {
-	Items      []Session `json:"items"`
-	NextCursor string    `json:"next_cursor,omitempty"`
-	HasMore    bool      `json:"has_more"`
-	Total      int       `json:"total"`
+	paging.Result[Session]
+	HasMore bool `json:"has_more"`
+	Total   int  `json:"total"`
 }
 
 // ListSessionsPage lists the user's sessions, newest first.
@@ -342,79 +333,38 @@ func (s *Service) ListSessionsPage(ctx context.Context, userID uuid.UUID, limit 
 }
 
 // ListSessionsPageFor is ListSessionsPage marking current (uuid.Nil: none) as
-// the caller's own session.
+// the caller's own session. limit is 50 when unset, at most 100.
 func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.UUID, limit int, cursor string) (*SessionPage, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	if limit > 100 {
-		limit = 100
-	}
-	var cursorID uuid.UUID
-	var cursorAt time.Time
+	limit = paging.Clamp(limit, 50, 100)
+	params := dbgen.ListUserSessionsParams{UserID: userID, Lim: int32(limit + 1)} // #nosec G115 -- at most 101
 	if cursor != "" {
 		parsed, err := uuid.Parse(cursor)
 		if err != nil {
 			return nil, errs.ErrBadRequest.WithDetail("invalid session cursor")
 		}
-		cursorID = parsed
-		if err := s.pool.QueryRow(ctx, `
-			SELECT sess.created_at
-			FROM auth.sessions sess
-			JOIN "user".users u ON u.id = sess.user_id
-			WHERE sess.id = $1 AND sess.user_id = $2 AND u.deleted_at IS NULL
-		`, cursorID, userID).Scan(&cursorAt); errors.Is(err, pgx.ErrNoRows) {
+		at, err := s.q.SessionCursorTime(ctx, dbgen.SessionCursorTimeParams{ID: parsed, UserID: userID})
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrBadRequest.WithDetail("invalid session cursor")
 		} else if err != nil {
 			return nil, err
 		}
+		params.After, params.BeforeTs, params.BeforeID = true, at, parsed
 	}
-	// Soft-deleted users keep their session rows for audit purposes but
-	// must not surface them via admin or self-service listings. Filter
-	// at the join rather than relying on the caller to know about
-	// `users.deleted_at`.
-	rows, err := s.pool.Query(ctx, `
-		SELECT sess.id, sess.user_id, sess.tenant_id, host(sess.ip), sess.user_agent,
-		       sess.created_at, sess.last_seen_at, sess.revoked_at,
-		       sess.expires_at, ends.idle,
-		       CASE WHEN ends.idle <= COALESCE(sess.revoked_at, NOW()) THEN 'expired'
-		            WHEN sess.revoked_at IS NOT NULL THEN 'revoked'
-		            ELSE 'active' END,
-		       COALESCE(sess.country, ''), COALESCE(sess.city, '')
-		FROM auth.sessions sess
-		CROSS JOIN LATERAL (SELECT LEAST(sess.last_seen_at + sess.idle_timeout, sess.expires_at) AS idle) ends
-		JOIN "user".users u ON u.id = sess.user_id
-		WHERE sess.user_id = $1 AND u.deleted_at IS NULL AND sess.superseded_by IS NULL
-		  AND ($2::boolean = FALSE OR (sess.created_at, sess.id) < ($3, $4))
-		ORDER BY sess.created_at DESC, sess.id DESC
-		LIMIT $5
-	`, userID, cursor != "", cursorAt, cursorID, limit+1)
+	rows, err := s.q.ListUserSessions(ctx, params)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Session, 0, limit+1)
-	for rows.Next() {
-		var session Session
-		var tenantID pgtype.UUID
-		if err := rows.Scan(&session.ID, &session.UserID, &tenantID, &session.IP, &session.UserAgent, &session.CreatedAt, &session.LastSeenAt, &session.RevokedAt,
-			&session.ExpiresAt, &session.IdleExpiresAt, &session.Status, &session.Country, &session.City); err != nil {
-			return nil, err
+	out := make([]Session, 0, len(rows))
+	for _, row := range rows {
+		session := Session{
+			ID: row.ID, UserID: row.UserID, OrganizationID: postgres.ZeroIfNull(row.OrganizationID), IP: postgres.NullIfZero(row.Ip),
+			UserAgent: row.UserAgent, CreatedAt: row.CreatedAt, LastSeenAt: row.LastSeenAt, RevokedAt: row.RevokedAt,
+			ExpiresAt: row.ExpiresAt, IdleExpiresAt: row.IdleExpiresAt, Status: row.Status, Country: row.Country, City: row.City,
+			Current: current != uuid.Nil && row.ID == current,
 		}
-		ua := ""
-		if session.UserAgent != nil {
-			ua = *session.UserAgent
-		}
-		device := useragent.Parse(ua)
+		device := httpx.Parse(postgres.ZeroIfNull(row.UserAgent))
 		session.Device, session.DeviceKind = device.Label(), device.Kind
-		session.Current = current != uuid.Nil && session.ID == current
-		if tenantID.Valid {
-			session.TenantID = uuid.UUID(tenantID.Bytes)
-		}
 		out = append(out, session)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	hasMore := len(out) > limit
 	if hasMore {
@@ -424,13 +374,9 @@ func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.
 	if hasMore && len(out) > 0 {
 		nextCursor = out[len(out)-1].ID.String()
 	}
-	var total int
-	if err := s.pool.QueryRow(ctx, `
-		SELECT count(*) FROM auth.sessions sess
-		JOIN "user".users u ON u.id = sess.user_id
-		WHERE sess.user_id = $1 AND u.deleted_at IS NULL AND sess.superseded_by IS NULL
-	`, userID).Scan(&total); err != nil {
+	total, err := s.q.CountUserSessions(ctx, userID)
+	if err != nil {
 		return nil, err
 	}
-	return &SessionPage{Items: out, NextCursor: nextCursor, HasMore: hasMore, Total: total}, nil
+	return &SessionPage{Result: paging.Page(out, nextCursor), HasMore: hasMore, Total: int(total)}, nil
 }

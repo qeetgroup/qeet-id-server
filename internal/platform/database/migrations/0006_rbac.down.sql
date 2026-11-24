@@ -1,4 +1,6 @@
-DROP TABLE IF EXISTS rbac.user_roles;
-DROP TABLE IF EXISTS rbac.role_permissions;
-DROP TABLE IF EXISTS rbac.roles;
-DROP TABLE IF EXISTS rbac.permissions;
+DROP TABLE IF EXISTS rbac.user_roles CASCADE;
+DROP TABLE IF EXISTS rbac.role_permissions CASCADE;
+DROP TABLE IF EXISTS rbac.group_roles CASCADE;
+DROP TABLE IF EXISTS rbac.access_requests CASCADE;
+DROP TABLE IF EXISTS rbac.roles CASCADE;
+DROP TABLE IF EXISTS rbac.permissions CASCADE;

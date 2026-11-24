@@ -1,12 +1,18 @@
 package qeetai
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 
-	qeetaimanifest "github.com/qeetgroup/qeet-id-server/api/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
 )
+
+// toolsManifest is the catalogue of the tools the assistant may offer (tools.manifest.json): their
+// names are the contract with the console's tool registry.
+//
+//go:embed tools.manifest.json
+var toolsManifest []byte
 
 // changeToolsEnabled controls whether the model is offered tools that change
 // anything. It is off: the assistant only reads and explains. Change tools stay
@@ -32,7 +38,7 @@ type toolManifest struct {
 // own token.
 func loadToolDefs() ([]ai.ToolDef, error) {
 	var m toolManifest
-	if err := json.Unmarshal(qeetaimanifest.ToolsManifestJSON, &m); err != nil {
+	if err := json.Unmarshal(toolsManifest, &m); err != nil {
 		return nil, fmt.Errorf("qeetai: parse tools manifest: %w", err)
 	}
 	defs := make([]ai.ToolDef, 0, len(m.Tools))

@@ -1,0 +1,117 @@
+get:
+  operationId: listLdapGroupMappings
+  summary: List group mappings
+  description: >-
+    Lists the group mappings of an LDAP connection in the organization. Each maps a
+    group the directory gives the person (idp_group, compared ignoring case) to
+    one of the organization's groups. The groups are the values of the
+    connection's directory mapping targeting groups when it has one (with its
+    transform, such as extracting the CN), else of the entry's memberOf. At
+    every sign-in through the connection the person joins the groups those
+    reach, through these mappings or as the external id of a group SCIM
+    provisioned, and leaves the groups the connection's sign-ins put them in
+    that they no longer reach. A membership an administrator or SCIM made is
+    never changed, and a group whose roles carry the owner role or an
+    administrative permission (any but the reads organization.read, user.read,
+    role.read, group.read, connection.read, apikey.read, webhook.read,
+    billing.read, policy.read, audit.read and analytics.read) is never
+    joined: sign-in takes out anyone it put there. Requires connection.read; an
+    unknown connection, or another organization's, answers 404.
+  tags:
+    - LDAP
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: The connection's group mappings
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/SSOGroupMapping.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: createLdapGroupMapping
+  summary: Map a directory group
+  description: >-
+    Maps a group the directory gives the person (a memberOf DN, or the value the
+    connection's groups mapping makes of it) to one of the organization's
+    groups, from each person's next sign-in. Whoever maps a group hands out what
+    it grants: the caller must hold every permission the group's roles carry, as
+    adding a member needs (403 rbac.grant_exceeds_caller, or rbac.owner_only for
+    a group holding the owner role). A group whose roles carry the owner role or
+    an administrative permission can't be mapped at all (422
+    group.mapping_privileged), and the group must be the organization's (404
+    group.not_found). The same pair twice is refused with 409
+    group.mapping_exists, an empty or over-long idp_group with 422
+    validation_failed, and a connection holds up to 1,000 mappings (422
+    group.mapping_too_many). Audited as ldap.group_mapping_created. Requires
+    group.write. Needs a recent step-up.
+  tags:
+    - LDAP
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/SSOGroupMappingCreate.yaml
+  responses:
+    "201":
+      description: Mapped
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/SSOGroupMapping.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,24 @@
+type: object
+description: >-
+  The ID token claims a sign-in reads. An empty name reads none, except for
+  email, which is required.
+properties:
+  email:
+    type: string
+    default: email
+    description: >-
+      The claim holding the email address, such as email, preferred_username or
+      upn. The provider's email_verified is consulted only when this is email.
+  name:
+    type: string
+    default: name
+  given_name:
+    type: string
+    default: given_name
+  family_name:
+    type: string
+    default: family_name
+  groups:
+    type: string
+    default: ""
+    description: The claim listing the person's groups, kept on their linked identity.

@@ -11,6 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // InFlight counts the HTTP requests being served, so graceful shutdown can
@@ -82,8 +84,8 @@ func AccessLog(next http.Handler) http.Handler {
 
 		// Identity fields, from the authentication below, if any.
 		if p := slot.p.Load(); p != nil {
-			if p.TenantID != nil {
-				attrs = append(attrs, slog.String("tenant_id", p.TenantID.String()))
+			if p.OrganizationID != nil {
+				attrs = append(attrs, slog.String("organization_id", p.OrganizationID.String()))
 			}
 			if p.UserID != nil {
 				attrs = append(attrs, slog.String("user_id", p.UserID.String()))
@@ -138,6 +140,19 @@ const permissionsPolicy = "accelerometer=(), autoplay=(), camera=(), " +
 	"picture-in-picture=(), screen-wake-lock=(), sync-xhr=(), usb=(), " +
 	"web-share=(), xr-spatial-tracking=()"
 
+// RefuseEncodedSeparators answers 400 to a path carrying an encoded slash or backslash (%2F, %5C). The
+// router splits the raw path while the permission, step-up, row-level scoping, CSRF and idempotency
+// checks see the decoded one, so such a path could name different routes to each.
+func RefuseEncodedSeparators(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p := strings.ToUpper(r.URL.EscapedPath()); strings.Contains(p, "%2F") || strings.Contains(p, "%5C") {
+			WriteError(w, r, errs.ErrBadRequest.WithDetail("the path has an encoded slash or backslash"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // SecurityHeaders returns a middleware that applies standard hardening
 // headers to every response. enableHSTS controls whether
 // Strict-Transport-Security is emitted; it should be off in dev so localhost
@@ -152,7 +167,9 @@ func SecurityHeaders(enableHSTS bool) func(http.Handler) http.Handler {
 			h.Set("X-Frame-Options", "DENY")
 			h.Set("X-Content-Type-Options", "nosniff")
 			h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-			h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+			// form-action and base-uri don't fall back to default-src, so they are named: the API
+			// serves no forms of its own (the SAML pages that do set their own policy).
+			h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 			h.Set("Cross-Origin-Opener-Policy", "same-origin")
 			h.Set("Cross-Origin-Resource-Policy", "cross-origin")
 			h.Set("Permissions-Policy", permissionsPolicy)

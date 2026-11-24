@@ -1,0 +1,29 @@
+type: object
+additionalProperties: false
+required:
+  - organization_id
+  - name
+properties:
+  organization_id:
+    type: string
+    format: uuid
+  user_id:
+    type:
+      - string
+      - "null"
+    format: uuid
+  name:
+    type: string
+    minLength: 1
+    maxLength: 200
+  scopes:
+    type:
+      - array
+      - "null"
+    items:
+      type: string
+  expires_at:
+    type:
+      - string
+      - "null"
+    format: date-time

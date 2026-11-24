@@ -10,14 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countEnabledPolicies = `-- name: CountEnabledPolicies :one
 SELECT count(*) FILTER (WHERE effect = 'deny')::int  AS deny,
        count(*) FILTER (WHERE effect = 'allow')::int AS allow
 FROM auth.abac_policies
-WHERE tenant_id = $1 AND enabled = true
+WHERE organization_id = $1 AND enabled = true
 `
 
 type CountEnabledPoliciesRow struct {
@@ -25,10 +24,10 @@ type CountEnabledPoliciesRow struct {
 	Allow int32
 }
 
-// How many enabled deny and allow policies a tenant has, so a decision can
-// skip ABAC for a tenant with none of the kind it needs.
-func (q *Queries) CountEnabledPolicies(ctx context.Context, tenantID uuid.UUID) (CountEnabledPoliciesRow, error) {
-	row := q.db.QueryRow(ctx, countEnabledPolicies, tenantID)
+// How many enabled deny and allow policies an organization has, so a decision can
+// skip ABAC for an organization with none of the kind it needs.
+func (q *Queries) CountEnabledPolicies(ctx context.Context, organizationID uuid.UUID) (CountEnabledPoliciesRow, error) {
+	row := q.db.QueryRow(ctx, countEnabledPolicies, organizationID)
 	var i CountEnabledPoliciesRow
 	err := row.Scan(&i.Deny, &i.Allow)
 	return i, err
@@ -37,22 +36,22 @@ func (q *Queries) CountEnabledPolicies(ctx context.Context, tenantID uuid.UUID) 
 const createAbacPolicy = `-- name: CreateAbacPolicy :one
 
 INSERT INTO auth.abac_policies
-    (tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, updated_by)
+    (organization_id, name, description, effect, resource_type, action, condition, priority, enabled, updated_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
-RETURNING id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by
+RETURNING id, organization_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by
 `
 
 type CreateAbacPolicyParams struct {
-	TenantID     uuid.UUID
-	Name         string
-	Description  string
-	Effect       string
-	ResourceType string
-	Action       string
-	Condition    []byte
-	Priority     int32
-	Enabled      bool
-	UpdatedBy    pgtype.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	Effect         string
+	ResourceType   string
+	Action         string
+	Condition      []byte
+	Priority       int32
+	Enabled        bool
+	UpdatedBy      *uuid.UUID
 }
 
 // Queries for the abac (attribute-based access control) domain.
@@ -62,7 +61,7 @@ type CreateAbacPolicyParams struct {
 // module builds SQL dynamically.
 func (q *Queries) CreateAbacPolicy(ctx context.Context, arg CreateAbacPolicyParams) (AuthAbacPolicy, error) {
 	row := q.db.QueryRow(ctx, createAbacPolicy,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Name,
 		arg.Description,
 		arg.Effect,
@@ -76,7 +75,7 @@ func (q *Queries) CreateAbacPolicy(ctx context.Context, arg CreateAbacPolicyPara
 	var i AuthAbacPolicy
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Description,
 		&i.Effect,
@@ -95,39 +94,39 @@ func (q *Queries) CreateAbacPolicy(ctx context.Context, arg CreateAbacPolicyPara
 
 const deleteAbacPolicy = `-- name: DeleteAbacPolicy :one
 DELETE FROM auth.abac_policies
-WHERE id = $1 AND tenant_id = $2
+WHERE id = $1 AND organization_id = $2
 RETURNING name
 `
 
 type DeleteAbacPolicyParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteAbacPolicy(ctx context.Context, arg DeleteAbacPolicyParams) (string, error) {
-	row := q.db.QueryRow(ctx, deleteAbacPolicy, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, deleteAbacPolicy, arg.ID, arg.OrganizationID)
 	var name string
 	err := row.Scan(&name)
 	return name, err
 }
 
 const getAbacPolicy = `-- name: GetAbacPolicy :one
-SELECT id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by
+SELECT id, organization_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by
 FROM auth.abac_policies
-WHERE id = $1 AND tenant_id = $2
+WHERE id = $1 AND organization_id = $2
 `
 
 type GetAbacPolicyParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) GetAbacPolicy(ctx context.Context, arg GetAbacPolicyParams) (AuthAbacPolicy, error) {
-	row := q.db.QueryRow(ctx, getAbacPolicy, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getAbacPolicy, arg.ID, arg.OrganizationID)
 	var i AuthAbacPolicy
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Description,
 		&i.Effect,
@@ -147,13 +146,13 @@ func (q *Queries) GetAbacPolicy(ctx context.Context, arg GetAbacPolicyParams) (A
 const getAbacPolicyVersion = `-- name: GetAbacPolicyVersion :one
 SELECT version, name, description, effect, resource_type, action, condition, priority, enabled, saved_by, saved_at
 FROM auth.abac_policy_versions
-WHERE policy_id = $1 AND tenant_id = $2 AND version = $3
+WHERE policy_id = $1 AND organization_id = $2 AND version = $3
 `
 
 type GetAbacPolicyVersionParams struct {
-	PolicyID uuid.UUID
-	TenantID uuid.UUID
-	Version  int32
+	PolicyID       uuid.UUID
+	OrganizationID uuid.UUID
+	Version        int32
 }
 
 type GetAbacPolicyVersionRow struct {
@@ -166,12 +165,12 @@ type GetAbacPolicyVersionRow struct {
 	Condition    []byte
 	Priority     int32
 	Enabled      bool
-	SavedBy      pgtype.UUID
+	SavedBy      *uuid.UUID
 	SavedAt      time.Time
 }
 
 func (q *Queries) GetAbacPolicyVersion(ctx context.Context, arg GetAbacPolicyVersionParams) (GetAbacPolicyVersionRow, error) {
-	row := q.db.QueryRow(ctx, getAbacPolicyVersion, arg.PolicyID, arg.TenantID, arg.Version)
+	row := q.db.QueryRow(ctx, getAbacPolicyVersion, arg.PolicyID, arg.OrganizationID, arg.Version)
 	var i GetAbacPolicyVersionRow
 	err := row.Scan(
 		&i.Version,
@@ -190,14 +189,16 @@ func (q *Queries) GetAbacPolicyVersion(ctx context.Context, arg GetAbacPolicyVer
 }
 
 const listAbacPolicies = `-- name: ListAbacPolicies :many
-SELECT id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by
+SELECT id, organization_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by
 FROM auth.abac_policies
-WHERE tenant_id = $1
+WHERE organization_id = $1
 ORDER BY priority DESC, name
+LIMIT 1001
 `
 
-func (q *Queries) ListAbacPolicies(ctx context.Context, tenantID uuid.UUID) ([]AuthAbacPolicy, error) {
-	rows, err := q.db.Query(ctx, listAbacPolicies, tenantID)
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
+func (q *Queries) ListAbacPolicies(ctx context.Context, organizationID uuid.UUID) ([]AuthAbacPolicy, error) {
+	rows, err := q.db.Query(ctx, listAbacPolicies, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +208,7 @@ func (q *Queries) ListAbacPolicies(ctx context.Context, tenantID uuid.UUID) ([]A
 		var i AuthAbacPolicy
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Name,
 			&i.Description,
 			&i.Effect,
@@ -234,14 +235,14 @@ func (q *Queries) ListAbacPolicies(ctx context.Context, tenantID uuid.UUID) ([]A
 const listAbacPolicyVersions = `-- name: ListAbacPolicyVersions :many
 SELECT version, name, description, effect, resource_type, action, condition, priority, enabled, saved_by, saved_at
 FROM auth.abac_policy_versions
-WHERE policy_id = $1 AND tenant_id = $2
+WHERE policy_id = $1 AND organization_id = $2
 ORDER BY version DESC
-LIMIT 200
+LIMIT 1001
 `
 
 type ListAbacPolicyVersionsParams struct {
-	PolicyID uuid.UUID
-	TenantID uuid.UUID
+	PolicyID       uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type ListAbacPolicyVersionsRow struct {
@@ -254,13 +255,14 @@ type ListAbacPolicyVersionsRow struct {
 	Condition    []byte
 	Priority     int32
 	Enabled      bool
-	SavedBy      pgtype.UUID
+	SavedBy      *uuid.UUID
 	SavedAt      time.Time
 }
 
 // A policy's saved versions, newest first.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListAbacPolicyVersions(ctx context.Context, arg ListAbacPolicyVersionsParams) ([]ListAbacPolicyVersionsRow, error) {
-	rows, err := q.db.Query(ctx, listAbacPolicyVersions, arg.PolicyID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listAbacPolicyVersions, arg.PolicyID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +296,7 @@ func (q *Queries) ListAbacPolicyVersions(ctx context.Context, arg ListAbacPolicy
 const listEvaluationCandidates = `-- name: ListEvaluationCandidates :many
 SELECT id, name, effect, condition, priority
 FROM auth.abac_policies
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND enabled = true
   AND (resource_type = $2 OR resource_type = '*')
   AND (action = $3 OR action = '*')
@@ -302,9 +304,9 @@ ORDER BY priority DESC
 `
 
 type ListEvaluationCandidatesParams struct {
-	TenantID     uuid.UUID
-	ResourceType string
-	Action       string
+	OrganizationID uuid.UUID
+	ResourceType   string
+	Action         string
 }
 
 type ListEvaluationCandidatesRow struct {
@@ -316,7 +318,7 @@ type ListEvaluationCandidatesRow struct {
 }
 
 func (q *Queries) ListEvaluationCandidates(ctx context.Context, arg ListEvaluationCandidatesParams) ([]ListEvaluationCandidatesRow, error) {
-	rows, err := q.db.Query(ctx, listEvaluationCandidates, arg.TenantID, arg.ResourceType, arg.Action)
+	rows, err := q.db.Query(ctx, listEvaluationCandidates, arg.OrganizationID, arg.ResourceType, arg.Action)
 	if err != nil {
 		return nil, err
 	}
@@ -343,26 +345,26 @@ func (q *Queries) ListEvaluationCandidates(ctx context.Context, arg ListEvaluati
 
 const listSubjectMemberships = `-- name: ListSubjectMemberships :many
 SELECT 'group'::text AS kind, g.name
-FROM tenant.group_members gm
-JOIN tenant.groups g ON g.id = gm.group_id AND g.tenant_id = gm.tenant_id
-WHERE gm.tenant_id = $1 AND gm.user_id = $2
+FROM organization.group_members gm
+JOIN organization.groups g ON g.id = gm.group_id AND g.organization_id = gm.organization_id
+WHERE gm.organization_id = $1 AND gm.user_id = $2
 UNION
 SELECT 'role'::text AS kind, ro.name
 FROM rbac.user_roles ur
-JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.tenant_id = ur.tenant_id
-WHERE ur.tenant_id = $1 AND ur.user_id = $2
+JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.organization_id = ur.organization_id
+WHERE ur.organization_id = $1 AND ur.user_id = $2
 UNION
 SELECT 'role'::text AS kind, ro.name
-FROM tenant.group_members gm
-JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
-JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
-WHERE gm.tenant_id = $1 AND gm.user_id = $2
+FROM organization.group_members gm
+JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id
+WHERE gm.organization_id = $1 AND gm.user_id = $2
 ORDER BY kind, name
 `
 
 type ListSubjectMembershipsParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
 type ListSubjectMembershipsRow struct {
@@ -371,10 +373,10 @@ type ListSubjectMembershipsRow struct {
 }
 
 // ListSubjectMemberships is what the platform knows of a person in an
-// organisation for its policies: the groups they belong to and the roles they
+// organization for its policies: the groups they belong to and the roles they
 // hold there, directly or through a group, by name.
 func (q *Queries) ListSubjectMemberships(ctx context.Context, arg ListSubjectMembershipsParams) ([]ListSubjectMembershipsRow, error) {
-	rows, err := q.db.Query(ctx, listSubjectMemberships, arg.TenantID, arg.UserID)
+	rows, err := q.db.Query(ctx, listSubjectMemberships, arg.OrganizationID, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -395,20 +397,20 @@ func (q *Queries) ListSubjectMemberships(ctx context.Context, arg ListSubjectMem
 
 const saveAbacPolicyVersion = `-- name: SaveAbacPolicyVersion :exec
 INSERT INTO auth.abac_policy_versions
-    (tenant_id, policy_id, version, name, description, effect, resource_type, action, condition, priority, enabled, saved_by)
-SELECT p.tenant_id, p.id, p.version, p.name, p.description, p.effect, p.resource_type, p.action, p.condition, p.priority, p.enabled, p.updated_by
+    (organization_id, policy_id, version, name, description, effect, resource_type, action, condition, priority, enabled, saved_by)
+SELECT p.organization_id, p.id, p.version, p.name, p.description, p.effect, p.resource_type, p.action, p.condition, p.priority, p.enabled, p.updated_by
 FROM auth.abac_policies p
-WHERE p.id = $1 AND p.tenant_id = $2
+WHERE p.id = $1 AND p.organization_id = $2
 `
 
 type SaveAbacPolicyVersionParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // SaveAbacPolicyVersion keeps a policy's state as saved, as its version.
 func (q *Queries) SaveAbacPolicyVersion(ctx context.Context, arg SaveAbacPolicyVersionParams) error {
-	_, err := q.db.Exec(ctx, saveAbacPolicyVersion, arg.ID, arg.TenantID)
+	_, err := q.db.Exec(ctx, saveAbacPolicyVersion, arg.ID, arg.OrganizationID)
 	return err
 }
 
@@ -419,23 +421,23 @@ SELECT (s.second_factor IS NOT NULL OR EXISTS (
              AND v.verified_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes')
        ))::bool AS met
 FROM auth.sessions s
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
-WHERE s.id = $1 AND s.user_id = $2 AND s.tenant_id = $3::uuid
+LEFT JOIN organization.security_policies sp ON sp.organization_id = s.organization_id
+WHERE s.id = $1 AND s.user_id = $2 AND s.organization_id = $3::uuid
   AND s.revoked_at IS NULL AND s.expires_at > NOW()
 `
 
 type SessionSecondFactorMetParams struct {
-	SessionID uuid.UUID
-	UserID    uuid.UUID
-	TenantID  uuid.UUID
+	SessionID      uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // SessionSecondFactorMet reports whether a person's live session in an
-// organisation met a second factor as the organisation's MFA requirement
+// organization met a second factor as the organization's MFA requirement
 // counts one (a challenge, a passkey, a remembered device), or holds a step-up
 // still inside its window. No row: no such session.
 func (q *Queries) SessionSecondFactorMet(ctx context.Context, arg SessionSecondFactorMetParams) (bool, error) {
-	row := q.db.QueryRow(ctx, sessionSecondFactorMet, arg.SessionID, arg.UserID, arg.TenantID)
+	row := q.db.QueryRow(ctx, sessionSecondFactorMet, arg.SessionID, arg.UserID, arg.OrganizationID)
 	var met bool
 	err := row.Scan(&met)
 	return met, err
@@ -447,22 +449,22 @@ SET name = $1, description = $2, effect = $3,
     resource_type = $4, action = $5, condition = $6::jsonb,
     priority = $7, enabled = $8, updated_at = now(),
     version = version + 1, updated_by = $9
-WHERE id = $10 AND tenant_id = $11
-RETURNING id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by
+WHERE id = $10 AND organization_id = $11
+RETURNING id, organization_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by
 `
 
 type UpdateAbacPolicyParams struct {
-	Name         string
-	Description  string
-	Effect       string
-	ResourceType string
-	Action       string
-	Condition    []byte
-	Priority     int32
-	Enabled      bool
-	UpdatedBy    pgtype.UUID
-	ID           uuid.UUID
-	TenantID     uuid.UUID
+	Name           string
+	Description    string
+	Effect         string
+	ResourceType   string
+	Action         string
+	Condition      []byte
+	Priority       int32
+	Enabled        bool
+	UpdatedBy      *uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) UpdateAbacPolicy(ctx context.Context, arg UpdateAbacPolicyParams) (AuthAbacPolicy, error) {
@@ -477,12 +479,12 @@ func (q *Queries) UpdateAbacPolicy(ctx context.Context, arg UpdateAbacPolicyPara
 		arg.Enabled,
 		arg.UpdatedBy,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	var i AuthAbacPolicy
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Description,
 		&i.Effect,

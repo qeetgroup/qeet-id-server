@@ -1,0 +1,135 @@
+delete:
+  operationId: deleteLdapConnection
+  summary: Delete connection
+  tags:
+    - LDAP
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Deletes one of the organization's LDAP connections. Requires
+    connection.write.
+  responses:
+    "204":
+      description: No Content
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+get:
+  operationId: getLdapConnection
+  summary: Get connection
+  tags:
+    - LDAP
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Returns one of the organization's LDAP connections, without its bind
+    password. Requires connection.read.
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/LdapConnection.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+patch:
+  operationId: updateLdapConnection
+  summary: Update connection
+  tags:
+    - LDAP
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/LdapUpdateInput.yaml
+  description: >-
+    Applies a partial update to a directory connection. The connection it
+    leaves must reach the directory over TLS (ldaps://, or ldap:// with
+    start_tls): one without is refused with 422 ldap.tls_required, and so is any
+    other change to a connection saved without TLS, unless the change turns it
+    off (status disabled), so it can be turned off, then mended. A connection
+    that turns off verification of the directory server's certificate
+    (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and so is
+    any other change to a connection saved that way until it turns verification
+    back on. Only a development server (SERVICE_ENV=dev) allows either.
+    sync_interval_minutes must be 5 to 60 (422 ldap.sync_interval_invalid).
+    Saving the connection starts its sync afresh: the next run reads every
+    person, and isn't held to how many people the last full run found, so an
+    administrator can accept a directory that really shrank. Requires
+    connection.write.
+    Changing what the connection trusts (its server_url, bind_dn, base_dn,
+    user_filter or TLS settings) is acting on every account linked to it, as the
+    changed connection could sign in as any of them: while an administrator is
+    linked, it needs a caller who outranks each one (403
+    rbac.trust_change_outranks_caller otherwise).
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/LdapConnection.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

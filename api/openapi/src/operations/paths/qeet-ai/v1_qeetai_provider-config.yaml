@@ -1,0 +1,191 @@
+get:
+  operationId: getAiProviderConfig
+  description: >-
+    Returns the organization's bring-your-own-key AI provider configuration with any
+    secret values masked. Absence of a configuration means the deployment's
+    platform fallback, or none, is in effect. Scoped to the caller's organization and
+    restricted to organization administrators.
+  summary: Get masked organization AI provider configuration
+  tags:
+    - Qeet AI
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: The organization's effective provider configuration, its key masked.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - source
+              - provider
+              - model
+              - base_url
+              - max_tokens
+              - last4
+              - platform_fallback
+            properties:
+              source:
+                type: string
+                enum:
+                  - organization
+                  - platform
+                  - none
+                description: >-
+                  Whose key answers: the organization's own, the deployment's,
+                  or none.
+              provider:
+                type: string
+              model:
+                type: string
+              base_url:
+                type: string
+                description: >-
+                  The organization's own endpoint; empty for the Qeet-managed
+                  provider, whose endpoint is not shown.
+              max_tokens:
+                type: integer
+              last4:
+                type: string
+                description: The key's last four characters.
+              platform_fallback:
+                type: boolean
+                description: Whether the deployment has a key to fall back on.
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+put:
+  operationId: setAiProviderConfig
+  description: >-
+    Stores the organization's own AI provider credentials so the assistant runs
+    against the organization's key rather than the platform fallback, which unlocks it
+    regardless of plan. Secrets are encrypted at rest and are never returned in
+    full by the read endpoint. Restricted to organization administrators;
+    validate the credentials with the test operation before saving.
+  summary: Store organization AI provider configuration
+  tags:
+    - Qeet AI
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          if:
+            properties:
+              provider:
+                const: azure
+          then:
+            required:
+              - base_url
+            properties:
+              base_url:
+                type: string
+                minLength: 1
+          required:
+            - provider
+            - model
+            - api_key
+          properties:
+            provider:
+              type: string
+              enum: [anthropic, openai, azure]
+            model:
+              type: string
+              minLength: 1
+            api_key:
+              type: string
+              minLength: 1
+              writeOnly: true
+            base_url:
+              type:
+                - string
+                - "null"
+              description: Required for azure; must be an allowed outbound destination.
+            max_tokens:
+              type:
+                - integer
+                - "null"
+              format: int64
+              description: Defaults to 4096 for 0 or less; a larger value than 200000 is lowered to it.
+  responses:
+    "200":
+      description: The organization's effective provider configuration, its key masked.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - source
+              - provider
+              - model
+              - base_url
+              - max_tokens
+              - last4
+              - platform_fallback
+            properties:
+              source:
+                type: string
+                enum:
+                  - organization
+                  - platform
+                  - none
+                description: >-
+                  Whose key answers: the organization's own, the deployment's,
+                  or none.
+              provider:
+                type: string
+              model:
+                type: string
+              base_url:
+                type: string
+                description: >-
+                  The organization's own endpoint; empty for the Qeet-managed
+                  provider, whose endpoint is not shown.
+              max_tokens:
+                type: integer
+              last4:
+                type: string
+                description: The key's last four characters.
+              platform_fallback:
+                type: boolean
+                description: Whether the deployment has a key to fall back on.
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+delete:
+  operationId: deleteAiProviderConfig
+  description: >-
+    Removes the organization's bring-your-own-key AI provider configuration, reverting
+    to the deployment's platform fallback where one is available. Restricted to
+    organization administrators. Once removed, assistant availability again
+    depends on the organization's plan.
+  summary: Delete organization AI provider configuration
+  tags:
+    - Qeet AI
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "204":
+      description: Provider configuration deleted
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

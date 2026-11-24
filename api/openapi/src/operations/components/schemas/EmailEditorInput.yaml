@@ -1,0 +1,24 @@
+type: object
+description: >-
+  Subject and preheader limits count Unicode characters. Text and HTML limits
+  count UTF-8 bytes. Action URL variables must remain in both text and HTML when
+  provided. Variables in URLs are allowed only as standalone action-link href
+  values, never in image sources or within external URLs. An action URL
+  variable (reset_url, magic_url, invite_url) appears in the HTML only as a
+  whole href and in the text only on a line of its own, never in the subject,
+  the preheader or among other words (400 otherwise), so a template's wording
+  can't disguise the one-time link.
+required:
+  - subject
+  - body
+properties:
+  subject:
+    type: string
+    minLength: 1
+    maxLength: 200
+  body:
+    type: string
+    minLength: 1
+    maxLength: 150000
+  options:
+    $ref: ./EmailTemplateOptions.yaml

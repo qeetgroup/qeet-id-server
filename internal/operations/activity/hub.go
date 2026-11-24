@@ -17,19 +17,19 @@ const subBufSize = 256
 // subscriber is the receive end of one SSE connection. lost is closed once an
 // event couldn't be delivered to it.
 type subscriber struct {
-	tenantID uuid.UUID
-	ch       chan ActivityEvent
-	lost     chan struct{}
-	lostOnce sync.Once
+	organizationID uuid.UUID
+	ch             chan ActivityEvent
+	lost           chan struct{}
+	lostOnce       sync.Once
 }
 
 // Hub fans out domain events from the NATS outbox to the SSE subscribers of
-// each event's tenant. An event for tenant X reaches only subscribers registered
-// under X, and the stream handler checks the tenant again before writing. It is
+// each event's organization. An event for organization X reaches only subscribers registered
+// under X, and the stream handler checks the organization again before writing. It is
 // safe for concurrent use.
 type Hub struct {
 	mu   sync.RWMutex                // guards subs
-	subs map[uuid.UUID][]*subscriber // tenantID → active subscribers
+	subs map[uuid.UUID][]*subscriber // organizationID → active subscribers
 
 	stopping chan struct{} // closed by Shutdown
 	stopOnce sync.Once
@@ -61,40 +61,40 @@ func NewHub(nc *nats.Conn) *Hub {
 // is safe to call more than once.
 func (h *Hub) Shutdown() { h.stopOnce.Do(func() { close(h.stopping) }) }
 
-// Subscribe registers a subscriber for tenantID and returns its event channel
+// Subscribe registers a subscriber for organizationID and returns its event channel
 // and an unsubscribe func the caller must call when the connection closes.
-// tenantID must come from the authenticated principal.
-func (h *Hub) Subscribe(tenantID uuid.UUID) (<-chan ActivityEvent, func()) {
-	ch, _, unsub := h.subscribe(tenantID)
+// organizationID must come from the authenticated principal.
+func (h *Hub) Subscribe(organizationID uuid.UUID) (<-chan ActivityEvent, func()) {
+	ch, _, unsub := h.subscribe(organizationID)
 	return ch, unsub
 }
 
 // subscribe is Subscribe, also returning a channel closed once the subscriber
 // has lost an event because it fell behind.
-func (h *Hub) subscribe(tenantID uuid.UUID) (<-chan ActivityEvent, <-chan struct{}, func()) {
+func (h *Hub) subscribe(organizationID uuid.UUID) (<-chan ActivityEvent, <-chan struct{}, func()) {
 	s := &subscriber{
-		tenantID: tenantID,
-		ch:       make(chan ActivityEvent, subBufSize),
-		lost:     make(chan struct{}),
+		organizationID: organizationID,
+		ch:             make(chan ActivityEvent, subBufSize),
+		lost:           make(chan struct{}),
 	}
 
 	h.mu.Lock()
-	h.subs[tenantID] = append(h.subs[tenantID], s)
+	h.subs[organizationID] = append(h.subs[organizationID], s)
 	h.mu.Unlock()
 
 	return s.ch, s.lost, func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		list := h.subs[tenantID]
+		list := h.subs[organizationID]
 		for i, sub := range list {
 			if sub == s {
-				// O(n), but a tenant rarely has more than a few connections.
-				h.subs[tenantID] = append(list[:i], list[i+1:]...)
+				// O(n), but an organization rarely has more than a few connections.
+				h.subs[organizationID] = append(list[:i], list[i+1:]...)
 				break
 			}
 		}
-		if len(h.subs[tenantID]) == 0 {
-			delete(h.subs, tenantID)
+		if len(h.subs[organizationID]) == 0 {
+			delete(h.subs, organizationID)
 		}
 	}
 }
@@ -109,37 +109,35 @@ func (h *Hub) dispatch(msg *nats.Msg) {
 		return
 	}
 
-	// Events without a tenant_id, such as platform system events, have no
+	// Events without an organization_id, such as platform system events, have no
 	// subscribers.
 	var tip struct {
-		TenantID *uuid.UUID `json:"tenant_id"`
+		OrganizationID *uuid.UUID `json:"organization_id"`
 	}
-	if err := json.Unmarshal(msg.Data, &tip); err != nil || tip.TenantID == nil {
+	if err := json.Unmarshal(msg.Data, &tip); err != nil || tip.OrganizationID == nil {
 		return
 	}
-	tenantID := *tip.TenantID
+	organizationID := *tip.OrganizationID
 
-	ev := mapOutboxEvent(msg.Subject, eventType, tenantID, msg.Data)
-	h.fanOut(tenantID, ev)
+	ev := mapOutboxEvent(msg.Subject, eventType, organizationID, msg.Data)
+	h.fanOut(organizationID, ev)
 }
 
-// fanOut delivers ev to every subscriber of tenantID without blocking. A
-// subscriber whose channel is full doesn't get it and is told it lost an
-// event, so its stream can have the client catch up from the audit log. It
-// holds the read lock throughout, because unsubscribe rewrites the slice it
-// iterates.
-func (h *Hub) fanOut(tenantID uuid.UUID, ev ActivityEvent) {
+// fanOut delivers ev to every subscriber of organizationID without blocking. A subscriber whose
+// channel is full misses it and is told so, so its stream can catch up from the audit log. It holds
+// the read lock throughout, because unsubscribe rewrites the slice it iterates.
+func (h *Hub) fanOut(organizationID uuid.UUID, ev ActivityEvent) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	for _, s := range h.subs[tenantID] {
+	for _, s := range h.subs[organizationID] {
 		select {
 		case s.ch <- ev:
 		default:
 			s.lostOnce.Do(func() {
 				close(s.lost)
 				slog.Warn("activity hub: subscriber fell behind; its stream reconnects",
-					"tenant_id", tenantID, "event_type", ev.Type)
+					"organization_id", organizationID, "event_type", ev.Type)
 			})
 		}
 	}

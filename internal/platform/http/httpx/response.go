@@ -16,7 +16,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -54,11 +54,10 @@ const StatusClientClosedRequest = 499
 // back spread out rather than all at once.
 const overloadRetryAfter = 3
 
-// WriteError writes err as the JSON error envelope with its code's HTTP status.
-// An error that is not an *errs.Error is logged and sent as ErrInternalServer,
-// except the database's last-owner guard, which becomes ErrTenantLastOwner, and
-// work cancelled because the client went away, which is answered 499.
-// server.overloaded also carries Retry-After, as a header and as metadata.
+// WriteError writes err as the JSON error envelope with its code's HTTP status. A non-*errs.Error is
+// logged and sent as ErrInternalServer, except the last-owner guard (ErrOrganizationLastOwner) and
+// work cancelled by a departed client (499). server.overloaded also carries Retry-After, as a header
+// and as metadata.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	e := errs.As(err)
 	if e == nil {
@@ -66,10 +65,10 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		switch {
 		case errors.As(err, &domain):
 			e = domain
-		case pgxerr.IsLastOwner(err):
+		case postgres.IsLastOwner(err):
 			// The database's own guard (migration 0151): whichever path tried to
-			// take away the organisation's last active owner is told why.
-			e = errs.ErrTenantLastOwner
+			// take away the organization's last active owner is told why.
+			e = ErrOrganizationLastOwner
 		case errors.Is(err, context.Canceled) && r.Context().Err() != nil:
 			// The client hung up or gave up waiting, cancelling the request's work.
 			// Not a server fault: noted, and answered 499 (nginx's "client closed
@@ -89,8 +88,8 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 				"client_ip", ClientIP(r),
 			}
 			if p := PrincipalFromCtx(r.Context()); p != nil {
-				if p.TenantID != nil {
-					attrs = append(attrs, "tenant_id", p.TenantID.String())
+				if p.OrganizationID != nil {
+					attrs = append(attrs, "organization_id", p.OrganizationID.String())
 				}
 				if p.UserID != nil {
 					attrs = append(attrs, "user_id", p.UserID.String())
@@ -128,7 +127,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	body.Error.Fields = e.Fields
 	body.Error.Metadata = e.Metadata
 	body.Error.ReqID = RequestID(r)
-	WriteJSON(w, statusForCode(e.Code), body)
+	WriteJSON(w, ErrorStatus(e), body)
 }
 
 // ValidationError turns validator.ValidationErrors into a 422 validation_failed
@@ -225,7 +224,7 @@ func DecodeStrictJSON(r *http.Request, out any) error {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || (mediaType != "application/json" &&
 		(!strings.HasPrefix(mediaType, "application/") || !strings.HasSuffix(mediaType, "+json"))) {
-		return errs.ErrUnsupportedMediaType
+		return ErrUnsupportedMediaType
 	}
 	return DecodeJSON(r, out)
 }

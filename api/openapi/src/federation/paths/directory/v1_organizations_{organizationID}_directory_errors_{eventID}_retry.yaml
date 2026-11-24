@@ -1,0 +1,44 @@
+post:
+  operationId: retryDirectoryError
+  summary: Retry a failed LDAP connection check
+  description: >-
+    Requires connection.write. Repeats only a failed manual LDAP bind check
+    using current connection settings. SCIM pushes and sign-ins cannot be
+    replayed because request bodies and credentials are never retained.
+    Concurrent retries serialize and a successful retry closes the original
+    error atomically with an audit record. Failed checks remain open.
+  tags:
+    - Directory
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: eventID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    "200":
+      description: Check completed; succeeded reports the actual outcome
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              succeeded:
+                type: boolean
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      description: Authentication required
+    "403":
+      description: Organization mismatch or missing connection.write
+    "404":
+      description: Error not found in this organization
+    "409":
+      description: Operation cannot be retried or is already closed
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

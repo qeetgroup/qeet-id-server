@@ -1,9 +1,0 @@
--- 0001_schemas — one Postgres schema per bounded context (no cross-schema JOINs)
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
-CREATE SCHEMA IF NOT EXISTS platform;
-CREATE SCHEMA IF NOT EXISTS tenant;
-CREATE SCHEMA IF NOT EXISTS "user";
-CREATE SCHEMA IF NOT EXISTS auth;
-CREATE SCHEMA IF NOT EXISTS rbac;
-CREATE SCHEMA IF NOT EXISTS audit;

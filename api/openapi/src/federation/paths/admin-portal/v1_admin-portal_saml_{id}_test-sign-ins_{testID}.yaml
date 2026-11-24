@@ -1,0 +1,42 @@
+get:
+  operationId: getPortalSamlTestSignIn
+  summary: Get a test sign-in (portal)
+  description: >-
+    Returns a test sign-in of the connection and what it found. Requires the
+    link's capabilities to include saml; the connection must belong to the
+    organization bound to the portal session. A test no answer reached within ten
+    minutes reads as expired.
+  tags:
+    - Admin Portal
+  security:
+    - adminPortalCookie: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: testID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    "200":
+      description: The test and its findings
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/SAMLTestSignIn.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

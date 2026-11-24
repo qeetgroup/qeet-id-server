@@ -1,0 +1,118 @@
+post:
+  operationId: sendConversationMessage
+  summary: Send a message / continue with tool results (SSE stream)
+  description: >-
+    Opens a streaming turn of the AI qeetai conversation. The response is a
+    `text/event-stream` of SSE frames (thinking, token, tool_call, tool_result,
+    error, done). Each frame is `event: <type>\ndata: <json>\n\n`.
+
+
+    On `stop_reason=tool_use` the stream ends with `done{reason:"tool_use"}`;
+    the browser executes the tool under its own bearer token and posts
+    `tool_results` to this same endpoint to continue generation. Only the
+    tools the model is offered (read-only in this version) are sent as
+    `tool_call` frames: a call to any other tool is dropped, recorded as
+    `qeetai.tool.refused` and noted in the reply's text.
+
+
+    Requires `QEETAI_PROVIDER` configured server-side; returns `409
+    qeetai_unconfigured` otherwise.
+
+
+    A conversation answers one turn at a time: a message while its previous turn
+    is still running, on any instance, is refused with `409
+    qeetai.turn_in_progress` (retryable) and not stored. A turn sends the model
+    only the conversation's latest 40 messages, within 256 KiB, from a message
+    of the user's, so earlier ones are left out; a turn whose own messages are
+    larger ends with an `error` frame of code `history_too_long` (start a new
+    conversation). A reply longer than 64 KiB is cut there and kept, as at the
+    model's own token limit. A turn runs for at most 10 minutes.
+  tags:
+    - Qeet AI
+  parameters:
+    - name: conversationID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            message:
+              type:
+                - string
+                - "null"
+              description: >-
+                User text input for this turn (mutually exclusive with
+                tool_results).
+            tool_results:
+              type:
+                - array
+                - "null"
+              description: >-
+                Tool execution results from the previous turn (continuation
+                after client-side tool execution). Mutually exclusive with
+                message.
+              items:
+                type: object
+                properties:
+                  tool_call_id:
+                    type: string
+                  name:
+                    type: string
+                  output:
+                    type: object
+                    additionalProperties: true
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+            context:
+              type:
+                - object
+                - "null"
+              description: >-
+                Console context for grounding (current route, selection).
+                Treated as untrusted; never used for authorization.
+              additionalProperties: true
+  responses:
+    "200":
+      description: >-
+        SSE stream of StreamEvent frames. Event types: thinking, token,
+        tool_call, tool_result, error, done.
+      content:
+        text/event-stream:
+          schema:
+            type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "402":
+      $ref: ../../../shared/responses/PaymentRequired.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      description: >-
+        Qeet AI not configured (QEETAI_PROVIDER/QEETAI_API_KEY unset,
+        `qeetai_unconfigured`), or the conversation's previous turn is still
+        running (`qeetai.turn_in_progress`, retryable)
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Error.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

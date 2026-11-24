@@ -1,0 +1,28 @@
+type: object
+required:
+  - capabilities
+  - expires_at
+  - organization_name
+properties:
+  branding:
+    $ref: ./PortalBranding.yaml
+  capabilities:
+    type: array
+    description: What the link may set up.
+    items:
+      type: string
+      enum:
+        - saml
+        - scim
+        - domain_verification
+  expires_at:
+    type: string
+    format: date-time
+  scim_base_url:
+    type: string
+    format: uri
+    description: >-
+      The SCIM 2.0 base URL the IT admin enters at their IdP. Present only when
+      the link's capabilities include scim.
+  organization_name:
+    type: string

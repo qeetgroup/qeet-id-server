@@ -1,9 +1,9 @@
 -- Queries for the access/recovery domain.
 -- All queries are static and compiled by sqlc into ./dbgen.
 
--- name: GetUserIDByEmailForTenant :one
-SELECT id FROM "user".users
-WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL;
+-- name: GetUserIDByEmailForOrganization :one
+SELECT id FROM account.users
+WHERE organization_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL;
 
 -- ExpirePasswordResets ends the user's unused reset links, so only the newest
 -- works. Set a minute back, so a clock behind the database's sees them ended.
@@ -21,10 +21,16 @@ FROM auth.password_resets
 WHERE token_hash = $1
 FOR UPDATE;
 
--- GetResetAccount returns the organisation (NULL = none) and email of the
+-- FindResetAccount finds the account a password reset asked for by its
+-- address: its organization (NULL = none) and email as stored, which the link
+-- goes to.
+-- name: FindResetAccount :one
+SELECT id, organization_id, email FROM account.users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
+
+-- GetResetAccount returns the organization (NULL = none) and email of the
 -- account a reset is for, so the new password is checked against its rules.
 -- name: GetResetAccount :one
-SELECT tenant_id, email FROM "user".users WHERE id = $1;
+SELECT organization_id, email FROM account.users WHERE id = $1;
 
 -- name: UpsertPasswordCredential :exec
 INSERT INTO auth.password_credentials (user_id, password_hash, updated_at)
@@ -34,16 +40,13 @@ ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, upda
 -- name: MarkPasswordResetUsed :exec
 UPDATE auth.password_resets SET used_at = NOW() WHERE id = $1;
 
--- name: VerifyEmailByReset :one
--- A used reset link was sent to the account's address and to nobody else, so
--- it proves the person owns the address: verify it if it wasn't. No row when
--- it already was.
-UPDATE "user".users SET email_verified_at = NOW(), updated_at = NOW()
+-- name: VerifyEmailByLink :one
+-- A used reset or sign-in link was sent to the account's address and to nobody
+-- else, so it proves the person owns the address: verify it if it wasn't. No
+-- row when it already was.
+UPDATE account.users SET email_verified_at = NOW(), updated_at = NOW()
 WHERE id = @user_id AND email_verified_at IS NULL AND deleted_at IS NULL
 RETURNING email;
-
--- name: RevokeUserSessions :exec
-UPDATE auth.sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL;
 
 -- ExpireMagicLinks ends the unused sign-in links to an address, so only the
 -- newest works; a minute back, as ExpirePasswordResets.
@@ -51,15 +54,15 @@ UPDATE auth.sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS
 UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
 WHERE LOWER(email) = LOWER(@email) AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute';
 
--- InsertMagicLink stores a link (only its token's hash). tenant_id is the
--- organisation it was asked for from (NULL from the console); app is where it
+-- InsertMagicLink stores a link (only its token's hash). organization_id is the
+-- organization it was asked for from (NULL from the console); app is where it
 -- opens and return_to where the hosted journey continues.
 -- name: InsertMagicLink :exec
-INSERT INTO auth.magic_links (tenant_id, email, token_hash, expires_at, app, return_to)
-VALUES (sqlc.narg('tenant_id'), @email, @token_hash, @expires_at, @app, sqlc.narg('return_to'));
+INSERT INTO auth.magic_links (organization_id, email, token_hash, expires_at, app, return_to)
+VALUES (sqlc.narg('organization_id'), @email, @token_hash, @expires_at, @app, sqlc.narg('return_to'));
 
 -- name: GetMagicLinkByToken :one
-SELECT id, tenant_id, email, expires_at, used_at, app, return_to
+SELECT id, organization_id, email, expires_at, used_at, app, return_to
 FROM auth.magic_links
 WHERE token_hash = $1
 FOR UPDATE;
@@ -68,8 +71,17 @@ FOR UPDATE;
 -- address, platform-wide (an address is unique), not deleted or suspended.
 -- email is the address as stored, which links are sent to.
 -- name: GetMagicLinkAccount :one
-SELECT id, tenant_id, email FROM "user".users
+SELECT id, organization_id, email FROM account.users
 WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL AND status <> 'suspended';
 
 -- name: MarkMagicLinkUsed :exec
 UPDATE auth.magic_links SET used_at = NOW() WHERE id = $1;
+
+-- AccountBelongsTo reports whether the account belongs to the organization: it
+-- is the account's home, or the account holds a role there.
+-- name: AccountBelongsTo :one
+SELECT EXISTS (
+    SELECT 1 FROM account.users WHERE id = @user_id AND organization_id = @organization_id::uuid
+    UNION ALL
+    SELECT 1 FROM rbac.user_roles WHERE user_id = @user_id AND organization_id = @organization_id::uuid
+)::bool AS belongs;

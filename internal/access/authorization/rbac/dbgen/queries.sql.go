@@ -10,36 +10,35 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const assignRoleToGroup = `-- name: AssignRoleToGroup :one
 WITH ins AS (
-    INSERT INTO rbac.group_roles (tenant_id, group_id, role_id, granted_by)
+    INSERT INTO rbac.group_roles (organization_id, group_id, role_id, granted_by)
     SELECT $3, $1, $2, $4
-    WHERE EXISTS (SELECT 1 FROM tenant.groups g WHERE g.id = $1 AND g.tenant_id = $3)
-      AND EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $2 AND ro.tenant_id = $3)
+    WHERE EXISTS (SELECT 1 FROM organization.groups g WHERE g.id = $1 AND g.organization_id = $3)
+      AND EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $2 AND ro.organization_id = $3)
     ON CONFLICT DO NOTHING
     RETURNING 1
 )
 SELECT (
     EXISTS (SELECT 1 FROM ins)
-    OR EXISTS (SELECT 1 FROM rbac.group_roles existing WHERE existing.group_id = $1 AND existing.role_id = $2 AND existing.tenant_id = $3)
+    OR EXISTS (SELECT 1 FROM rbac.group_roles existing WHERE existing.group_id = $1 AND existing.role_id = $2 AND existing.organization_id = $3)
 ) AS valid
 `
 
 type AssignRoleToGroupParams struct {
-	GroupID   uuid.UUID
-	RoleID    uuid.UUID
-	TenantID  uuid.UUID
-	GrantedBy pgtype.UUID
+	GroupID        uuid.UUID
+	RoleID         uuid.UUID
+	OrganizationID uuid.UUID
+	GrantedBy      *uuid.UUID
 }
 
 func (q *Queries) AssignRoleToGroup(ctx context.Context, arg AssignRoleToGroupParams) (*bool, error) {
 	row := q.db.QueryRow(ctx, assignRoleToGroup,
 		arg.GroupID,
 		arg.RoleID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.GrantedBy,
 	)
 	var valid *bool
@@ -50,53 +49,61 @@ func (q *Queries) AssignRoleToGroup(ctx context.Context, arg AssignRoleToGroupPa
 const assignUserRole = `-- name: AssignUserRole :one
 WITH allowed AS (
     SELECT (
-        EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $1 AND ro.tenant_id = $2)
+        EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $1 AND ro.organization_id = $2)
         AND EXISTS (
-            SELECT 1 FROM "user".users account
+            SELECT 1 FROM account.users account
             WHERE account.id = $3 AND account.deleted_at IS NULL
               AND (
-                  account.tenant_id = $2
+                  account.organization_id = $2
                   OR EXISTS (
                       SELECT 1 FROM rbac.user_roles membership
                       JOIN rbac.roles member_role
-                        ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
-                      WHERE membership.user_id = $3 AND membership.tenant_id = $2
+                        ON member_role.id = membership.role_id AND member_role.organization_id = membership.organization_id
+                      WHERE membership.user_id = $3 AND membership.organization_id = $2
                   )
               )
         )
     ) AS ok
 ),
 ins AS (
-    INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
+    INSERT INTO rbac.user_roles (user_id, organization_id, role_id, granted_by)
     SELECT $3, $2, $1, $4
     FROM allowed
     WHERE allowed.ok
     ON CONFLICT DO NOTHING
+),
+for_good AS (
+    UPDATE rbac.access_requests SET access_ends_at = NULL
+    WHERE organization_id = $2 AND requester_id = $3 AND role_id = $1
+      AND status = 'approved' AND granted AND ended_at IS NULL AND access_ends_at IS NOT NULL
+      AND (SELECT ok FROM allowed)
 )
 SELECT allowed.ok AS valid FROM allowed
 `
 
 type AssignUserRoleParams struct {
-	RoleID    uuid.UUID
-	TenantID  uuid.UUID
-	UserID    uuid.UUID
-	GrantedBy pgtype.UUID
+	RoleID         uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	GrantedBy      *uuid.UUID
 }
 
 // AssignUserRole grants a role to a user only when the role belongs to the
-// tenant and the user is a live member of it, checked in the same statement as
+// organization and the user is a live member of it, checked in the same statement as
 // the write. A user_roles row is what makes someone a member, so without the
-// membership check one insert could pull a user from another tenant in.
-// Membership is a user_roles row in the tenant whose role is the tenant's own
-// (as CheckTenantMembership reads it), or the tenant being the account's home:
+// membership check one insert could pull a user from another organization in.
+// Membership is a user_roles row in the organization whose role is the organization's own
+// (as CheckOrganizationMembership reads it), or the organization being the account's home:
 // an admin-created account has no membership row until its first role, and
 // that first assignment must still work. valid is false for a missing,
 // deleted or foreign user and for a missing or foreign role alike, and true
-// for a role the user already holds (the insert is then a no-op).
+// for a role the user already holds (the insert is then a no-op). Giving a
+// role someone holds for a time through an access request gives it for good:
+// the request's end is cleared, so its sweep leaves the role.
 func (q *Queries) AssignUserRole(ctx context.Context, arg AssignUserRoleParams) (*bool, error) {
 	row := q.db.QueryRow(ctx, assignUserRole,
 		arg.RoleID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.UserID,
 		arg.GrantedBy,
 	)
@@ -111,25 +118,25 @@ SELECT EXISTS (
     FROM rbac.user_roles ur
     JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
     JOIN rbac.permissions p ON p.id = rp.permission_id
-    WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND p.key = $3
+    WHERE ur.user_id = $1 AND ur.organization_id = $2 AND p.key = $3
     UNION ALL
     SELECT 1
-    FROM tenant.group_members gm
-    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+    FROM organization.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
     JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
     JOIN rbac.permissions p ON p.id = rp.permission_id
-    WHERE gm.user_id = $1 AND gm.tenant_id = $2 AND p.key = $3
+    WHERE gm.user_id = $1 AND gm.organization_id = $2 AND p.key = $3
 ) AS allowed
 `
 
 type CheckPermissionParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
-	PermKey  string
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	PermKey        string
 }
 
 func (q *Queries) CheckPermission(ctx context.Context, arg CheckPermissionParams) (bool, error) {
-	row := q.db.QueryRow(ctx, checkPermission, arg.UserID, arg.TenantID, arg.PermKey)
+	row := q.db.QueryRow(ctx, checkPermission, arg.UserID, arg.OrganizationID, arg.PermKey)
 	var allowed bool
 	err := row.Scan(&allowed)
 	return allowed, err
@@ -137,34 +144,34 @@ func (q *Queries) CheckPermission(ctx context.Context, arg CheckPermissionParams
 
 const countCustomRoles = `-- name: CountCustomRoles :one
 SELECT COUNT(*) FROM rbac.roles
-WHERE tenant_id = $1 AND is_system = FALSE
+WHERE organization_id = $1 AND is_system = FALSE
 `
 
-// CountCustomRoles counts a tenant's non-system (custom) roles — the plan-limit
+// CountCustomRoles counts an organization's non-system (custom) roles — the plan-limit
 // check. Built-in roles (is_system = TRUE) don't count toward the cap.
-func (q *Queries) CountCustomRoles(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countCustomRoles, tenantID)
+func (q *Queries) CountCustomRoles(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countCustomRoles, organizationID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const createRole = `-- name: CreateRole :one
-INSERT INTO rbac.roles (tenant_id, name, description, is_system)
+INSERT INTO rbac.roles (organization_id, name, description, is_system)
 VALUES ($1, $2, $3, $4)
-RETURNING id, tenant_id, name, description, is_system, created_at
+RETURNING id, organization_id, name, description, is_system, created_at
 `
 
 type CreateRoleParams struct {
-	TenantID    uuid.UUID
-	Name        string
-	Description string
-	IsSystem    bool
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	IsSystem       bool
 }
 
 func (q *Queries) CreateRole(ctx context.Context, arg CreateRoleParams) (RbacRole, error) {
 	row := q.db.QueryRow(ctx, createRole,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Name,
 		arg.Description,
 		arg.IsSystem,
@@ -172,7 +179,7 @@ func (q *Queries) CreateRole(ctx context.Context, arg CreateRoleParams) (RbacRol
 	var i RbacRole
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Description,
 		&i.IsSystem,
@@ -182,16 +189,16 @@ func (q *Queries) CreateRole(ctx context.Context, arg CreateRoleParams) (RbacRol
 }
 
 const deleteRole = `-- name: DeleteRole :exec
-DELETE FROM rbac.roles WHERE id = $1 AND tenant_id = $2
+DELETE FROM rbac.roles WHERE id = $1 AND organization_id = $2
 `
 
 type DeleteRoleParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteRole(ctx context.Context, arg DeleteRoleParams) error {
-	_, err := q.db.Exec(ctx, deleteRole, arg.ID, arg.TenantID)
+	_, err := q.db.Exec(ctx, deleteRole, arg.ID, arg.OrganizationID)
 	return err
 }
 
@@ -201,37 +208,37 @@ FROM rbac.user_roles ur
 JOIN rbac.roles ro ON ro.id = ur.role_id
 JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
 JOIN rbac.permissions p ON p.id = rp.permission_id
-WHERE ur.user_id = $1 AND ur.tenant_id = $2
+WHERE ur.user_id = $1 AND ur.organization_id = $2
 UNION ALL
 SELECT p.key AS permission, 'group'::text AS via, g.id AS group_id, g.name AS group_name, ro.id AS role_id, ro.name AS role_name
-FROM tenant.group_members gm
-JOIN tenant.groups g ON g.id = gm.group_id AND g.tenant_id = gm.tenant_id
-JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+FROM organization.group_members gm
+JOIN organization.groups g ON g.id = gm.group_id AND g.organization_id = gm.organization_id
+JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
 JOIN rbac.roles ro ON ro.id = gr.role_id
 JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
 JOIN rbac.permissions p ON p.id = rp.permission_id
-WHERE gm.user_id = $1 AND gm.tenant_id = $2
+WHERE gm.user_id = $1 AND gm.organization_id = $2
 ORDER BY permission, via, group_name NULLS FIRST, role_name
 `
 
 type ExplainAllGrantsParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type ExplainAllGrantsRow struct {
 	Permission string
 	Via        string
-	GroupID    pgtype.UUID
+	GroupID    *uuid.UUID
 	GroupName  *string
 	RoleID     uuid.UUID
 	RoleName   string
 }
 
-// Every grant behind a person's permissions in the tenant: each permission
+// Every grant behind a person's permissions in the organization: each permission
 // with the role granting it, held directly or through which group.
 func (q *Queries) ExplainAllGrants(ctx context.Context, arg ExplainAllGrantsParams) ([]ExplainAllGrantsRow, error) {
-	rows, err := q.db.Query(ctx, explainAllGrants, arg.UserID, arg.TenantID)
+	rows, err := q.db.Query(ctx, explainAllGrants, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -263,35 +270,35 @@ FROM rbac.user_roles ur
 JOIN rbac.roles ro ON ro.id = ur.role_id
 JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
 JOIN rbac.permissions p ON p.id = rp.permission_id
-WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND p.key = $3
+WHERE ur.user_id = $1 AND ur.organization_id = $2 AND p.key = $3
 UNION ALL
 SELECT 'group'::text AS via, g.id AS group_id, g.name AS group_name, ro.id AS role_id, ro.name AS role_name
-FROM tenant.group_members gm
-JOIN tenant.groups g ON g.id = gm.group_id AND g.tenant_id = gm.tenant_id
-JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+FROM organization.group_members gm
+JOIN organization.groups g ON g.id = gm.group_id AND g.organization_id = gm.organization_id
+JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
 JOIN rbac.roles ro ON ro.id = gr.role_id
 JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
 JOIN rbac.permissions p ON p.id = rp.permission_id
-WHERE gm.user_id = $1 AND gm.tenant_id = $2 AND p.key = $3
+WHERE gm.user_id = $1 AND gm.organization_id = $2 AND p.key = $3
 ORDER BY via, group_name NULLS FIRST
 `
 
 type ExplainGrantsParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
-	PermKey  string
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	PermKey        string
 }
 
 type ExplainGrantsRow struct {
 	Via       string
-	GroupID   pgtype.UUID
+	GroupID   *uuid.UUID
 	GroupName *string
 	RoleID    uuid.UUID
 	RoleName  string
 }
 
 func (q *Queries) ExplainGrants(ctx context.Context, arg ExplainGrantsParams) ([]ExplainGrantsRow, error) {
-	rows, err := q.db.Query(ctx, explainGrants, arg.UserID, arg.TenantID, arg.PermKey)
+	rows, err := q.db.Query(ctx, explainGrants, arg.UserID, arg.OrganizationID, arg.PermKey)
 	if err != nil {
 		return nil, err
 	}
@@ -327,15 +334,15 @@ func (q *Queries) GetPermissionKey(ctx context.Context, id uuid.UUID) (string, e
 	return key, err
 }
 
-const getRoleTenant = `-- name: GetRoleTenant :one
-SELECT tenant_id FROM rbac.roles WHERE id = $1
+const getRoleOrganization = `-- name: GetRoleOrganization :one
+SELECT organization_id FROM rbac.roles WHERE id = $1
 `
 
-func (q *Queries) GetRoleTenant(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getRoleTenant, id)
-	var tenant_id uuid.UUID
-	err := row.Scan(&tenant_id)
-	return tenant_id, err
+func (q *Queries) GetRoleOrganization(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getRoleOrganization, id)
+	var organization_id uuid.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
 }
 
 const grantBuiltinRolePermissions = `-- name: GrantBuiltinRolePermissions :exec
@@ -343,15 +350,15 @@ INSERT INTO rbac.role_permissions (role_id, permission_id)
 SELECT ro.id, p.id
 FROM rbac.roles ro
 JOIN rbac.permissions p ON ro.name = 'owner'
-                        OR (ro.name = 'admin' AND p.key <> 'tenant.delete')
+                        OR (ro.name = 'admin' AND p.key <> 'organization.delete')
                         OR (ro.name = 'viewer' AND p.key LIKE '%.read' AND p.key <> 'secret.read')
 WHERE ro.is_system
 ON CONFLICT DO NOTHING
 `
 
-// Every organisation's built-in roles hold what their definitions cover of the
+// Every organization's built-in roles hold what their definitions cover of the
 // catalogue as it is now: owner everything, admin everything but deleting the
-// organisation, viewer every read but secrets' (whose read reveals them).
+// organization, viewer every read but secrets' (whose read reveals them).
 func (q *Queries) GrantBuiltinRolePermissions(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, grantBuiltinRolePermissions)
 	return err
@@ -389,29 +396,105 @@ func (q *Queries) GrantPermissions(ctx context.Context, arg GrantPermissionsPara
 	return err
 }
 
+const groupGrantScope = `-- name: GroupGrantScope :one
+SELECT COALESCE(bool_or(ro.is_system AND ro.name = 'owner'), false)::boolean AS owner_role,
+       COALESCE(array_agg(DISTINCT p.key) FILTER (WHERE p.key IS NOT NULL), '{}')::text[] AS keys
+FROM rbac.group_roles gr
+JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id
+LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE gr.group_id = $1 AND gr.organization_id = $2
+`
+
+type GroupGrantScopeParams struct {
+	GroupID        uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+type GroupGrantScopeRow struct {
+	OwnerRole bool
+	Keys      []string
+}
+
+// Whether the organization's group holds its owner role, and the permissions
+// its roles carry, by key: none for a group that isn't the organization's.
+func (q *Queries) GroupGrantScope(ctx context.Context, arg GroupGrantScopeParams) (GroupGrantScopeRow, error) {
+	row := q.db.QueryRow(ctx, groupGrantScope, arg.GroupID, arg.OrganizationID)
+	var i GroupGrantScopeRow
+	err := row.Scan(&i.OwnerRole, &i.Keys)
+	return i, err
+}
+
+const isOwner = `-- name: IsOwner :one
+SELECT EXISTS (
+    SELECT 1 FROM rbac.user_roles ur
+    JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.is_system AND ro.name = 'owner'
+    WHERE ur.user_id = $1 AND ur.organization_id = $2 AND ro.organization_id = $2
+    UNION ALL
+    SELECT 1 FROM organization.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+    JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.is_system AND ro.name = 'owner'
+    WHERE gm.user_id = $1 AND gm.organization_id = $2 AND ro.organization_id = $2
+)::boolean AS owner
+`
+
+type IsOwnerParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// Whether the person holds the organization's owner role, directly or through
+// a group.
+func (q *Queries) IsOwner(ctx context.Context, arg IsOwnerParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isOwner, arg.UserID, arg.OrganizationID)
+	var owner bool
+	err := row.Scan(&owner)
+	return owner, err
+}
+
+const leftOrganization = `-- name: LeftOrganization :one
+SELECT (NOT EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1::uuid AND ur.organization_id = $2::uuid)
+    AND NOT EXISTS (SELECT 1 FROM account.users u WHERE u.id = $1::uuid AND u.organization_id = $2::uuid))::bool
+    AS left_organization
+`
+
+type LeftOrganizationParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// LeftOrganization reports whether the user is no longer a member of the organization: it
+// isn't their home and they hold no role there.
+func (q *Queries) LeftOrganization(ctx context.Context, arg LeftOrganizationParams) (bool, error) {
+	row := q.db.QueryRow(ctx, leftOrganization, arg.UserID, arg.OrganizationID)
+	var left_organization bool
+	err := row.Scan(&left_organization)
+	return left_organization, err
+}
+
 const listEffectivePermissions = `-- name: ListEffectivePermissions :many
 SELECT p.key
 FROM rbac.user_roles ur
 JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
 JOIN rbac.permissions p ON p.id = rp.permission_id
-WHERE ur.user_id = $1 AND ur.tenant_id = $2
+WHERE ur.user_id = $1 AND ur.organization_id = $2
 UNION
 SELECT p.key
-FROM tenant.group_members gm
-JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+FROM organization.group_members gm
+JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
 JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
 JOIN rbac.permissions p ON p.id = rp.permission_id
-WHERE gm.user_id = $1 AND gm.tenant_id = $2
+WHERE gm.user_id = $1 AND gm.organization_id = $2
 ORDER BY key
 `
 
 type ListEffectivePermissionsParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) ListEffectivePermissions(ctx context.Context, arg ListEffectivePermissionsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, listEffectivePermissions, arg.UserID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listEffectivePermissions, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -434,13 +517,13 @@ const listGroupRoles = `-- name: ListGroupRoles :many
 SELECT gr.role_id, ro.name, gr.granted_at
 FROM rbac.group_roles gr
 JOIN rbac.roles ro ON ro.id = gr.role_id
-WHERE gr.group_id = $1 AND gr.tenant_id = $2
+WHERE gr.group_id = $1 AND gr.organization_id = $2
 ORDER BY ro.name
 `
 
 type ListGroupRolesParams struct {
-	GroupID  uuid.UUID
-	TenantID uuid.UUID
+	GroupID        uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type ListGroupRolesRow struct {
@@ -450,7 +533,7 @@ type ListGroupRolesRow struct {
 }
 
 func (q *Queries) ListGroupRoles(ctx context.Context, arg ListGroupRolesParams) ([]ListGroupRolesRow, error) {
-	rows, err := q.db.Query(ctx, listGroupRoles, arg.GroupID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listGroupRoles, arg.GroupID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -496,14 +579,14 @@ func (q *Queries) ListPermissions(ctx context.Context) ([]RbacPermission, error)
 const listRoleHolderGroups = `-- name: ListRoleHolderGroups :many
 SELECT g.id, g.name
 FROM rbac.group_roles gr
-JOIN tenant.groups g ON g.id = gr.group_id AND g.tenant_id = gr.tenant_id
-WHERE gr.tenant_id = $1 AND gr.role_id = $2
+JOIN organization.groups g ON g.id = gr.group_id AND g.organization_id = gr.organization_id
+WHERE gr.organization_id = $1 AND gr.role_id = $2
 ORDER BY g.name, g.id
 `
 
 type ListRoleHolderGroupsParams struct {
-	TenantID uuid.UUID
-	RoleID   uuid.UUID
+	OrganizationID uuid.UUID
+	RoleID         uuid.UUID
 }
 
 type ListRoleHolderGroupsRow struct {
@@ -511,9 +594,9 @@ type ListRoleHolderGroupsRow struct {
 	Name string
 }
 
-// The groups of the tenant granted a role, by name.
+// The groups of the organization granted a role, by name.
 func (q *Queries) ListRoleHolderGroups(ctx context.Context, arg ListRoleHolderGroupsParams) ([]ListRoleHolderGroupsRow, error) {
-	rows, err := q.db.Query(ctx, listRoleHolderGroups, arg.TenantID, arg.RoleID)
+	rows, err := q.db.Query(ctx, listRoleHolderGroups, arg.OrganizationID, arg.RoleID)
 	if err != nil {
 		return nil, err
 	}
@@ -535,26 +618,26 @@ func (q *Queries) ListRoleHolderGroups(ctx context.Context, arg ListRoleHolderGr
 const listRoleHolderPeople = `-- name: ListRoleHolderPeople :many
 SELECT u.id, u.email, COALESCE(u.display_name, '')::text AS display_name,
        EXISTS (SELECT 1 FROM rbac.user_roles ur
-                WHERE ur.user_id = u.id AND ur.tenant_id = $1 AND ur.role_id = $2) AS direct,
+                WHERE ur.user_id = u.id AND ur.organization_id = $1 AND ur.role_id = $2) AS direct,
        COALESCE((SELECT array_agg(gr.group_id ORDER BY gr.group_id) FROM rbac.group_roles gr
-                   JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
-                  WHERE gr.tenant_id = $1 AND gr.role_id = $2 AND gm.user_id = u.id), '{}')::uuid[] AS via_groups
-FROM "user".users u
+                   JOIN organization.group_members gm ON gm.group_id = gr.group_id AND gm.organization_id = gr.organization_id
+                  WHERE gr.organization_id = $1 AND gr.role_id = $2 AND gm.user_id = u.id), '{}')::uuid[] AS via_groups
+FROM account.users u
 WHERE u.deleted_at IS NULL
   AND (EXISTS (SELECT 1 FROM rbac.user_roles ur
-                WHERE ur.user_id = u.id AND ur.tenant_id = $1 AND ur.role_id = $2)
+                WHERE ur.user_id = u.id AND ur.organization_id = $1 AND ur.role_id = $2)
        OR EXISTS (SELECT 1 FROM rbac.group_roles gr
-                    JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
-                   WHERE gr.tenant_id = $1 AND gr.role_id = $2 AND gm.user_id = u.id))
+                    JOIN organization.group_members gm ON gm.group_id = gr.group_id AND gm.organization_id = gr.organization_id
+                   WHERE gr.organization_id = $1 AND gr.role_id = $2 AND gm.user_id = u.id))
 ORDER BY u.email, u.id
 LIMIT $4 OFFSET $3
 `
 
 type ListRoleHolderPeopleParams struct {
-	TenantID  uuid.UUID
-	RoleID    uuid.UUID
-	RowOffset int32
-	RowLimit  int32
+	OrganizationID uuid.UUID
+	RoleID         uuid.UUID
+	RowOffset      int32
+	RowLimit       int32
 }
 
 type ListRoleHolderPeopleRow struct {
@@ -565,11 +648,11 @@ type ListRoleHolderPeopleRow struct {
 	ViaGroups   []uuid.UUID
 }
 
-// One page of the live people holding a role of the tenant, by email: whether
+// One page of the live people holding a role of the organization, by email: whether
 // directly, and the groups they hold it through.
 func (q *Queries) ListRoleHolderPeople(ctx context.Context, arg ListRoleHolderPeopleParams) ([]ListRoleHolderPeopleRow, error) {
 	rows, err := q.db.Query(ctx, listRoleHolderPeople,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.RoleID,
 		arg.RowOffset,
 		arg.RowLimit,
@@ -627,14 +710,14 @@ func (q *Queries) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]
 }
 
 const listRoles = `-- name: ListRoles :many
-SELECT id, tenant_id, name, description, is_system, created_at
+SELECT id, organization_id, name, description, is_system, created_at
 FROM rbac.roles
-WHERE tenant_id = $1
+WHERE organization_id = $1
 ORDER BY name
 `
 
-func (q *Queries) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]RbacRole, error) {
-	rows, err := q.db.Query(ctx, listRoles, tenantID)
+func (q *Queries) ListRoles(ctx context.Context, organizationID uuid.UUID) ([]RbacRole, error) {
+	rows, err := q.db.Query(ctx, listRoles, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -644,7 +727,7 @@ func (q *Queries) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]RbacRole
 		var i RbacRole
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Name,
 			&i.Description,
 			&i.IsSystem,
@@ -661,24 +744,24 @@ func (q *Queries) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]RbacRole
 }
 
 const lockRole = `-- name: LockRole :one
-SELECT id, tenant_id, name, description, is_system, created_at
-FROM rbac.roles WHERE id = $1 AND tenant_id = $2
+SELECT id, organization_id, name, description, is_system, created_at
+FROM rbac.roles WHERE id = $1 AND organization_id = $2
 FOR UPDATE
 `
 
 type LockRoleParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-// LockRole reads a role of the tenant for a change, held until it commits, so
+// LockRole reads a role of the organization for a change, held until it commits, so
 // nobody gives the role to anyone or edits it meanwhile.
 func (q *Queries) LockRole(ctx context.Context, arg LockRoleParams) (RbacRole, error) {
-	row := q.db.QueryRow(ctx, lockRole, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, lockRole, arg.ID, arg.OrganizationID)
 	var i RbacRole
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Description,
 		&i.IsSystem,
@@ -712,17 +795,17 @@ func (q *Queries) PermissionsByID(ctx context.Context, ids []uuid.UUID) ([]RbacP
 }
 
 const removeRoleFromGroup = `-- name: RemoveRoleFromGroup :exec
-DELETE FROM rbac.group_roles WHERE group_id = $1 AND tenant_id = $2 AND role_id = $3
+DELETE FROM rbac.group_roles WHERE group_id = $1 AND organization_id = $2 AND role_id = $3
 `
 
 type RemoveRoleFromGroupParams struct {
-	GroupID  uuid.UUID
-	TenantID uuid.UUID
-	RoleID   uuid.UUID
+	GroupID        uuid.UUID
+	OrganizationID uuid.UUID
+	RoleID         uuid.UUID
 }
 
 func (q *Queries) RemoveRoleFromGroup(ctx context.Context, arg RemoveRoleFromGroupParams) error {
-	_, err := q.db.Exec(ctx, removeRoleFromGroup, arg.GroupID, arg.TenantID, arg.RoleID)
+	_, err := q.db.Exec(ctx, removeRoleFromGroup, arg.GroupID, arg.OrganizationID, arg.RoleID)
 	return err
 }
 
@@ -754,20 +837,51 @@ func (q *Queries) RevokePermissions(ctx context.Context, arg RevokePermissionsPa
 	return err
 }
 
+const roleGrantScope = `-- name: RoleGrantScope :one
+
+SELECT (ro.is_system AND ro.name = 'owner')::boolean AS owner_role,
+       COALESCE(array_agg(p.key ORDER BY p.key) FILTER (WHERE p.key IS NOT NULL), '{}')::text[] AS keys
+FROM rbac.roles ro
+LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE ro.id = $1 AND ro.organization_id = $2
+GROUP BY ro.id, ro.is_system, ro.name
+`
+
+type RoleGrantScopeParams struct {
+	RoleID         uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+type RoleGrantScopeRow struct {
+	OwnerRole bool
+	Keys      []string
+}
+
+// Grant checks (grantcheck.go).
+// Whether the organization's role is its owner role, and the permissions it
+// carries, by key. No row when the role isn't the organization's.
+func (q *Queries) RoleGrantScope(ctx context.Context, arg RoleGrantScopeParams) (RoleGrantScopeRow, error) {
+	row := q.db.QueryRow(ctx, roleGrantScope, arg.RoleID, arg.OrganizationID)
+	var i RoleGrantScopeRow
+	err := row.Scan(&i.OwnerRole, &i.Keys)
+	return i, err
+}
+
 const roleHolderCounts = `-- name: RoleHolderCounts :many
 SELECT ro.id AS role_id,
        (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
-          JOIN "user".users u ON u.id = ur.user_id AND u.deleted_at IS NULL
-         WHERE ur.tenant_id = ro.tenant_id AND ur.role_id = ro.id)::int AS people_direct,
+          JOIN account.users u ON u.id = ur.user_id AND u.deleted_at IS NULL
+         WHERE ur.organization_id = ro.organization_id AND ur.role_id = ro.id)::int AS people_direct,
        (SELECT count(DISTINCT gm.user_id) FROM rbac.group_roles gr
-          JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
-          JOIN "user".users u ON u.id = gm.user_id AND u.deleted_at IS NULL
-         WHERE gr.tenant_id = ro.tenant_id AND gr.role_id = ro.id
+          JOIN organization.group_members gm ON gm.group_id = gr.group_id AND gm.organization_id = gr.organization_id
+          JOIN account.users u ON u.id = gm.user_id AND u.deleted_at IS NULL
+         WHERE gr.organization_id = ro.organization_id AND gr.role_id = ro.id
            AND NOT EXISTS (SELECT 1 FROM rbac.user_roles ur
-                            WHERE ur.user_id = gm.user_id AND ur.tenant_id = ro.tenant_id AND ur.role_id = ro.id))::int AS people_through_groups,
-       (SELECT count(*) FROM rbac.group_roles gr WHERE gr.tenant_id = ro.tenant_id AND gr.role_id = ro.id)::int AS groups
+                            WHERE ur.user_id = gm.user_id AND ur.organization_id = ro.organization_id AND ur.role_id = ro.id))::int AS people_through_groups,
+       (SELECT count(*) FROM rbac.group_roles gr WHERE gr.organization_id = ro.organization_id AND gr.role_id = ro.id)::int AS groups
 FROM rbac.roles ro
-WHERE ro.tenant_id = $1
+WHERE ro.organization_id = $1
 `
 
 type RoleHolderCountsRow struct {
@@ -777,10 +891,10 @@ type RoleHolderCountsRow struct {
 	Groups              int32
 }
 
-// Per role of the tenant: the live people holding it directly, those holding
+// Per role of the organization: the live people holding it directly, those holding
 // it only through a group, and the groups granted it.
-func (q *Queries) RoleHolderCounts(ctx context.Context, tenantID uuid.UUID) ([]RoleHolderCountsRow, error) {
-	rows, err := q.db.Query(ctx, roleHolderCounts, tenantID)
+func (q *Queries) RoleHolderCounts(ctx context.Context, organizationID uuid.UUID) ([]RoleHolderCountsRow, error) {
+	rows, err := q.db.Query(ctx, roleHolderCounts, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -804,16 +918,33 @@ func (q *Queries) RoleHolderCounts(ctx context.Context, tenantID uuid.UUID) ([]R
 	return items, nil
 }
 
+const roleIsSystem = `-- name: RoleIsSystem :one
+SELECT is_system FROM rbac.roles WHERE id = $1 AND organization_id = $2
+`
+
+type RoleIsSystemParams struct {
+	RoleID         uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// Whether the organization's role is a built-in one.
+func (q *Queries) RoleIsSystem(ctx context.Context, arg RoleIsSystemParams) (bool, error) {
+	row := q.db.QueryRow(ctx, roleIsSystem, arg.RoleID, arg.OrganizationID)
+	var is_system bool
+	err := row.Scan(&is_system)
+	return is_system, err
+}
+
 const roleUse = `-- name: RoleUse :one
 SELECT
-    (SELECT count(*) FROM rbac.user_roles ur WHERE ur.role_id = $1 AND ur.tenant_id = $2) AS people,
-    (SELECT count(*) FROM rbac.group_roles gr WHERE gr.role_id = $1 AND gr.tenant_id = $2) AS groups,
-    (SELECT count(*) FROM tenant.invites i WHERE i.role_id = $1 AND i.tenant_id = $2 AND i.status IN ('pending', 'expired')) AS invitations
+    (SELECT count(*) FROM rbac.user_roles ur WHERE ur.role_id = $1 AND ur.organization_id = $2) AS people,
+    (SELECT count(*) FROM rbac.group_roles gr WHERE gr.role_id = $1 AND gr.organization_id = $2) AS groups,
+    (SELECT count(*) FROM organization.invites i WHERE i.role_id = $1 AND i.organization_id = $2 AND i.status IN ('pending', 'expired')) AS invitations
 `
 
 type RoleUseParams struct {
-	RoleID   uuid.UUID
-	TenantID uuid.UUID
+	RoleID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type RoleUseRow struct {
@@ -826,41 +957,41 @@ type RoleUseRow struct {
 // groups holding it, and the invitations to it that can still be accepted or
 // resent.
 func (q *Queries) RoleUse(ctx context.Context, arg RoleUseParams) (RoleUseRow, error) {
-	row := q.db.QueryRow(ctx, roleUse, arg.RoleID, arg.TenantID)
+	row := q.db.QueryRow(ctx, roleUse, arg.RoleID, arg.OrganizationID)
 	var i RoleUseRow
 	err := row.Scan(&i.People, &i.Groups, &i.Invitations)
 	return i, err
 }
 
 const unassignUserRole = `-- name: UnassignUserRole :exec
-DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2 AND role_id = $3
+DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2 AND role_id = $3
 `
 
 type UnassignUserRoleParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
-	RoleID   uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	RoleID         uuid.UUID
 }
 
-// UnassignUserRole deletes only within the given tenant, and deliberately does
-// not require the role to be the tenant's own: a row attaching another
-// tenant's role must stay removable by the tenant it was written into.
+// UnassignUserRole deletes only within the given organization, and deliberately does
+// not require the role to be the organization's own: a row attaching another
+// organization's role must stay removable by the organization it was written into.
 func (q *Queries) UnassignUserRole(ctx context.Context, arg UnassignUserRoleParams) error {
-	_, err := q.db.Exec(ctx, unassignUserRole, arg.UserID, arg.TenantID, arg.RoleID)
+	_, err := q.db.Exec(ctx, unassignUserRole, arg.UserID, arg.OrganizationID, arg.RoleID)
 	return err
 }
 
 const updateRole = `-- name: UpdateRole :one
 UPDATE rbac.roles SET name = $1, description = $2
-WHERE id = $3 AND tenant_id = $4
-RETURNING id, tenant_id, name, description, is_system, created_at
+WHERE id = $3 AND organization_id = $4
+RETURNING id, organization_id, name, description, is_system, created_at
 `
 
 type UpdateRoleParams struct {
-	Name        string
-	Description string
-	ID          uuid.UUID
-	TenantID    uuid.UUID
+	Name           string
+	Description    string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) UpdateRole(ctx context.Context, arg UpdateRoleParams) (RbacRole, error) {
@@ -868,12 +999,12 @@ func (q *Queries) UpdateRole(ctx context.Context, arg UpdateRoleParams) (RbacRol
 		arg.Name,
 		arg.Description,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	var i RbacRole
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Description,
 		&i.IsSystem,
@@ -913,29 +1044,29 @@ FROM (
     FROM rbac.user_roles ur
     JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
     JOIN rbac.permissions p ON p.id = rp.permission_id
-    WHERE ur.tenant_id = $1 AND p.key = $2
+    WHERE ur.organization_id = $1 AND p.key = $2
     UNION
     SELECT gm.user_id
-    FROM tenant.group_members gm
-    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+    FROM organization.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
     JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
     JOIN rbac.permissions p ON p.id = rp.permission_id
-    WHERE gm.tenant_id = $1 AND p.key = $2
+    WHERE gm.organization_id = $1 AND p.key = $2
 ) holder
-JOIN "user".users u ON u.id = holder.user_id AND u.deleted_at IS NULL AND u.status = 'active'
+JOIN account.users u ON u.id = holder.user_id AND u.deleted_at IS NULL AND u.status = 'active'
 LIMIT 200
 `
 
 type UsersWithPermissionParams struct {
-	TenantID uuid.UUID
-	PermKey  string
+	OrganizationID uuid.UUID
+	PermKey        string
 }
 
-// UsersWithPermission lists the active members of the tenant who hold the
+// UsersWithPermission lists the active members of the organization who hold the
 // permission, directly or through a group: the people to tell about something
 // only they can act on, such as an access request.
 func (q *Queries) UsersWithPermission(ctx context.Context, arg UsersWithPermissionParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, usersWithPermission, arg.TenantID, arg.PermKey)
+	rows, err := q.db.Query(ctx, usersWithPermission, arg.OrganizationID, arg.PermKey)
 	if err != nil {
 		return nil, err
 	}

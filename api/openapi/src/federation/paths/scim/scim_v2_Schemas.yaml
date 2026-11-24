@@ -1,0 +1,26 @@
+get:
+  operationId: listScimSchemas
+  description: >-
+    Returns the SCIM 2.0 schema definitions for the resources Qeet exposes as a
+    SCIM server, for IdP discovery. Requires the SCIM bearer token and is
+    mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644
+    SCIM error envelope, not the standard Qeet error shape.
+  summary: "[scim] Schemas"
+  tags:
+    - SCIM
+  security:
+    - scimBearer: []
+  responses:
+    "200":
+      description: SCIM metadata
+      content:
+        application/scim+json:
+          schema:
+            type: object
+            additionalProperties: true
+    "401":
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

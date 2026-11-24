@@ -30,9 +30,8 @@ import (
 	"github.com/google/uuid"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // spKeys is an app's own signing and encryption key, as an SP holds it.
@@ -70,8 +69,8 @@ func ecdsaCertPEM(t *testing.T) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }
 
-// createSP registers an app in tenant within its own transaction.
-func createSP(t *testing.T, idp *IdP, tenant uuid.UUID, in CreateSPInput) (*ServiceProvider, error) {
+// createSP registers an app in organization within its own transaction.
+func createSP(t *testing.T, idp *IdP, organization uuid.UUID, in CreateSPInput) (*ServiceProvider, error) {
 	t.Helper()
 	ctx := dbtest.Context(t)
 	tx, err := dbtest.Pool(t).Begin(ctx)
@@ -79,7 +78,7 @@ func createSP(t *testing.T, idp *IdP, tenant uuid.UUID, in CreateSPInput) (*Serv
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	sp, err := idp.CreateSP(ctx, tx, tenant, in)
+	sp, err := idp.createSP(ctx, tx, organization, in)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +94,7 @@ func updateSP(t *testing.T, idp *IdP, sp *ServiceProvider, in UpdateSPInput) (*S
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	out, err := idp.UpdateSP(ctx, tx, sp.ID, sp.TenantID, in)
+	out, err := idp.updateSP(ctx, tx, sp.ID, sp.OrganizationID, in)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +107,7 @@ func updateSP(t *testing.T, idp *IdP, sp *ServiceProvider, in UpdateSPInput) (*S
 // what the certificate says.
 func TestAppCertificatesSayWhatTheyAreFor(t *testing.T) {
 	s := newIdPSide(t)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	keys := newSPKeys(t)
 	app := func(entity string) CreateSPInput {
 		return CreateSPInput{Name: "App", EntityID: entity, ACSURL: "https://app.example.test/acs", Status: "active"}
@@ -116,23 +115,23 @@ func TestAppCertificatesSayWhatTheyAreFor(t *testing.T) {
 
 	in := app("https://app.example.test/unused")
 	in.Certificate = keys.certPEM
-	if _, err := createSP(t, s.idp, tenant, in); !errors.Is(err, errs.ErrSAMLCertificateUnused) {
+	if _, err := createSP(t, s.idp, organization, in); !errors.Is(err, ErrCertificateUnused) {
 		t.Errorf("a certificate for nothing: %v, want certificate_unused", err)
 	}
 	in = app("https://app.example.test/none")
 	in.EncryptAssertions = true
-	if _, err := createSP(t, s.idp, tenant, in); !errors.Is(err, errs.ErrSAMLCertificateRequired) {
+	if _, err := createSP(t, s.idp, organization, in); !errors.Is(err, ErrCertificateRequired) {
 		t.Errorf("encryption with no certificate: %v, want certificate_required", err)
 	}
 	in = app("https://app.example.test/ec")
 	in.Certificate, in.EncryptAssertions = ecdsaCertPEM(t), true
-	if _, err := createSP(t, s.idp, tenant, in); !errors.Is(err, errs.ErrSAMLEncryptionKeyUnsupported) {
+	if _, err := createSP(t, s.idp, organization, in); !errors.Is(err, ErrEncryptionKeyUnsupported) {
 		t.Errorf("encryption to an ECDSA key: %v, want encryption_key_unsupported", err)
 	}
 
 	in = app("https://app.example.test/ok")
 	in.Certificate, in.RequireSignedRequests = keys.certPEM, true
-	sp, err := createSP(t, s.idp, tenant, in)
+	sp, err := createSP(t, s.idp, organization, in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,11 +140,11 @@ func TestAppCertificatesSayWhatTheyAreFor(t *testing.T) {
 		t.Errorf("certificate details %+v, want its subject, SHA-256 fingerprint and validity", d)
 	}
 	off := false
-	if _, err := updateSP(t, s.idp, sp, UpdateSPInput{RequireSignedRequests: &off}); !errors.Is(err, errs.ErrSAMLCertificateUnused) {
+	if _, err := updateSP(t, s.idp, sp, UpdateSPInput{RequireSignedRequests: &off}); !errors.Is(err, ErrCertificateUnused) {
 		t.Errorf("turning off the certificate's only use: %v, want certificate_unused", err)
 	}
 	none := ""
-	if _, err := updateSP(t, s.idp, sp, UpdateSPInput{Certificate: &none}); !errors.Is(err, errs.ErrSAMLCertificateRequired) {
+	if _, err := updateSP(t, s.idp, sp, UpdateSPInput{Certificate: &none}); !errors.Is(err, ErrCertificateRequired) {
 		t.Errorf("removing the certificate signed requests need: %v, want certificate_required", err)
 	}
 	cleared, err := updateSP(t, s.idp, sp, UpdateSPInput{Certificate: &none, RequireSignedRequests: &off})
@@ -201,7 +200,7 @@ func idpPost(t *testing.T, router http.Handler, path, samlRequest, cookie string
 	form := url.Values{"SAMLRequest": {samlRequest}}
 	req := httptest.NewRequest(http.MethodPost, "https://other.example"+path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: auth.LoginSessionCookie, Value: cookie})
+	req.AddCookie(&http.Cookie{Name: authentication.LoginSessionCookie, Value: cookie})
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	return rec
@@ -212,20 +211,20 @@ func idpPost(t *testing.T, router http.Handler, path, samlRequest, cookie string
 // binding, and that IdP-started sign-in still works.
 func TestSignedRequestsAreRequiredWhenAsked(t *testing.T) {
 	s := newIdPSide(t)
-	tenant := dbtest.Tenant(t)
-	member := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	member := dbtest.User(t, organization, organization)
 	cookie := s.signIn(member.ID)
 	keys, impostor := newSPKeys(t), newSPKeys(t)
-	sp, err := createSP(t, s.idp, tenant, CreateSPInput{Name: "App", EntityID: "https://signed.example.test/sp",
+	sp, err := createSP(t, s.idp, organization, CreateSPInput{Name: "App", EntityID: "https://signed.example.test/sp",
 		ACSURL: "https://signed.example.test/acs", Status: "active", Certificate: keys.certPEM, RequireSignedRequests: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sso := "/saml/idp/" + tenant.String() + "/sso"
+	sso := "/saml/idp/" + organization.String() + "/sso"
 	refused := func(name string, rec *httptest.ResponseRecorder) {
 		t.Helper()
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLRequestSignatureInvalid) {
-			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), errs.CodeSAMLRequestSignatureInvalid)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), CodeRequestSignatureInvalid) {
+			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), CodeRequestSignatureInvalid)
 		}
 	}
 
@@ -245,22 +244,56 @@ func TestSignedRequestsAreRequiredWhenAsked(t *testing.T) {
 	}
 }
 
+// TestRedirectSignatureCoversTheParsedRequest checks that a signed
+// Redirect-binding request is answered only when the SAMLRequest read is the
+// one signed: a second SAMLRequest beside it, under a percent-encoded name or
+// the same one, or any other signed parameter given twice, is refused.
+func TestRedirectSignatureCoversTheParsedRequest(t *testing.T) {
+	s := newIdPSide(t)
+	organization := dbtest.Organization(t)
+	cookie := s.signIn(dbtest.User(t, organization, organization).ID)
+	keys := newSPKeys(t)
+	sp, err := createSP(t, s.idp, organization, CreateSPInput{Name: "App", EntityID: "https://signed.example.test/sp",
+		ACSURL: "https://signed.example.test/acs", Status: "active", Certificate: keys.certPEM, RequireSignedRequests: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sso := "/saml/idp/" + organization.String() + "/sso?"
+	signed := signedRedirectQuery(t, keys.signer.key, sp.EntityID, "_signed", "back")
+	forged := strings.TrimPrefix(authnRequestTo(sp.EntityID, "_forged", ""), "SAMLRequest=")
+	for name, query := range map[string]string{
+		"a forged request under an encoded name before the signed one": "SAML%52equest=" + forged + "&" + signed,
+		"a forged request under an encoded name after the signed one":  signed + "&SAML%52equest=" + forged,
+		"a forged request under the same name after the signed one":    signed + "&SAMLRequest=" + forged,
+		"the relay state given again under an encoded name":            "Relay%53tate=elsewhere&" + signed,
+		"the signature algorithm given twice":                          signed + "&SigAlg=x",
+	} {
+		rec := idpGet(t, s.router, sso+query, cookie)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), CodeRequestSignatureInvalid) {
+			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), CodeRequestSignatureInvalid)
+		}
+	}
+	if acs, _ := postedTo(t, idpGet(t, s.router, sso+signed, cookie)); acs != sp.ACSURL {
+		t.Errorf("the signed request alone posted to %q", acs)
+	}
+}
+
 // TestAssertionsAreEncryptedWhenAsked checks that an app set to receive
 // encrypted assertions gets the signed assertion only encrypted to its key,
 // which it decrypts and verifies with the IdP's published certificate, which
 // is also served on its own.
 func TestAssertionsAreEncryptedWhenAsked(t *testing.T) {
 	s := newIdPSide(t)
-	tenant := dbtest.Tenant(t)
-	member := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	member := dbtest.User(t, organization, organization)
 	cookie := s.signIn(member.ID)
 	keys := newSPKeys(t)
-	sp, err := createSP(t, s.idp, tenant, CreateSPInput{Name: "App", EntityID: "https://sealed.example.test/sp",
+	sp, err := createSP(t, s.idp, organization, CreateSPInput{Name: "App", EntityID: "https://sealed.example.test/sp",
 		ACSURL: "https://sealed.example.test/acs", Status: "active", Certificate: keys.certPEM, EncryptAssertions: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prefix := "/saml/idp/" + tenant.String()
+	prefix := "/saml/idp/" + organization.String()
 
 	rec := idpGet(t, s.router, prefix+"/certificate", "")
 	block, _ := pem.Decode(rec.Body.Bytes())

@@ -1,0 +1,65 @@
+post:
+  operationId: importGroups
+  summary: Bulk import groups
+  tags:
+    - Groups
+  description: >-
+    Creates groups from a flat list, resolving each row's parent by name. Rows
+    are attempted independently: the response reports created, skipped (name
+    already exists) and failed rows so a partial import can be retried.
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - groups
+          properties:
+            groups:
+              type: array
+              minItems: 1
+              maxItems: 500
+              items:
+                type: object
+                required:
+                  - name
+                properties:
+                  name:
+                    type: string
+                  description:
+                    type:
+                      - string
+                      - "null"
+                  parent:
+                    type:
+                      - string
+                      - "null"
+                    description: >-
+                      Parent group name, resolved against existing and imported
+                      rows.
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/ImportResult.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

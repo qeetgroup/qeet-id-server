@@ -1,0 +1,55 @@
+post:
+  operationId: createPairingCode
+  summary: Ask for a code to link a phone
+  description: >-
+    Issues a pairing code that links a phone running the mobile app to the
+    caller's own account, so nobody copies an access token. The code is returned
+    only in this response, shown grouped for reading (ABCDE-FGHJK); it links one
+    phone, once, within five minutes, and asking for a new one stops the
+    caller's earlier unused codes working. Needs a recent step-up when the
+    caller already holds a second factor (403 step_up_required), and otherwise a
+    recent sign-in (403 recent_sign_in_required). At most ten an hour (429 with
+    retry_after). Audited as mfa.push_pairing_created. The phone exchanges the
+    code with the claim call; the status call tells the screen showing it when
+    it has been used.
+  tags:
+    - MFA
+  security:
+    - bearerAuth: []
+  responses:
+    "201":
+      description: Pairing code issued
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - id
+              - code
+              - status
+              - expires_at
+            properties:
+              id:
+                type: string
+                format: uuid
+              code:
+                type: string
+                example: ABCDE-FGHJK
+              status:
+                type: string
+                enum:
+                  - pending
+              expires_at:
+                type: string
+                format: date-time
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

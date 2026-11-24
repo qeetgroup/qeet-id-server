@@ -1,0 +1,10 @@
+name: organizationID
+in: path
+required: true
+description: >-
+  The organization's ID. On an authenticated route it must be the organization
+  of the caller's credential: another is refused with 403, and a value that is
+  not a UUID with 400.
+schema:
+  type: string
+  format: uuid

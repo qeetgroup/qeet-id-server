@@ -22,6 +22,7 @@ linters:
     - nolintlint
     - forbidigo
     - depguard
+    - funlen
   settings:
     errcheck:
       # Close on read paths and Rollback after Commit have nothing actionable to report.
@@ -31,6 +32,10 @@ linters:
         - (github.com/jackc/pgx/v5.Tx).Rollback
         - (*github.com/go-ldap/ldap/v3.Conn).Close
         - (*net/smtp.Client).Close
+    funlen:
+      # A longer function is split into named steps; a pure data table may carry a reasoned nolint.
+      lines: 100
+      statements: 60
     nolintlint:
       require-explanation: true
       require-specific: true
@@ -74,13 +79,92 @@ linters:
               desc: wiring belongs in internal/bootstrap (R2)
             - pkg: github.com/qeetgroup/qeet-id-server/cmd
               desc: a bounded context must not import a binary (R2)
+        # R3: operations and developer are leaf contexts, wired in internal/bootstrap. The
+        # others may use only the plan gate and the in-app notices. The audit writer is
+        # internal/platform/audit.
+        leaf-contexts:
+          list-mode: lax
+          files:
+            - "**/internal/access/**"
+            - "**/internal/identity/**"
+            - "**/internal/federation/**"
+          deny:
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/operations
+              desc: operations is a leaf context; ask for what it does through an interface wired in internal/bootstrap (R3)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/developer
+              desc: developer is a leaf context; ask for what it does through an interface wired in internal/bootstrap (R3)
+          allow:
+            - github.com/qeetgroup/qeet-id-server/internal/operations/entitlements
+            - github.com/qeetgroup/qeet-id-server/internal/operations/notification
+        # R4: developer uses the plan gate, the in-app notices and RBAC's scope check, and
+        # nothing else of another context.
+        developer:
+          list-mode: lax
+          files:
+            - "**/internal/developer/**"
+          deny:
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/operations
+              desc: operations is a leaf context; only the plan gate and the in-app notices are shared (R4)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/access
+              desc: developer checks a caller's authority through RBAC alone (R4)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/identity
+              desc: developer must not depend on identity (R4)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/federation
+              desc: developer must not depend on federation (R4)
+          allow:
+            - github.com/qeetgroup/qeet-id-server/internal/operations/entitlements
+            - github.com/qeetgroup/qeet-id-server/internal/operations/notification
+            - github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac
+        # R5: operations depends on no other context; its tests may build fixtures with them.
+        operations:
+          files:
+            - "**/internal/operations/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/access
+              desc: operations must not depend on another context (R5)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/identity
+              desc: operations must not depend on another context (R5)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/federation
+              desc: operations must not depend on another context (R5)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/developer
+              desc: operations must not depend on another context (R5)
+        # R6: federation builds on access and identity, never the other way round; access and
+        # identity use each other only where they do today. Tests may reach further.
+        access:
+          list-mode: lax
+          files:
+            - "**/internal/access/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/federation
+              desc: federation builds on access, not the other way round (R6)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/identity
+              desc: access uses identity only for domain verification and accounts (R6)
+          allow:
+            - github.com/qeetgroup/qeet-id-server/internal/identity/domainverify
+            - github.com/qeetgroup/qeet-id-server/internal/identity/user
+        identity:
+          list-mode: lax
+          files:
+            - "**/internal/identity/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/federation
+              desc: federation builds on identity, not the other way round (R6)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/access
+              desc: identity uses access only for sign-in and authentication policy (R6)
+          allow:
+            - github.com/qeetgroup/qeet-id-server/internal/access/authentication
+            - github.com/qeetgroup/qeet-id-server/internal/access/authpolicy
   exclusions:
     # Generated sqlc code.
     paths:
       - internal/.*/dbgen
     rules:
       - path: _test\.go
-        linters: [errcheck, forbidigo]
+        # Table-driven and scenario tests read best whole.
+        linters: [errcheck, forbidigo, funlen]
 
 formatters:
   enable:

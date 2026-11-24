@@ -1,0 +1,64 @@
+type: object
+description: >-
+  Per-bucket rate limits for an organization. On GET these are the effective values
+  (defaults merged with overrides); on PUT, any bucket supplied is upserted as
+  an override. The answer also carries the defaults, the ceiling an override may
+  reach (the defaults themselves: an organization may tighten its limits, never
+  lift them), the lowest rate an override may set, and the built-in limits every
+  organization shares; those are read-only and ignored on PUT.
+required:
+  - organization
+  - user
+  - api_key
+  - defaults
+  - ceiling
+  - min_rate
+  - built_in
+properties:
+  organization:
+    $ref: ./RateLimitBucket.yaml
+  user:
+    $ref: ./RateLimitBucket.yaml
+  api_key:
+    $ref: ./RateLimitBucket.yaml
+  defaults:
+    readOnly: true
+    $ref: ./RateLimitBuckets.yaml
+  ceiling:
+    readOnly: true
+    $ref: ./RateLimitBuckets.yaml
+  min_rate:
+    type: number
+    readOnly: true
+    description: The lowest rate, in requests a second, an override may set.
+  built_in:
+    type: array
+    readOnly: true
+    description: The platform's fixed limits, the same for every organization.
+    items:
+      type: object
+      required:
+        - name
+        - per
+        - applies
+        - rate
+        - capacity
+      properties:
+        name:
+          type: string
+        per:
+          type: string
+          enum:
+            - ip
+            - user
+            - address
+          description: Whose requests share a bucket.
+        applies:
+          type: string
+          description: What the limit covers.
+        rate:
+          type: number
+          description: Requests a second.
+        capacity:
+          type: integer
+          description: The burst.

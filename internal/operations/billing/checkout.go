@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -40,13 +40,13 @@ type SignupCheckoutInput struct {
 // a pending checkout and the provider's hosted-payment URL; its webhook later
 // calls CompleteCheckout. The provider is chosen by country, else by currency;
 // with none, the plan is refused unless invoice-only billing is enabled.
-func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, currency, country, successURL, cancelURL string) (*CheckoutResult, error) {
+func (s *Service) Checkout(ctx context.Context, organizationID uuid.UUID, planCode, currency, country, successURL, cancelURL string) (*CheckoutResult, error) {
 	cur, ok := normalizeCurrency(currency)
 	if !ok {
-		return nil, errs.ErrBillingCurrencyInvalid
+		return nil, ErrCurrencyInvalid
 	}
 	if country != "" && !countryRe.MatchString(country) {
-		return nil, errs.ErrBillingCountryInvalid
+		return nil, ErrCountryInvalid
 	}
 	planID, _, planName, err := planByCode(ctx, s.q, planCode)
 	if err != nil {
@@ -57,21 +57,19 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 		return nil, err
 	}
 	if !priced {
-		return nil, errs.ErrBillingPlanNotPriced
+		return nil, ErrPlanNotPriced
 	}
 
 	var provider PaymentProvider
-	if s.payments != nil {
-		if country != "" {
-			provider = s.payments.forCountry(country)
-		} else {
-			provider = s.payments.forCurrency(cur) // no country given
-		}
+	if country != "" {
+		provider = s.payments.forCountry(country)
+	} else {
+		provider = s.payments.forCurrency(cur) // no country given
 	}
 
 	// Free plan → nothing to collect, activate directly.
 	if amt == 0 {
-		return s.activateDirect(ctx, tenantID, planCode, cur, country)
+		return s.activateDirect(ctx, organizationID, planCode, cur, country)
 	}
 
 	// Never grant a paid plan for free, unless the operator opted into
@@ -82,14 +80,14 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 				WithMessage("Online payment isn't available for this country or currency yet.").
 				WithDetail("no card payment provider is configured to charge " + cur + " for the selected billing country")
 		}
-		return s.activateDirect(ctx, tenantID, planCode, cur, country)
+		return s.activateDirect(ctx, organizationID, planCode, cur, country)
 	}
 
 	// Paid plan with a provider: record a pending checkout and open a payment
 	// for the total, tax included, that the invoice will show.
-	tr := s.taxFor(ctx, s.q, tenantID, amt, country)
+	tr := s.taxFor(ctx, s.q, organizationID, amt, country)
 	return s.openCheckout(ctx, provider, dbgen.InsertBillingCheckoutParams{
-		TenantID:           tenantID,
+		OrganizationID:     organizationID,
 		Provider:           provider.Name(),
 		PlanCode:           planCode,
 		Currency:           cur,
@@ -134,13 +132,13 @@ func (s *Service) openCheckout(ctx context.Context, provider PaymentProvider, in
 // activateDirect changes the plan in one transaction with no payment, for free
 // plans and invoice-only billing, taxing by country when the billing profile
 // names none.
-func (s *Service) activateDirect(ctx context.Context, tenantID uuid.UUID, planCode, currency, country string) (*CheckoutResult, error) {
+func (s *Service) activateDirect(ctx context.Context, organizationID uuid.UUID, planCode, currency, country string) (*CheckoutResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := s.activateUnpaid(ctx, s.q.WithTx(tx), tenantID, planCode, currency, country); err != nil {
+	if _, err := s.activateUnpaid(ctx, s.q.WithTx(tx), organizationID, planCode, currency, country); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -149,14 +147,14 @@ func (s *Service) activateDirect(ctx context.Context, tenantID uuid.UUID, planCo
 	return &CheckoutResult{Status: "active"}, nil
 }
 
-// CompleteCheckout activates the plan behind a paid checkout, tenant or signup,
+// CompleteCheckout activates the plan behind a paid checkout, organization or signup,
 // or settles the invoice it paid, recording method, what it was paid with, when
 // the provider said. The pending-to-completed transition is claimed atomically,
 // so webhook retries activate it exactly once; an unknown ref is a no-op.
 func (s *Service) CompleteCheckout(ctx context.Context, ref string, method *PaymentMethod) error {
 	id, err := uuid.Parse(ref)
 	if err != nil {
-		return errs.ErrBillingCheckoutRefInvalid
+		return ErrCheckoutRefInvalid
 	}
 	var recorded []byte
 	if method != nil {
@@ -164,21 +162,19 @@ func (s *Service) CompleteCheckout(ctx context.Context, ref string, method *Paym
 			return err
 		}
 	}
-	completed, err := s.completeTenantCheckout(ctx, id, recorded)
+	completed, err := s.completeOrganizationCheckout(ctx, id, recorded)
 	if err != nil || completed {
 		return err
 	}
-	// Not a tenant checkout: it may be a signup checkout, whose organization is
+	// Not an organization checkout: it may be a signup checkout, whose organization is
 	// created now.
 	return s.completeSignupCheckout(ctx, id, recorded)
 }
 
-// completeTenantCheckout claims a pending tenant checkout and, in one
-// transaction, settles the invoice it paid or activates its plan. A payment for
-// an invoice no longer open buys its plan afresh instead, so it is never lost.
-// It reports false, having changed nothing, when id is not a pending tenant
-// checkout.
-func (s *Service) completeTenantCheckout(ctx context.Context, id uuid.UUID, method []byte) (bool, error) {
+// completeOrganizationCheckout claims a pending organization checkout and, in one transaction,
+// settles the invoice it paid or activates its plan; paying an invoice no longer open buys its plan
+// afresh, so a payment is never lost. It reports false, changing nothing, for any other id.
+func (s *Service) completeOrganizationCheckout(ctx context.Context, id uuid.UUID, method []byte) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return false, err
@@ -191,29 +187,29 @@ func (s *Service) completeTenantCheckout(ctx context.Context, id uuid.UUID, meth
 	if err != nil {
 		return false, err
 	}
-	if row.InvoiceID.Valid {
+	if row.InvoiceID != nil {
 		sp, err := tx.Begin(ctx)
 		if err != nil {
 			return false, err
 		}
-		err = s.settleInvoice(ctx, sp, row.TenantID, uuid.UUID(row.InvoiceID.Bytes), row.ProviderRef, row.Provider)
+		err = s.settleInvoice(ctx, sp, row.OrganizationID, *row.InvoiceID, row.ProviderRef, row.Provider)
 		if err == nil {
 			if err := sp.Commit(ctx); err != nil {
 				return false, err
 			}
 			return true, tx.Commit(ctx)
 		}
-		if !errors.Is(err, errs.ErrBillingInvoiceNotOpen) && !errors.Is(err, errs.ErrBillingInvoiceNotFound) {
+		if !errors.Is(err, ErrInvoiceNotOpen) && !errors.Is(err, ErrInvoiceNotFound) {
 			return false, err
 		}
 		if err := sp.Rollback(ctx); err != nil {
 			return false, err
 		}
 		slog.Warn("billing: a checkout paid an invoice no longer open; buying its plan instead",
-			"checkout_id", id, "invoice_id", uuid.UUID(row.InvoiceID.Bytes))
+			"checkout_id", id, "invoice_id", *row.InvoiceID)
 	}
 	charged := checkoutTax(row.AmountMinor, row.TaxableAmountMinor, row.TaxAmountMinor, row.TaxRateBps, row.TaxType, row.PlaceOfSupply)
-	if err := s.activatePaid(ctx, tx, row.TenantID, row.PlanCode, row.Currency, charged); err != nil {
+	if err := s.activatePaid(ctx, tx, row.OrganizationID, row.PlanCode, row.Currency, charged); err != nil {
 		return false, err
 	}
 	return true, tx.Commit(ctx)
@@ -224,26 +220,7 @@ func (s *Service) completeTenantCheckout(ctx context.Context, id uuid.UUID, meth
 // is a no-op. If a step fails, the checkout returns to pending, keeping any
 // organization already created, so a retry resumes where it stopped.
 func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID, method []byte) error {
-	if s.orgProvisioner == nil {
-		return nil
-	}
-	var (
-		userID                                     uuid.UUID
-		name, slug, region, planCode, currencyCode string
-		created                                    *uuid.UUID
-		total, taxable, tax                        int64
-		rateBps                                    int32
-		taxType, place                             string
-	)
-	err := s.pool.QueryRow(ctx, `
-		UPDATE tenant.signup_checkouts
-		SET status = 'completed', completed_at = NOW(), payment_method = $2
-		WHERE id = $1 AND status = 'pending'
-		RETURNING user_id, org_name, org_slug, region, plan_code, currency, tenant_id,
-		          amount_minor, taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply`,
-		id, method,
-	).Scan(&userID, &name, &slug, &region, &planCode, &currencyCode, &created,
-		&total, &taxable, &tax, &rateBps, &taxType, &place)
+	c, err := s.q.ClaimSignupCheckout(ctx, dbgen.ClaimSignupCheckoutParams{ID: id, PaymentMethod: method})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // unknown, already completed, or failed — idempotent no-op
 	}
@@ -251,23 +228,22 @@ func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID, meth
 		return err
 	}
 	retryLater := func(cause error) error {
-		_, _ = s.pool.Exec(ctx,
-			`UPDATE tenant.signup_checkouts SET status = 'pending', completed_at = NULL WHERE id = $1`, id)
+		_ = s.q.ReopenSignupCheckout(ctx, id)
 		return cause
 	}
 
-	var tenantID uuid.UUID
-	if created != nil {
-		tenantID = *created // an earlier attempt created it
+	var organizationID uuid.UUID
+	if c.OrganizationID != nil {
+		organizationID = *c.OrganizationID // an earlier attempt created it
 	} else {
-		if tenantID, err = s.provisionSignupOrg(ctx, userID, name, slug, region, planCode); err != nil {
+		if organizationID, err = s.provisionSignupOrg(ctx, c.UserID, c.OrgName, c.OrgSlug, c.Region, c.PlanCode); err != nil {
 			return retryLater(err)
 		}
 		// Recorded at once, so a retry after a later failure reuses this
 		// organization rather than creating another. Failing here leaves the
 		// checkout completed: a retry would create a second organization.
-		if _, err := s.pool.Exec(ctx, `UPDATE tenant.signup_checkouts SET tenant_id = $1 WHERE id = $2`, tenantID, id); err != nil {
-			slog.Error("billing: signup organization created but not recorded", "checkout_id", id, "tenant_id", tenantID, "err", err)
+		if err := s.q.SetSignupCheckoutOrganization(ctx, dbgen.SetSignupCheckoutOrganizationParams{OrganizationID: organizationID, ID: id}); err != nil {
+			slog.Error("billing: signup organization created but not recorded", "checkout_id", id, "organization_id", organizationID, "err", err)
 			return err
 		}
 	}
@@ -277,8 +253,8 @@ func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID, meth
 		return retryLater(err)
 	}
 	defer tx.Rollback(ctx)
-	charged := checkoutTax(total, taxable, tax, rateBps, taxType, place)
-	if err := s.activatePaid(ctx, tx, tenantID, planCode, currencyCode, charged); err != nil {
+	charged := checkoutTax(c.AmountMinor, c.TaxableAmountMinor, c.TaxAmountMinor, c.TaxRateBps, c.TaxType, c.PlaceOfSupply)
+	if err := s.activatePaid(ctx, tx, organizationID, c.PlanCode, c.Currency, charged); err != nil {
 		return retryLater(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -292,17 +268,17 @@ func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID, meth
 // staged, so a taken one is retried with a unique suffix: the customer has
 // already paid.
 func (s *Service) provisionSignupOrg(ctx context.Context, userID uuid.UUID, name, slug, region, planCode string) (uuid.UUID, error) {
-	// The tenant's plan label is the tier; the subscription keeps the full code
+	// The organization's plan label is the tier; the subscription keeps the full code
 	// (such as "starter_year") so its interval and price are right.
 	tier := strings.TrimSuffix(planCode, "_year")
-	var tenantID uuid.UUID
+	var organizationID uuid.UUID
 	var provErr error
 	for attempt := 0; attempt < 5; attempt++ {
 		trySlug := slug
 		if attempt > 0 {
 			trySlug = fmt.Sprintf("%s-%s", slug, uuid.NewString()[:6])
 		}
-		tenantID, provErr = s.orgProvisioner.ProvisionOrg(ctx, userID, name, trySlug, region, tier)
+		organizationID, provErr = s.orgProvisioner.ProvisionOrg(ctx, userID, name, trySlug, region, tier)
 		if provErr == nil {
 			break
 		}
@@ -311,7 +287,7 @@ func (s *Service) provisionSignupOrg(ctx context.Context, userID uuid.UUID, name
 		}
 		break // other (likely transient) error: the checkout is retried
 	}
-	return tenantID, provErr
+	return organizationID, provErr
 }
 
 // StartSignupCheckout opens a hosted payment for a paid plan chosen at signup,
@@ -321,10 +297,10 @@ func (s *Service) provisionSignupOrg(ctx context.Context, userID uuid.UUID, name
 func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in SignupCheckoutInput) (*CheckoutResult, error) {
 	cur, ok := normalizeCurrency(in.Currency)
 	if !ok {
-		return nil, errs.ErrBillingCurrencyInvalid
+		return nil, ErrCurrencyInvalid
 	}
 	if in.Country != "" && !countryRe.MatchString(in.Country) {
-		return nil, errs.ErrBillingCountryInvalid
+		return nil, ErrCountryInvalid
 	}
 	planID, _, planName, err := planByCode(ctx, s.q, in.PlanCode)
 	if err != nil {
@@ -335,7 +311,7 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 		return nil, err
 	}
 	if !priced {
-		return nil, errs.ErrBillingPlanNotPriced
+		return nil, ErrPlanNotPriced
 	}
 	// A free plan has nothing to charge.
 	if amt == 0 {
@@ -344,9 +320,8 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 
 	// Fail fast if the slug is taken, so we never charge for an organization we
 	// cannot create. Creation checks again atomically.
-	var slugTaken bool
-	if err := s.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM tenant.tenants WHERE slug = $1)`, in.OrgSlug).Scan(&slugTaken); err != nil {
+	slugTaken, err := s.q.OrganizationSlugTaken(ctx, in.OrgSlug)
+	if err != nil {
 		return nil, err
 	}
 	if slugTaken {
@@ -354,12 +329,10 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 	}
 
 	var provider PaymentProvider
-	if s.payments != nil {
-		if in.Country != "" {
-			provider = s.payments.forCountry(in.Country)
-		} else {
-			provider = s.payments.forCurrency(cur)
-		}
+	if in.Country != "" {
+		provider = s.payments.forCountry(in.Country)
+	} else {
+		provider = s.payments.forCurrency(cur)
 	}
 	if provider == nil {
 		return nil, errs.ErrUnprocessable.
@@ -367,19 +340,26 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 			WithDetail("no card payment provider is configured to charge " + cur + " for the selected billing country")
 	}
 
-	// The organisation has no billing profile yet, so tax goes by the billing
+	// The organization has no billing profile yet, so tax goes by the billing
 	// country given, and the provider charges the total.
 	tr := computeTax(s.tax, TaxInput{AmountMinor: amt, BuyerCountry: in.Country})
-	var checkoutID uuid.UUID
-	if err := s.pool.QueryRow(ctx, `
-		INSERT INTO tenant.signup_checkouts
-			(user_id, org_name, org_slug, region, plan_code, currency, country, provider, amount_minor,
-			 taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-		RETURNING id`,
-		ownerID, in.OrgName, in.OrgSlug, in.Region, in.PlanCode, cur, in.Country, provider.Name(), tr.TotalMinor,
-		tr.TaxableMinor, tr.TaxMinor, tr.RateBps, tr.Type, tr.PlaceOfSupply,
-	).Scan(&checkoutID); err != nil {
+	checkoutID, err := s.q.InsertSignupCheckout(ctx, dbgen.InsertSignupCheckoutParams{
+		UserID:             ownerID,
+		OrgName:            in.OrgName,
+		OrgSlug:            in.OrgSlug,
+		Region:             in.Region,
+		PlanCode:           in.PlanCode,
+		Currency:           cur,
+		Country:            in.Country,
+		Provider:           provider.Name(),
+		AmountMinor:        tr.TotalMinor,
+		TaxableAmountMinor: tr.TaxableMinor,
+		TaxAmountMinor:     tr.TaxMinor,
+		TaxRateBps:         int32(tr.RateBps), // #nosec G115 -- operator-set GST rate in basis points
+		TaxType:            tr.Type,
+		PlaceOfSupply:      tr.PlaceOfSupply,
+	})
+	if err != nil {
 		return nil, err
 	}
 
@@ -392,27 +372,24 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 		CancelURL:   in.CancelURL,
 	})
 	if err != nil {
-		_, _ = s.pool.Exec(ctx, `UPDATE tenant.signup_checkouts SET status = 'failed' WHERE id = $1`, checkoutID)
+		_ = s.q.FailSignupCheckout(ctx, checkoutID)
 		return nil, errs.ErrInternalServer.WithMessage("Couldn't start the payment. Please try again.").Wrap(err)
 	}
-	_, _ = s.pool.Exec(ctx, `UPDATE tenant.signup_checkouts SET provider_ref = $1 WHERE id = $2`, providerRef, checkoutID)
+	_ = s.q.SetSignupCheckoutProviderRef(ctx, dbgen.SetSignupCheckoutProviderRefParams{ProviderRef: providerRef, ID: checkoutID})
 	return &CheckoutResult{Status: "checkout", CheckoutURL: redirectURL, Provider: provider.Name()}, nil
 }
 
 // HandleWebhook verifies a provider webhook and, for a successful payment,
 // completes its checkout; other events are a no-op. An unknown provider returns
-// errs.ErrNotFound and a bad signature errs.ErrBillingWebhookVerificationFailed.
+// errs.ErrNotFound and a bad signature ErrWebhookVerificationFailed.
 func (s *Service) HandleWebhook(ctx context.Context, providerName string, body []byte, signature string) error {
-	if s.payments == nil {
-		return errs.ErrNotFound
-	}
 	prov := s.payments.byName(providerName)
 	if prov == nil {
 		return errs.ErrNotFound
 	}
 	ref, paid, err := prov.VerifyAndParse(body, signature)
 	if err != nil {
-		return errs.ErrBillingWebhookVerificationFailed
+		return ErrWebhookVerificationFailed
 	}
 	if !paid || ref == "" {
 		return nil
@@ -431,9 +408,6 @@ func (s *Service) HandleWebhook(ctx context.Context, providerName string, body [
 // WebhookSignatureHeader returns the webhook signature header of a provider, or
 // "" if the provider is not configured.
 func (s *Service) WebhookSignatureHeader(providerName string) string {
-	if s.payments == nil {
-		return ""
-	}
 	if prov := s.payments.byName(providerName); prov != nil {
 		return prov.SignatureHeader()
 	}
@@ -444,12 +418,12 @@ func (s *Service) WebhookSignatureHeader(providerName string) string {
 // was paid, completes its checkout. It is idempotent with the webhook, and is
 // what completes checkouts in local development, which the webhook cannot reach.
 func (s *Service) CompleteRazorpayCallback(ctx context.Context, params map[string]string) error {
-	if s.payments == nil || s.payments.razorpay == nil {
+	if s.payments.razorpay == nil {
 		return errs.ErrNotFound
 	}
 	ref, paid, err := s.payments.razorpay.VerifyCallback(params)
 	if err != nil {
-		return errs.ErrBillingWebhookVerificationFailed
+		return ErrWebhookVerificationFailed
 	}
 	if !paid || ref == "" {
 		return nil

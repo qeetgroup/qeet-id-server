@@ -1,0 +1,128 @@
+delete:
+  operationId: deleteSamlConnection
+  description: >-
+    Deletes an inbound SAML connection in the organization so Qeet no longer accepts
+    assertions from that external IdP. The deletion is audited and is scoped to
+    the organization in the path.
+  summary: Delete connection
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "204":
+      description: Deleted
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+get:
+  operationId: getSamlConnection
+  description: >-
+    Returns a single inbound SAML connection's configuration in the organization,
+    where Qeet acts as the Service Provider consuming an external IdP. Update it
+    with PATCH, validate it with the connection test endpoint, or remove it with
+    DELETE.
+  summary: Get connection
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Connection
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/SAMLConnection.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+patch:
+  operationId: updateSamlConnection
+  description: >-
+    Applies a partial update to an inbound SAML connection in the organization,
+    covering the IdP entity id, SSO URL, signing certificate, attribute mappings
+    or status, with Qeet acting as the Service Provider. A new idp_certificate
+    replaces every certificate the connection trusts; to roll over without an
+    outage, use the certificates endpoints instead. Changes are confined to the
+    organization in the path and are audited. Re-run the connection test endpoint
+    after changing IdP details. An active connection needs the IdP's entity ID,
+    SSO URL and a certificate: turning on one without them is refused with 422
+    saml.connection_incomplete.
+    Changing what the connection trusts (a new idp_entity_id or idp_certificate)
+    is acting on every account linked to it, as the changed connection could
+    sign in as any of them: while an administrator is linked, it needs a caller
+    who outranks each one (403 rbac.trust_change_outranks_caller otherwise).
+  summary: Update connection
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/SAMLConnectionUpdate.yaml
+  responses:
+    "200":
+      description: Updated
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/SAMLConnection.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,21 @@
+type: object
+additionalProperties: false
+description: The group's organization is the caller's; it is never taken from the body.
+required:
+  - name
+properties:
+  description:
+    type:
+      - string
+      - "null"
+  name:
+    type: string
+    minLength: 1
+  parent_id:
+    type:
+      - string
+      - "null"
+    format: uuid
+    description: >-
+      One of the organization's groups to nest it under; omit or null for a
+      top-level group.

@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -23,18 +24,25 @@ import (
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // newTestService returns a Service over the test database with the built-in
-// plans seeded.
-func newTestService(t *testing.T) *Service {
+// plans seeded: no card provider and no tax, changed by each of change.
+func newTestService(t *testing.T, change ...func(*Config)) *Service {
 	t.Helper()
-	svc := NewService(dbtest.Pool(t))
+	c := Config{Payments: NewPayments("", "", "", "", ""), OrgProvisioner: orgProvisioner{pool: dbtest.Pool(t)}}
+	for _, ch := range change {
+		ch(&c)
+	}
+	svc, err := NewService(dbtest.Pool(t), c)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.SeedBuiltins(dbtest.Context(t)); err != nil {
 		t.Fatalf("seed plans: %v", err)
 	}
 	return svc
 }
 
-// subscribe puts the tenant on plan, as a completed checkout does.
-func subscribe(t *testing.T, svc *Service, tenant uuid.UUID, plan, currency string) {
+// subscribe puts the organization on plan, as a completed checkout does.
+func subscribe(t *testing.T, svc *Service, organization uuid.UUID, plan, currency string) {
 	t.Helper()
 	ctx := dbtest.Context(t)
 	tx, err := svc.Pool().Begin(ctx)
@@ -42,7 +50,7 @@ func subscribe(t *testing.T, svc *Service, tenant uuid.UUID, plan, currency stri
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := svc.ChangePlan(ctx, tx, tenant, plan, currency); err != nil {
+	if _, err := svc.ChangePlan(ctx, tx, organization, plan, currency); err != nil {
 		t.Fatalf("subscribe to %s: %v", plan, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -50,32 +58,21 @@ func subscribe(t *testing.T, svc *Service, tenant uuid.UUID, plan, currency stri
 	}
 }
 
-// switchPlan runs SwitchPlan in a transaction and commits it on success.
-func switchPlan(t *testing.T, svc *Service, tenant uuid.UUID, plan, currency string) error {
+// switchPlan runs SwitchPlan as the system.
+func switchPlan(t *testing.T, svc *Service, organization uuid.UUID, plan, currency string) error {
 	t.Helper()
-	ctx := dbtest.Context(t)
-	tx, err := svc.Pool().Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := svc.SwitchPlan(ctx, tx, tenant, plan, currency); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	return nil
+	_, err := svc.SwitchPlan(dbtest.Context(t), organization, plan, currency, audit.Actor{Type: "system"})
+	return err
 }
 
-// lapse ends the tenant's paid period an hour ago, as if a month had passed
+// lapse ends the organization's paid period an hour ago, as if a month had passed
 // with no renewal.
-func lapse(t *testing.T, tenant uuid.UUID) {
+func lapse(t *testing.T, organization uuid.UUID) {
 	t.Helper()
 	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
-		UPDATE tenant.subscriptions
+		UPDATE organization.subscriptions
 		SET current_period_start = NOW() - interval '1 month 1 hour', current_period_end = NOW() - interval '1 hour'
-		WHERE tenant_id = $1`, tenant); err != nil {
+		WHERE organization_id = $1`, organization); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -87,17 +84,17 @@ func lapse(t *testing.T, tenant uuid.UUID) {
 func TestPlanLapsesAtPeriodEnd(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newTestService(t)
-	tenant := dbtest.Tenant(t)
-	subscribe(t, svc, tenant, "pro", "USD")
-	sub, err := svc.GetSubscription(ctx, tenant)
+	organization := dbtest.Organization(t)
+	subscribe(t, svc, organization, "pro", "USD")
+	sub, err := svc.GetSubscription(ctx, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !sub.Grants(time.Now()) {
 		t.Fatalf("a new subscription grants nothing: %+v", sub)
 	}
-	lapse(t, tenant)
-	if sub, err = svc.GetSubscription(ctx, tenant); err != nil {
+	lapse(t, organization)
+	if sub, err = svc.GetSubscription(ctx, organization); err != nil {
 		t.Fatal(err)
 	}
 	if !sub.Grants(time.Now()) {
@@ -106,8 +103,8 @@ func TestPlanLapsesAtPeriodEnd(t *testing.T) {
 	if sub.Grants(time.Now().Add(DefaultPaymentGrace)) {
 		t.Errorf("a subscription past its period and the payment grace still grants %s", sub.PlanCode)
 	}
-	cancelSubscription(t, svc, tenant)
-	if sub, err = svc.GetSubscription(ctx, tenant); err != nil {
+	cancelSubscription(t, svc, organization)
+	if sub, err = svc.GetSubscription(ctx, organization); err != nil {
 		t.Fatal(err)
 	}
 	if sub.Grants(time.Now()) {
@@ -115,8 +112,8 @@ func TestPlanLapsesAtPeriodEnd(t *testing.T) {
 	}
 }
 
-// cancelSubscription marks the tenant's subscription to end with its period.
-func cancelSubscription(t *testing.T, svc *Service, tenant uuid.UUID) {
+// cancelSubscription marks the organization's subscription to end with its period.
+func cancelSubscription(t *testing.T, svc *Service, organization uuid.UUID) {
 	t.Helper()
 	ctx := dbtest.Context(t)
 	tx, err := svc.Pool().Begin(ctx)
@@ -124,7 +121,7 @@ func cancelSubscription(t *testing.T, svc *Service, tenant uuid.UUID) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if err := svc.Cancel(ctx, tx, tenant); err != nil {
+	if err := svc.Cancel(ctx, tx, organization); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -132,10 +129,10 @@ func cancelSubscription(t *testing.T, svc *Service, tenant uuid.UUID) {
 	}
 }
 
-// planOf returns the tenant's subscribed plan code, or "" with none.
-func planOf(t *testing.T, svc *Service, tenant uuid.UUID) string {
+// planOf returns the organization's subscribed plan code, or "" with none.
+func planOf(t *testing.T, svc *Service, organization uuid.UUID) string {
 	t.Helper()
-	sub, err := svc.GetSubscription(dbtest.Context(t), tenant)
+	sub, err := svc.GetSubscription(dbtest.Context(t), organization)
 	if err != nil {
 		t.Fatalf("get subscription: %v", err)
 	}
@@ -166,30 +163,30 @@ func TestSwitchPlan(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			tenant := dbtest.Tenant(t)
+			organization := dbtest.Organization(t)
 			switch {
 			case c.trial:
-				if _, err := svc.StartTrial(dbtest.Context(t), tenant, c.from, c.fromCur); err != nil {
+				if _, err := svc.StartTrial(dbtest.Context(t), organization, c.from, c.fromCur); err != nil {
 					t.Fatalf("start trial: %v", err)
 				}
 			case c.from != "":
-				subscribe(t, svc, tenant, c.from, c.fromCur)
+				subscribe(t, svc, organization, c.from, c.fromCur)
 			}
 			if c.lapsed {
-				lapse(t, tenant)
+				lapse(t, organization)
 			}
-			invoices := dbtest.Count(t, `SELECT count(*) FROM tenant.invoices WHERE tenant_id = $1`, tenant)
-			before, err := svc.GetSubscription(dbtest.Context(t), tenant)
+			invoices := dbtest.Count(t, `SELECT count(*) FROM organization.invoices WHERE organization_id = $1`, organization)
+			before, err := svc.GetSubscription(dbtest.Context(t), organization)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			err = switchPlan(t, svc, tenant, c.to, c.toCur)
+			err = switchPlan(t, svc, organization, c.to, c.toCur)
 			if c.wantSwitched {
 				if err != nil {
 					t.Fatalf("switch %q to %s: %v", c.from, c.to, err)
 				}
-				after, err := svc.GetSubscription(dbtest.Context(t), tenant)
+				after, err := svc.GetSubscription(dbtest.Context(t), organization)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -200,7 +197,7 @@ func TestSwitchPlan(t *testing.T) {
 					if !after.CurrentPeriodEnd.Equal(*before.CurrentPeriodEnd) {
 						t.Errorf("period end moved from %v to %v", before.CurrentPeriodEnd, after.CurrentPeriodEnd)
 					}
-					if n := dbtest.Count(t, `SELECT count(*) FROM tenant.invoices WHERE tenant_id = $1`, tenant); n != invoices {
+					if n := dbtest.Count(t, `SELECT count(*) FROM organization.invoices WHERE organization_id = $1`, organization); n != invoices {
 						t.Errorf("switch within the paid period issued %d invoices", n-invoices)
 					}
 				}
@@ -209,10 +206,10 @@ func TestSwitchPlan(t *testing.T) {
 			if !errors.Is(err, errs.ErrBillingCheckoutRequired) {
 				t.Fatalf("switch %q to %s: %v, want %v", c.from, c.to, err, errs.ErrBillingCheckoutRequired)
 			}
-			if got := planOf(t, svc, tenant); got != c.from {
+			if got := planOf(t, svc, organization); got != c.from {
 				t.Errorf("plan after refusal = %q, want %q", got, c.from)
 			}
-			if n := dbtest.Count(t, `SELECT count(*) FROM tenant.invoices WHERE tenant_id = $1`, tenant); n != invoices {
+			if n := dbtest.Count(t, `SELECT count(*) FROM organization.invoices WHERE organization_id = $1`, organization); n != invoices {
 				t.Errorf("refusal issued %d invoices", n-invoices)
 			}
 		})
@@ -220,36 +217,35 @@ func TestSwitchPlan(t *testing.T) {
 }
 
 func TestSwitchPlanUnderInvoiceOnlyBilling(t *testing.T) {
-	svc := newTestService(t)
-	svc.SetAllowUnpaidActivation(true)
-	tenant := dbtest.Tenant(t)
-	subscribe(t, svc, tenant, "starter", "USD")
+	svc := newTestService(t, unpaid)
+	organization := dbtest.Organization(t)
+	subscribe(t, svc, organization, "starter", "USD")
 
 	// No card provider charges USD, so invoice-only billing activates the plan.
-	if err := switchPlan(t, svc, tenant, "pro", "USD"); err != nil {
+	if err := switchPlan(t, svc, organization, "pro", "USD"); err != nil {
 		t.Fatalf("switch to pro: %v", err)
 	}
-	if got := planOf(t, svc, tenant); got != "pro" {
+	if got := planOf(t, svc, organization); got != "pro" {
 		t.Fatalf("plan = %q, want pro", got)
 	}
 
 	// Once a card provider charges USD, a dearer plan goes through checkout.
-	svc.SetPayments(NewPayments("", "", "", "", "").WithSandbox("http://localhost:8080", "test-webhook-secret"))
-	if err := switchPlan(t, svc, tenant, "enterprise", "USD"); !errors.Is(err, errs.ErrBillingCheckoutRequired) {
+	svc = newTestService(t, unpaid, withSandbox)
+	if err := switchPlan(t, svc, organization, "enterprise", "USD"); !errors.Is(err, errs.ErrBillingCheckoutRequired) {
 		t.Fatalf("switch to enterprise with a provider: %v, want %v", err, errs.ErrBillingCheckoutRequired)
 	}
-	if got := planOf(t, svc, tenant); got != "pro" {
+	if got := planOf(t, svc, organization); got != "pro" {
 		t.Errorf("plan = %q, want pro", got)
 	}
 }
 
 func TestPutSubscriptionAnswersCheckoutRequired(t *testing.T) {
 	svc := newTestService(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	subscribe(t, svc, tenant, "pro", "USD")
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
-	path := "/tenants/" + tenant.String() + "/billing/subscription"
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	subscribe(t, svc, organization, "pro", "USD")
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
+	path := "/organizations/" + organization.String() + "/billing/subscription"
 
 	rec := dbtest.Do(t, h, http.MethodPut, path, map[string]string{"plan_code": "enterprise", "currency": "USD"})
 	var body struct {
@@ -266,7 +262,7 @@ func TestPutSubscriptionAnswersCheckoutRequired(t *testing.T) {
 	if rec := dbtest.Do(t, h, http.MethodPut, path, map[string]string{"plan_code": "starter", "currency": "USD"}); rec.Code != http.StatusOK {
 		t.Errorf("PUT starter: status %d, want 200; body %s", rec.Code, rec.Body)
 	}
-	if got := planOf(t, svc, tenant); got != "starter" {
+	if got := planOf(t, svc, organization); got != "starter" {
 		t.Errorf("plan = %q, want starter", got)
 	}
 }
@@ -274,10 +270,17 @@ func TestPutSubscriptionAnswersCheckoutRequired(t *testing.T) {
 // gstIndia charges 18% GST as a seller in Karnataka.
 var gstIndia = TaxConfig{Enabled: true, SellerCountry: "IN", SellerState: "Karnataka", GSTRateBps: 1800}
 
-// withSandbox gives svc the sandbox card provider, which serves every checkout.
-func withSandbox(svc *Service) {
-	svc.SetPayments(NewPayments("", "", "", "", "").WithSandbox("http://localhost:8080", "test-webhook-secret"))
+// withSandbox gives the service the sandbox card provider, which serves every
+// checkout.
+func withSandbox(c *Config) {
+	c.Payments = NewPayments("", "", "", "", "").WithSandbox("http://localhost:8080", "test-webhook-secret")
 }
+
+// unpaid turns invoice-only billing on.
+func unpaid(c *Config) { c.AllowUnpaidActivation = true }
+
+// taxed charges India's GST.
+func taxed(c *Config) { c.Tax = gstIndia }
 
 // sandboxCharge returns the checkout reference and the amount the sandbox
 // provider was asked to charge, read from its hosted-checkout URL.
@@ -297,15 +300,15 @@ func sandboxCharge(t *testing.T, res *CheckoutResult) (string, int64) {
 	return u.Query().Get("ref"), amount
 }
 
-// latestInvoice returns the tenant's newest invoice.
-func latestInvoice(t *testing.T, svc *Service, tenant uuid.UUID) Invoice {
+// latestInvoice returns the organization's newest invoice.
+func latestInvoice(t *testing.T, svc *Service, organization uuid.UUID) Invoice {
 	t.Helper()
-	invoices, err := svc.ListInvoices(dbtest.Context(t), tenant)
+	invoices, err := svc.ListInvoices(dbtest.Context(t), organization)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(invoices) == 0 {
-		t.Fatalf("tenant %s has no invoice", tenant)
+		t.Fatalf("organization %s has no invoice", organization)
 	}
 	return invoices[0]
 }
@@ -329,15 +332,13 @@ func serial(t *testing.T, inv Invoice) int {
 // billing profile changes before the payment completes.
 func TestCheckoutChargesTheInvoiceTotal(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := newTestService(t)
-	svc.SetTaxConfig(gstIndia)
-	withSandbox(svc)
-	tenant := dbtest.Tenant(t)
-	if err := svc.UpsertBillingProfile(ctx, tenant, BillingProfile{Country: "IN", State: "Maharashtra"}); err != nil {
+	svc := newTestService(t, taxed, withSandbox)
+	organization := dbtest.Organization(t)
+	if err := svc.UpsertBillingProfile(ctx, organization, BillingProfile{Country: "IN", State: "Maharashtra"}); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := svc.Checkout(ctx, tenant, "starter", "INR", "IN", "https://app.example/ok", "https://app.example/cancel")
+	res, err := svc.Checkout(ctx, organization, "starter", "INR", "IN", "https://app.example/ok", "https://app.example/cancel")
 	if err != nil {
 		t.Fatalf("checkout: %v", err)
 	}
@@ -345,14 +346,14 @@ func TestCheckoutChargesTheInvoiceTotal(t *testing.T) {
 	if charged != 283200 {
 		t.Fatalf("provider asked to charge %d, want 283200 (2400.00 plus 18%% GST)", charged)
 	}
-	if err := svc.UpsertBillingProfile(ctx, tenant, BillingProfile{Country: "US"}); err != nil {
+	if err := svc.UpsertBillingProfile(ctx, organization, BillingProfile{Country: "US"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.CompleteCheckout(ctx, ref, nil); err != nil {
 		t.Fatalf("complete checkout: %v", err)
 	}
 
-	inv := latestInvoice(t, svc, tenant)
+	inv := latestInvoice(t, svc, organization)
 	if inv.AmountMinor != 283200 || inv.TaxableMinor != 240000 || inv.TaxMinor != 43200 || inv.TaxType != TaxTypeGSTInter {
 		t.Errorf("invoice charges %d = %d + %d (%s), want 283200 = 240000 + 43200 (%s)",
 			inv.AmountMinor, inv.TaxableMinor, inv.TaxMinor, inv.TaxType, TaxTypeGSTInter)
@@ -368,13 +369,11 @@ func TestCheckoutChargesTheInvoiceTotal(t *testing.T) {
 // invoices are numbered one after another.
 func TestInvoiceStatusFollowsPayment(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := newTestService(t)
-	svc.SetTaxConfig(gstIndia)
-	svc.SetAllowUnpaidActivation(true)
+	svc := newTestService(t, taxed, unpaid)
 
-	first, second := dbtest.Tenant(t), dbtest.Tenant(t)
-	for _, tenant := range []uuid.UUID{first, second} {
-		res, err := svc.Checkout(ctx, tenant, "starter", "INR", "IN", "https://app.example/ok", "https://app.example/cancel")
+	first, second := dbtest.Organization(t), dbtest.Organization(t)
+	for _, organization := range []uuid.UUID{first, second} {
+		res, err := svc.Checkout(ctx, organization, "starter", "INR", "IN", "https://app.example/ok", "https://app.example/cancel")
 		if err != nil || res.Status != "active" {
 			t.Fatalf("invoice-only checkout: %+v, %v", res, err)
 		}
@@ -387,7 +386,7 @@ func TestInvoiceStatusFollowsPayment(t *testing.T) {
 		t.Errorf("invoice numbers %d then %d, want consecutive", a, b)
 	}
 
-	free := dbtest.Tenant(t)
+	free := dbtest.Organization(t)
 	if _, err := svc.Checkout(ctx, free, "free", "INR", "IN", "https://app.example/ok", "https://app.example/cancel"); err != nil {
 		t.Fatalf("free checkout: %v", err)
 	}
@@ -399,13 +398,10 @@ func TestInvoiceStatusFollowsPayment(t *testing.T) {
 
 // TestSignupCheckoutChargesTheInvoiceTotal checks that a paid plan chosen at
 // signup is charged tax included, taxed by the billing country given, and that
-// the new organisation's invoice shows that charge.
+// the new organization's invoice shows that charge.
 func TestSignupCheckoutChargesTheInvoiceTotal(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := newTestService(t)
-	svc.SetTaxConfig(gstIndia)
-	withSandbox(svc)
-	svc.SetOrgProvisioner(orgProvisioner{pool: dbtest.Pool(t)})
+	svc := newTestService(t, taxed, withSandbox)
 
 	res, err := svc.StartSignupCheckout(ctx, dbtest.User(t, uuid.Nil).ID, SignupCheckoutInput{
 		OrgName: "Example", OrgSlug: dbtest.Unique("org"), PlanCode: "pro", Currency: "INR", Country: "IN",
@@ -422,7 +418,7 @@ func TestSignupCheckoutChargesTheInvoiceTotal(t *testing.T) {
 		t.Fatalf("complete checkout: %v", err)
 	}
 	var org uuid.UUID
-	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT tenant_id FROM tenant.signup_checkouts WHERE id = $1`, ref).Scan(&org); err != nil {
+	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT organization_id FROM organization.signup_checkouts WHERE id = $1`, ref).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
 	inv := latestInvoice(t, svc, org)
@@ -431,33 +427,32 @@ func TestSignupCheckoutChargesTheInvoiceTotal(t *testing.T) {
 	}
 }
 
-// orgProvisioner creates a signup checkout's organization as a bare tenant.
+// orgProvisioner creates a signup checkout's organization as a bare row.
 type orgProvisioner struct{ pool *pgxpool.Pool }
 
 func (p orgProvisioner) ProvisionOrg(ctx context.Context, _ uuid.UUID, name, slug, _, _ string) (uuid.UUID, error) {
 	var id uuid.UUID
-	err := p.pool.QueryRow(ctx, `INSERT INTO tenant.tenants (slug, name) VALUES ($1, $2) RETURNING id`, slug, name).Scan(&id)
+	err := p.pool.QueryRow(ctx, `INSERT INTO organization.organizations (slug, name) VALUES ($1, $2) RETURNING id`, slug, name).Scan(&id)
 	return id, err
 }
 
-// TestCompleteCheckoutUsesOneConnection checks that completing a tenant
+// TestCompleteCheckoutUsesOneConnection checks that completing an organization
 // checkout and a signup checkout each needs only one connection at a time,
 // and that a repeated completion changes nothing.
 func TestCompleteCheckoutUsesOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newTestService(t)
-	svc.SetOrgProvisioner(orgProvisioner{pool: pool})
-	tenant := dbtest.Tenant(t)
-	tenantCheckout, err := svc.q.InsertBillingCheckout(ctx, dbgen.InsertBillingCheckoutParams{
-		TenantID: tenant, Provider: "sandbox", PlanCode: "starter", Currency: "USD", AmountMinor: 2900,
+	organization := dbtest.Organization(t)
+	organizationCheckout, err := svc.q.InsertBillingCheckout(ctx, dbgen.InsertBillingCheckoutParams{
+		OrganizationID: organization, Provider: "sandbox", PlanCode: "starter", Currency: "USD", AmountMinor: 2900, TaxType: TaxTypeNone,
 	})
 	if err != nil {
-		t.Fatalf("stage tenant checkout: %v", err)
+		t.Fatalf("stage organization checkout: %v", err)
 	}
 	var signupCheckout uuid.UUID
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO tenant.signup_checkouts (user_id, org_name, org_slug, plan_code, currency, provider, amount_minor)
+		INSERT INTO organization.signup_checkouts (user_id, org_name, org_slug, plan_code, currency, provider, amount_minor)
 		VALUES ($1, 'Example', $2, 'pro', 'USD', 'sandbox', 9900)
 		RETURNING id
 	`, dbtest.User(t, uuid.Nil).ID, dbtest.Unique("org")).Scan(&signupCheckout); err != nil {
@@ -467,26 +462,26 @@ func TestCompleteCheckoutUsesOneConnection(t *testing.T) {
 	dbtest.LeaveOneConnection(t)
 	completeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	for _, ref := range []uuid.UUID{tenantCheckout, signupCheckout, tenantCheckout, signupCheckout} {
+	for _, ref := range []uuid.UUID{organizationCheckout, signupCheckout, organizationCheckout, signupCheckout} {
 		if err := svc.CompleteCheckout(completeCtx, ref.String(), nil); err != nil {
 			t.Fatalf("complete checkout %s with one free connection: %v", ref, err)
 		}
 	}
 
-	if got := planOf(t, svc, tenant); got != "starter" {
-		t.Errorf("tenant checkout: plan = %q, want starter", got)
+	if got := planOf(t, svc, organization); got != "starter" {
+		t.Errorf("organization checkout: plan = %q, want starter", got)
 	}
 	var org uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT tenant_id FROM tenant.signup_checkouts WHERE id = $1 AND status = 'completed'`,
+	if err := pool.QueryRow(ctx, `SELECT organization_id FROM organization.signup_checkouts WHERE id = $1 AND status = 'completed'`,
 		signupCheckout).Scan(&org); err != nil {
 		t.Fatalf("signup checkout not completed: %v", err)
 	}
 	if got := planOf(t, svc, org); got != "pro" {
 		t.Errorf("signup checkout: plan = %q, want pro", got)
 	}
-	for _, id := range []uuid.UUID{tenant, org} {
-		if n := dbtest.Count(t, `SELECT count(*) FROM tenant.invoices WHERE tenant_id = $1`, id); n != 1 {
-			t.Errorf("tenant %s has %d invoices, want 1", id, n)
+	for _, id := range []uuid.UUID{organization, org} {
+		if n := dbtest.Count(t, `SELECT count(*) FROM organization.invoices WHERE organization_id = $1`, id); n != 1 {
+			t.Errorf("organization %s has %d invoices, want 1", id, n)
 		}
 	}
 }
@@ -499,11 +494,10 @@ func TestSignupCheckoutResumesAfterAFailure(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newTestService(t)
-	svc.SetOrgProvisioner(orgProvisioner{pool: pool})
 	name := dbtest.Unique("Resume")
 	var checkout uuid.UUID
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO tenant.signup_checkouts (user_id, org_name, org_slug, plan_code, currency, provider, amount_minor)
+		INSERT INTO organization.signup_checkouts (user_id, org_name, org_slug, plan_code, currency, provider, amount_minor)
 		VALUES ($1, $2, $3, 'no_such_plan', 'USD', 'sandbox', 9900)
 		RETURNING id
 	`, dbtest.User(t, uuid.Nil).ID, name, dbtest.Unique("org")).Scan(&checkout); err != nil {
@@ -514,26 +508,40 @@ func TestSignupCheckoutResumesAfterAFailure(t *testing.T) {
 	}
 	var status string
 	var org *uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT status, tenant_id FROM tenant.signup_checkouts WHERE id = $1`, checkout).Scan(&status, &org); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT status, organization_id FROM organization.signup_checkouts WHERE id = $1`, checkout).Scan(&status, &org); err != nil {
 		t.Fatal(err)
 	}
 	if status != "pending" || org == nil {
 		t.Fatalf("after the failure: status %q, organization %v; want pending with the organization recorded", status, org)
 	}
 
-	if _, err := pool.Exec(ctx, `UPDATE tenant.signup_checkouts SET plan_code = 'pro' WHERE id = $1`, checkout); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE organization.signup_checkouts SET plan_code = 'pro' WHERE id = $1`, checkout); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.CompleteCheckout(ctx, checkout.String(), nil); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.tenants WHERE name = $1`, name); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.organizations WHERE name = $1`, name); n != 1 {
 		t.Errorf("%d organizations for one checkout, want 1", n)
 	}
 	if got := planOf(t, svc, *org); got != "pro" {
 		t.Errorf("plan after the retry = %q, want pro", got)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.signup_checkouts WHERE id = $1 AND status = 'completed' AND tenant_id = $2`, checkout, *org); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.signup_checkouts WHERE id = $1 AND status = 'completed' AND organization_id = $2`, checkout, *org); n != 1 {
 		t.Error("the retried checkout is not completed with its organization")
 	}
+}
+
+// refuseAudit makes the organization's audit writes of action fail until t
+// ends, as an audit store that is down would.
+func refuseAudit(t *testing.T, organization uuid.UUID, action string) {
+	t.Helper()
+	owner, name := dbtest.Owner(t), "refuse_"+strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := owner.Exec(dbtest.Context(t), `
+		CREATE FUNCTION pg_temp.`+name+`() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit store down'; END $$;
+		CREATE TRIGGER `+name+` BEFORE INSERT ON audit.events FOR EACH ROW
+		WHEN (NEW.organization_id = '`+organization.String()+`' AND NEW.action = '`+action+`') EXECUTE FUNCTION pg_temp.`+name+`()`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = owner.Exec(context.Background(), `DROP FUNCTION pg_temp.`+name+`() CASCADE`) })
 }

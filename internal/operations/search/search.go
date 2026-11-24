@@ -1,7 +1,7 @@
 // Package search is the admin console's search across users, organizations,
 // groups, roles, OIDC clients and audit events. It runs a read-only ILIKE query
 // per type, scores and merges the rows in Go, and returns a cursor-paginated
-// page, scoped to one tenant and to the types the user may read.
+// page, scoped to one organization and to the types the user may read.
 package search
 
 import (
@@ -15,17 +15,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/search/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// permissionChecker reports whether a user holds a permission in a tenant.
+// permissionChecker reports whether a user holds a permission in an organization.
 // *rbac.Repository satisfies it.
 type permissionChecker interface {
-	Check(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (bool, error)
+	Check(ctx context.Context, userID, organizationID uuid.UUID, permKey string) (bool, error)
 }
 
 // Resource types a Result can have.
@@ -53,7 +54,7 @@ var supportedTypes = []string{
 // it in results.
 var typePermission = map[string]string{
 	TypeUser:         "user.read",
-	TypeOrganization: "tenant.read",
+	TypeOrganization: "organization.read",
 	TypeGroup:        "group.read",
 	TypeRole:         "role.read",
 	TypeOIDCClient:   "connection.read",
@@ -89,24 +90,22 @@ func NewService(pool *pgxpool.Pool, checker permissionChecker) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), rbac: checker}
 }
 
-// Search returns up to limit results in tenantID (20 if limit is not in 1..50),
+// Search returns up to limit results in organizationID (20 when unset, at most 50),
 // best score first, and the next page's cursor, or "" on the last page. types
 // narrows the search and unknown types are ignored. With a non-nil userID, types
 // the user may not read are skipped; a nil userID skips the checks.
 func (s *Service) Search(
 	ctx context.Context,
-	tenantID uuid.UUID,
+	organizationID uuid.UUID,
 	userID *uuid.UUID,
 	q string,
 	types []string,
 	cursor string,
 	limit int,
 ) ([]Result, string, error) {
-	if limit <= 0 || limit > 50 {
-		limit = 20
-	}
+	limit = paging.Clamp(limit, 20, 50)
 	// pattern is passed as a bind variable, never concatenated into SQL.
-	pattern := "%" + q + "%"
+	pattern := "%" + postgres.EscapeLike(q) + "%"
 
 	// Honour the caller's type filter, dropping unknown types.
 	candidates := supportedTypes
@@ -124,7 +123,7 @@ func (s *Service) Search(
 	var all []Result
 	for _, t := range candidates {
 		if userID != nil {
-			ok, err := s.rbac.Check(ctx, *userID, tenantID, typePermission[t])
+			ok, err := s.rbac.Check(ctx, *userID, organizationID, typePermission[t])
 			if err != nil {
 				return nil, "", err
 			}
@@ -132,7 +131,7 @@ func (s *Service) Search(
 				continue
 			}
 		}
-		rows, err := s.fetchType(ctx, tenantID, pattern, q, t)
+		rows, err := s.fetchType(ctx, organizationID, pattern, q, t)
 		if err != nil {
 			return nil, "", err
 		}
@@ -188,29 +187,29 @@ func (s *Service) Search(
 
 // --- per-type fetch helpers ---
 
-func (s *Service) fetchType(ctx context.Context, tenantID uuid.UUID, pattern, rawQ, t string) ([]Result, error) {
+func (s *Service) fetchType(ctx context.Context, organizationID uuid.UUID, pattern, rawQ, t string) ([]Result, error) {
 	switch t {
 	case TypeUser:
-		return s.fetchUsers(ctx, tenantID, pattern, rawQ)
+		return s.fetchUsers(ctx, organizationID, pattern, rawQ)
 	case TypeOrganization:
-		return s.fetchOrganization(ctx, tenantID, pattern, rawQ)
+		return s.fetchOrganization(ctx, organizationID, pattern, rawQ)
 	case TypeGroup:
-		return s.fetchGroups(ctx, tenantID, pattern, rawQ)
+		return s.fetchGroups(ctx, organizationID, pattern, rawQ)
 	case TypeRole:
-		return s.fetchRoles(ctx, tenantID, pattern, rawQ)
+		return s.fetchRoles(ctx, organizationID, pattern, rawQ)
 	case TypeOIDCClient:
-		return s.fetchOIDCClients(ctx, tenantID, pattern, rawQ)
+		return s.fetchOIDCClients(ctx, organizationID, pattern, rawQ)
 	case TypeAuditEvent:
-		return s.fetchAuditEvents(ctx, tenantID, pattern, rawQ)
+		return s.fetchAuditEvents(ctx, organizationID, pattern, rawQ)
 	}
 	return nil, nil
 }
 
-func (s *Service) fetchUsers(ctx context.Context, tenantID uuid.UUID, pattern, rawQ string) ([]Result, error) {
+func (s *Service) fetchUsers(ctx context.Context, organizationID uuid.UUID, pattern, rawQ string) ([]Result, error) {
 	rows, err := s.q.SearchUsers(ctx, dbgen.SearchUsersParams{
-		TenantID: tenantID,
-		Q:        pattern,
-		RowLimit: perTypeLimit,
+		OrganizationID: organizationID,
+		Q:              pattern,
+		RowLimit:       perTypeLimit,
 	})
 	if err != nil {
 		return nil, err
@@ -237,10 +236,10 @@ func (s *Service) fetchUsers(ctx context.Context, tenantID uuid.UUID, pattern, r
 	return out, nil
 }
 
-func (s *Service) fetchOrganization(ctx context.Context, tenantID uuid.UUID, pattern, rawQ string) ([]Result, error) {
+func (s *Service) fetchOrganization(ctx context.Context, organizationID uuid.UUID, pattern, rawQ string) ([]Result, error) {
 	rows, err := s.q.SearchOrganization(ctx, dbgen.SearchOrganizationParams{
-		TenantID: tenantID,
-		Q:        pattern,
+		OrganizationID: organizationID,
+		Q:              pattern,
 	})
 	if err != nil {
 		return nil, err
@@ -263,11 +262,11 @@ func (s *Service) fetchOrganization(ctx context.Context, tenantID uuid.UUID, pat
 	return out, nil
 }
 
-func (s *Service) fetchGroups(ctx context.Context, tenantID uuid.UUID, pattern, rawQ string) ([]Result, error) {
+func (s *Service) fetchGroups(ctx context.Context, organizationID uuid.UUID, pattern, rawQ string) ([]Result, error) {
 	rows, err := s.q.SearchGroups(ctx, dbgen.SearchGroupsParams{
-		TenantID: tenantID,
-		Q:        pattern,
-		RowLimit: perTypeLimit,
+		OrganizationID: organizationID,
+		Q:              pattern,
+		RowLimit:       perTypeLimit,
 	})
 	if err != nil {
 		return nil, err
@@ -289,11 +288,11 @@ func (s *Service) fetchGroups(ctx context.Context, tenantID uuid.UUID, pattern, 
 	return out, nil
 }
 
-func (s *Service) fetchRoles(ctx context.Context, tenantID uuid.UUID, pattern, rawQ string) ([]Result, error) {
+func (s *Service) fetchRoles(ctx context.Context, organizationID uuid.UUID, pattern, rawQ string) ([]Result, error) {
 	rows, err := s.q.SearchRoles(ctx, dbgen.SearchRolesParams{
-		TenantID: tenantID,
-		Q:        pattern,
-		RowLimit: perTypeLimit,
+		OrganizationID: organizationID,
+		Q:              pattern,
+		RowLimit:       perTypeLimit,
 	})
 	if err != nil {
 		return nil, err
@@ -315,11 +314,11 @@ func (s *Service) fetchRoles(ctx context.Context, tenantID uuid.UUID, pattern, r
 	return out, nil
 }
 
-func (s *Service) fetchOIDCClients(ctx context.Context, tenantID uuid.UUID, pattern, rawQ string) ([]Result, error) {
+func (s *Service) fetchOIDCClients(ctx context.Context, organizationID uuid.UUID, pattern, rawQ string) ([]Result, error) {
 	rows, err := s.q.SearchOIDCClients(ctx, dbgen.SearchOIDCClientsParams{
-		TenantID: tenantID,
-		Q:        pattern,
-		RowLimit: perTypeLimit,
+		OrganizationID: organizationID,
+		Q:              pattern,
+		RowLimit:       perTypeLimit,
 	})
 	if err != nil {
 		return nil, err
@@ -342,13 +341,13 @@ func (s *Service) fetchOIDCClients(ctx context.Context, tenantID uuid.UUID, patt
 	return out, nil
 }
 
-func (s *Service) fetchAuditEvents(ctx context.Context, tenantID uuid.UUID, pattern, rawQ string) ([]Result, error) {
+func (s *Service) fetchAuditEvents(ctx context.Context, organizationID uuid.UUID, pattern, rawQ string) ([]Result, error) {
 	rows, err := s.q.SearchAuditEvents(ctx, dbgen.SearchAuditEventsParams{
-		// audit.events.tenant_id is NULL for platform rows; search always passes a
-		// tenant.
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Q:        pattern,
-		RowLimit: perTypeLimit,
+		// audit.events.organization_id is NULL for platform rows; search always passes an
+		// organization.
+		OrganizationID: &organizationID,
+		Q:              pattern,
+		RowLimit:       perTypeLimit,
 	})
 	if err != nil {
 		return nil, err
@@ -357,8 +356,8 @@ func (s *Service) fetchAuditEvents(ctx context.Context, tenantID uuid.UUID, patt
 	for _, r := range rows {
 		sc := maxScore(scoreText(r.Action, rawQ), scoreText(r.ResourceType, rawQ))
 		var resourceID string
-		if r.ResourceID.Valid {
-			resourceID = uuid.UUID(r.ResourceID.Bytes).String()
+		if r.ResourceID != nil {
+			resourceID = r.ResourceID.String()
 		}
 		out = append(out, Result{
 			Type:      TypeAuditEvent,

@@ -10,34 +10,33 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const searchAuditEvents = `-- name: SearchAuditEvents :many
 SELECT id, action, resource_type, resource_id, created_at
 FROM audit.events
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND (action ILIKE $2 OR resource_type ILIKE $2)
 ORDER BY created_at DESC, id
 LIMIT $3
 `
 
 type SearchAuditEventsParams struct {
-	TenantID pgtype.UUID
-	Q        string
-	RowLimit int32
+	OrganizationID *uuid.UUID
+	Q              string
+	RowLimit       int32
 }
 
 type SearchAuditEventsRow struct {
 	ID           uuid.UUID
 	Action       string
 	ResourceType string
-	ResourceID   pgtype.UUID
+	ResourceID   *uuid.UUID
 	CreatedAt    time.Time
 }
 
 func (q *Queries) SearchAuditEvents(ctx context.Context, arg SearchAuditEventsParams) ([]SearchAuditEventsRow, error) {
-	rows, err := q.db.Query(ctx, searchAuditEvents, arg.TenantID, arg.Q, arg.RowLimit)
+	rows, err := q.db.Query(ctx, searchAuditEvents, arg.OrganizationID, arg.Q, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -64,17 +63,17 @@ func (q *Queries) SearchAuditEvents(ctx context.Context, arg SearchAuditEventsPa
 
 const searchGroups = `-- name: SearchGroups :many
 SELECT id, name, description, created_at
-FROM tenant.groups
-WHERE tenant_id = $1
+FROM organization.groups
+WHERE organization_id = $1
   AND name ILIKE $2
 ORDER BY created_at DESC, id
 LIMIT $3
 `
 
 type SearchGroupsParams struct {
-	TenantID uuid.UUID
-	Q        string
-	RowLimit int32
+	OrganizationID uuid.UUID
+	Q              string
+	RowLimit       int32
 }
 
 type SearchGroupsRow struct {
@@ -85,7 +84,7 @@ type SearchGroupsRow struct {
 }
 
 func (q *Queries) SearchGroups(ctx context.Context, arg SearchGroupsParams) ([]SearchGroupsRow, error) {
-	rows, err := q.db.Query(ctx, searchGroups, arg.TenantID, arg.Q, arg.RowLimit)
+	rows, err := q.db.Query(ctx, searchGroups, arg.OrganizationID, arg.Q, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -112,16 +111,16 @@ func (q *Queries) SearchGroups(ctx context.Context, arg SearchGroupsParams) ([]S
 const searchOIDCClients = `-- name: SearchOIDCClients :many
 SELECT id, name, client_id, type AS client_type, created_at
 FROM auth.oidc_clients
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND (name ILIKE $2 OR client_id ILIKE $2)
 ORDER BY created_at DESC, id
 LIMIT $3
 `
 
 type SearchOIDCClientsParams struct {
-	TenantID uuid.UUID
-	Q        string
-	RowLimit int32
+	OrganizationID uuid.UUID
+	Q              string
+	RowLimit       int32
 }
 
 type SearchOIDCClientsRow struct {
@@ -133,7 +132,7 @@ type SearchOIDCClientsRow struct {
 }
 
 func (q *Queries) SearchOIDCClients(ctx context.Context, arg SearchOIDCClientsParams) ([]SearchOIDCClientsRow, error) {
-	rows, err := q.db.Query(ctx, searchOIDCClients, arg.TenantID, arg.Q, arg.RowLimit)
+	rows, err := q.db.Query(ctx, searchOIDCClients, arg.OrganizationID, arg.Q, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -160,15 +159,15 @@ func (q *Queries) SearchOIDCClients(ctx context.Context, arg SearchOIDCClientsPa
 
 const searchOrganization = `-- name: SearchOrganization :many
 SELECT id, name, slug, status, updated_at
-FROM tenant.tenants
+FROM organization.organizations
 WHERE id = $1
   AND (name ILIKE $2 OR slug ILIKE $2)
 LIMIT 1
 `
 
 type SearchOrganizationParams struct {
-	TenantID uuid.UUID
-	Q        string
+	OrganizationID uuid.UUID
+	Q              string
 }
 
 type SearchOrganizationRow struct {
@@ -179,10 +178,10 @@ type SearchOrganizationRow struct {
 	UpdatedAt time.Time
 }
 
-// Returns the caller's own tenant when its name or slug matches the query.
-// At most one row (id = tenant_id is a PK equality).
+// Returns the caller's own organization when its name or slug matches the query.
+// At most one row (id = organization_id is a PK equality).
 func (q *Queries) SearchOrganization(ctx context.Context, arg SearchOrganizationParams) ([]SearchOrganizationRow, error) {
-	rows, err := q.db.Query(ctx, searchOrganization, arg.TenantID, arg.Q)
+	rows, err := q.db.Query(ctx, searchOrganization, arg.OrganizationID, arg.Q)
 	if err != nil {
 		return nil, err
 	}
@@ -210,16 +209,16 @@ func (q *Queries) SearchOrganization(ctx context.Context, arg SearchOrganization
 const searchRoles = `-- name: SearchRoles :many
 SELECT id, name, description, is_system, created_at
 FROM rbac.roles
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND name ILIKE $2
 ORDER BY created_at DESC, id
 LIMIT $3
 `
 
 type SearchRolesParams struct {
-	TenantID uuid.UUID
-	Q        string
-	RowLimit int32
+	OrganizationID uuid.UUID
+	Q              string
+	RowLimit       int32
 }
 
 type SearchRolesRow struct {
@@ -231,7 +230,7 @@ type SearchRolesRow struct {
 }
 
 func (q *Queries) SearchRoles(ctx context.Context, arg SearchRolesParams) ([]SearchRolesRow, error) {
-	rows, err := q.db.Query(ctx, searchRoles, arg.TenantID, arg.Q, arg.RowLimit)
+	rows, err := q.db.Query(ctx, searchRoles, arg.OrganizationID, arg.Q, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -259,15 +258,15 @@ func (q *Queries) SearchRoles(ctx context.Context, arg SearchRolesParams) ([]Sea
 const searchUsers = `-- name: SearchUsers :many
 
 SELECT u.id, u.email, u.display_name, u.status, u.updated_at
-FROM "user".users u
+FROM account.users u
 WHERE u.deleted_at IS NULL
   AND (
-      u.tenant_id = $1::uuid
+      u.organization_id = $1::uuid
       OR EXISTS (
           SELECT 1 FROM rbac.user_roles membership
           JOIN rbac.roles member_role
-            ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
-          WHERE membership.user_id = u.id AND membership.tenant_id = $1::uuid
+            ON member_role.id = membership.role_id AND member_role.organization_id = membership.organization_id
+          WHERE membership.user_id = u.id AND membership.organization_id = $1::uuid
       )
   )
   AND (u.email ILIKE $2 OR u.display_name ILIKE $2)
@@ -276,9 +275,9 @@ LIMIT $3
 `
 
 type SearchUsersParams struct {
-	TenantID uuid.UUID
-	Q        string
-	RowLimit int32
+	OrganizationID uuid.UUID
+	Q              string
+	RowLimit       int32
 }
 
 type SearchUsersRow struct {
@@ -290,18 +289,18 @@ type SearchUsersRow struct {
 }
 
 // Queries for the universal-search domain.
-// Each query fetches one resource type scoped to the caller's tenant.
+// Each query fetches one resource type scoped to the caller's organization.
 // The @q parameter must be passed as '%<query>%' (wildcards included) from
 // the service layer so that the SQL remains a static parameterised query
 // (no dynamic concatenation). Results are merged and scored in-memory by
 // the service before being returned to the caller.
 // pg_trgm is not enabled in this database, so fuzzy matching is ILIKE;
 // prefix/exact scoring is computed in Go after the rows are fetched.
-// SearchUsers finds the tenant's members: a role in the tenant whose role is
-// the tenant's own, or the tenant being their home, the rule the member list
+// SearchUsers finds the organization's members: a role in the organization whose role is
+// the organization's own, or the organization being their home, the rule the member list
 // and admin actions use, so members who joined by invitation are found too.
 func (q *Queries) SearchUsers(ctx context.Context, arg SearchUsersParams) ([]SearchUsersRow, error) {
-	rows, err := q.db.Query(ctx, searchUsers, arg.TenantID, arg.Q, arg.RowLimit)
+	rows, err := q.db.Query(ctx, searchUsers, arg.OrganizationID, arg.Q, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

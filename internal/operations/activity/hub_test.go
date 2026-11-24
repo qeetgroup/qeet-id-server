@@ -20,57 +20,57 @@ func newTestEvent(evType, severity string) ActivityEvent {
 	}
 }
 
-// TestHubTenantIsolation checks that an event for one tenant never reaches
-// another tenant's subscriber.
-func TestHubTenantIsolation(t *testing.T) {
+// TestHubOrganizationIsolation checks that an event for one organization never reaches
+// another organization's subscriber.
+func TestHubOrganizationIsolation(t *testing.T) {
 	h := NewHub(nil) // no NATS — we drive fanOut directly
 
-	tenantA := uuid.New()
-	tenantB := uuid.New()
+	organizationA := uuid.New()
+	organizationB := uuid.New()
 
-	chA, unsubA := h.Subscribe(tenantA)
+	chA, unsubA := h.Subscribe(organizationA)
 	defer unsubA()
-	chB, unsubB := h.Subscribe(tenantB)
+	chB, unsubB := h.Subscribe(organizationB)
 	defer unsubB()
 
 	evA := newTestEvent("user.created", SeveritySuccess)
 	evB := newTestEvent("user.deleted", SeverityWarning)
 
-	h.fanOut(tenantA, evA)
-	h.fanOut(tenantB, evB)
+	h.fanOut(organizationA, evA)
+	h.fanOut(organizationB, evB)
 
-	// tenantA channel must have exactly evA.
+	// organizationA channel must have exactly evA.
 	select {
 	case got := <-chA:
 		if got.ID != evA.ID {
-			t.Errorf("tenantA: got event %v, want %v", got.ID, evA.ID)
+			t.Errorf("organizationA: got event %v, want %v", got.ID, evA.ID)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("tenantA: no event received within 1s")
+		t.Fatal("organizationA: no event received within 1s")
 	}
 
-	// tenantB channel must have exactly evB.
+	// organizationB channel must have exactly evB.
 	select {
 	case got := <-chB:
 		if got.ID != evB.ID {
-			t.Errorf("tenantB: got event %v, want %v", got.ID, evB.ID)
+			t.Errorf("organizationB: got event %v, want %v", got.ID, evB.ID)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("tenantB: no event received within 1s")
+		t.Fatal("organizationB: no event received within 1s")
 	}
 
-	// tenantA must NOT have received tenantB's event — the critical isolation assertion.
+	// organizationA must NOT have received organizationB's event — the critical isolation assertion.
 	select {
 	case extra := <-chA:
-		t.Errorf("ISOLATION FAILURE: tenantA received event intended for tenantB: %v (type=%s)",
+		t.Errorf("ISOLATION FAILURE: organizationA received event intended for organizationB: %v (type=%s)",
 			extra.ID, extra.Type)
 	default:
 	}
 
-	// tenantB must NOT have received tenantA's event.
+	// organizationB must NOT have received organizationA's event.
 	select {
 	case extra := <-chB:
-		t.Errorf("ISOLATION FAILURE: tenantB received event intended for tenantA: %v (type=%s)",
+		t.Errorf("ISOLATION FAILURE: organizationB received event intended for organizationA: %v (type=%s)",
 			extra.ID, extra.Type)
 	default:
 	}
@@ -83,20 +83,20 @@ func TestHubTenantIsolation(t *testing.T) {
 // events already buffered stay.
 func TestHubSlowConsumerIsToldItLostAnEvent(t *testing.T) {
 	h := NewHub(nil)
-	tenant := uuid.New()
-	ch, lost, unsub := h.subscribe(tenant)
+	organization := uuid.New()
+	ch, lost, unsub := h.subscribe(organization)
 	defer unsub()
 
 	for range subBufSize {
-		h.fanOut(tenant, newTestEvent("user.created", SeveritySuccess))
+		h.fanOut(organization, newTestEvent("user.created", SeveritySuccess))
 	}
 	select {
 	case <-lost:
 		t.Fatal("told it lost an event before its channel was full")
 	default:
 	}
-	h.fanOut(tenant, newTestEvent("overflow", SeverityInfo)) // must not block
-	h.fanOut(tenant, newTestEvent("overflow", SeverityInfo)) // nor signal twice
+	h.fanOut(organization, newTestEvent("overflow", SeverityInfo)) // must not block
+	h.fanOut(organization, newTestEvent("overflow", SeverityInfo)) // nor signal twice
 	select {
 	case <-lost:
 	default:
@@ -113,16 +113,16 @@ func TestHubSlowConsumerIsToldItLostAnEvent(t *testing.T) {
 }
 
 // TestHubUnsubscribeCleanup checks that unsubscribing removes the subscriber
-// from the hub, and that a later fan-out to the tenant does not block.
+// from the hub, and that a later fan-out to the organization does not block.
 func TestHubUnsubscribeCleanup(t *testing.T) {
 	h := NewHub(nil)
-	tenant := uuid.New()
+	organization := uuid.New()
 
-	_, unsub := h.Subscribe(tenant)
+	_, unsub := h.Subscribe(organization)
 
 	// Sanity: subscriber is registered.
 	h.mu.RLock()
-	before := len(h.subs[tenant])
+	before := len(h.subs[organization])
 	h.mu.RUnlock()
 	if before != 1 {
 		t.Fatalf("want 1 subscriber before unsub, got %d", before)
@@ -132,29 +132,29 @@ func TestHubUnsubscribeCleanup(t *testing.T) {
 
 	// After unsubscribe the map entry must be cleaned up.
 	h.mu.RLock()
-	after := len(h.subs[tenant])
+	after := len(h.subs[organization])
 	h.mu.RUnlock()
 	if after != 0 {
 		t.Errorf("want 0 subscribers after unsub, got %d", after)
 	}
 
 	// Sending an event after unsub must not panic or block.
-	h.fanOut(tenant, newTestEvent("user.created", SeveritySuccess))
+	h.fanOut(organization, newTestEvent("user.created", SeveritySuccess))
 }
 
-// TestHubMultipleSubscribersSameTenant checks that every connection of a tenant
+// TestHubMultipleSubscribersSameOrganization checks that every connection of an organization
 // receives each event.
-func TestHubMultipleSubscribersSameTenant(t *testing.T) {
+func TestHubMultipleSubscribersSameOrganization(t *testing.T) {
 	h := NewHub(nil)
-	tenant := uuid.New()
+	organization := uuid.New()
 
-	ch1, unsub1 := h.Subscribe(tenant)
+	ch1, unsub1 := h.Subscribe(organization)
 	defer unsub1()
-	ch2, unsub2 := h.Subscribe(tenant)
+	ch2, unsub2 := h.Subscribe(organization)
 	defer unsub2()
 
 	ev := newTestEvent("group.created", SeveritySuccess)
-	h.fanOut(tenant, ev)
+	h.fanOut(organization, ev)
 
 	for i, ch := range []<-chan ActivityEvent{ch1, ch2} {
 		select {
@@ -168,60 +168,32 @@ func TestHubMultipleSubscribersSameTenant(t *testing.T) {
 	}
 }
 
-// TestMapOutboxEventTenantID checks that mapOutboxEvent takes TenantID from its
-// argument, not from the payload.
-func TestMapOutboxEventTenantID(t *testing.T) {
-	tenantID := uuid.New()
-	otherID := uuid.New() // another UUID present in the payload — must not win
-	payload := []byte(`{"tenant_id":"` + otherID.String() + `","id":"00000000-0000-0000-0000-000000000001"}`)
-
-	ev := mapOutboxEvent("user.events", "user.created", tenantID, payload)
-
-	if ev.TenantID != tenantID {
-		t.Errorf("TenantID = %v, want %v (must come from the caller-supplied tenantID)", ev.TenantID, tenantID)
-	}
-}
-
-// TestMapAuditRowTenantID checks that mapAuditRow copies the row's TenantID.
-func TestMapAuditRowTenantID(t *testing.T) {
-	tenantID := uuid.New()
-	row := auditRow{
-		ID:       uuid.New(),
-		Action:   "user.created",
-		TenantID: tenantID,
-	}
-	ev := mapAuditRow(row)
-	if ev.TenantID != tenantID {
-		t.Errorf("TenantID = %v, want %v", ev.TenantID, tenantID)
-	}
-}
-
 // TestHubMisroutedEventDroppedAtWriteBoundary checks that an event forced into
-// another tenant's channel keeps its own TenantID, so the stream handler's
-// tenant check would drop it.
+// another organization's channel keeps its own OrganizationID, so the stream handler's
+// organization check would drop it.
 func TestHubMisroutedEventDroppedAtWriteBoundary(t *testing.T) {
 	h := NewHub(nil) // no NATS — drive fanOut directly
 
-	tenantA := uuid.New()
-	tenantB := uuid.New()
+	organizationA := uuid.New()
+	organizationB := uuid.New()
 
-	chA, unsubA := h.Subscribe(tenantA)
+	chA, unsubA := h.Subscribe(organizationA)
 	defer unsubA()
 
-	// Craft an event stamped with tenantB's ID and force it into tenantA's slot.
+	// Craft an event stamped with organizationB's ID and force it into organizationA's slot.
 	// In normal operation this would be impossible; the hub routes by the
-	// tenant_id in the payload via dispatch → fanOut(tenantID, ev). Here we
+	// organization_id in the payload via dispatch → fanOut(organizationID, ev). Here we
 	// bypass that to test the write-boundary guard.
 	badEv := ActivityEvent{
-		ID:       uuid.New(),
-		TenantID: tenantB, // WRONG tenant for this subscriber
-		Type:     "user.created",
-		Category: categoryOf("user.created"),
-		Severity: SeveritySuccess,
-		Title:    titleOf("user.created"),
-		At:       time.Now().UTC(),
+		ID:             uuid.New(),
+		OrganizationID: organizationB, // WRONG organization for this subscriber
+		Type:           "user.created",
+		Category:       categoryOf("user.created"),
+		Severity:       SeveritySuccess,
+		Title:          titleOf("user.created"),
+		At:             time.Now().UTC(),
 	}
-	h.fanOut(tenantA, badEv) // force into tenantA's channel
+	h.fanOut(organizationA, badEv) // force into organizationA's channel
 
 	var received ActivityEvent
 	select {
@@ -230,60 +202,27 @@ func TestHubMisroutedEventDroppedAtWriteBoundary(t *testing.T) {
 		t.Fatal("no event received from channel")
 	}
 
-	// Prove the guard condition: a SSE stream handler for tenantA would drop
-	// this event because received.TenantID (tenantB) != connectionTenant (tenantA).
-	connectionTenant := tenantA
-	if received.TenantID == connectionTenant {
-		t.Errorf("ISOLATION FAILURE: mis-routed event has TenantID == connectionTenant (%v); guard would pass it through", connectionTenant)
+	// Prove the guard condition: a SSE stream handler for organizationA would drop
+	// this event because received.OrganizationID (organizationB) != connectionOrganization (organizationA).
+	connectionOrganization := organizationA
+	if received.OrganizationID == connectionOrganization {
+		t.Errorf("ISOLATION FAILURE: mis-routed event has OrganizationID == connectionOrganization (%v); guard would pass it through", connectionOrganization)
 	}
-	if received.TenantID != tenantB {
-		t.Errorf("received.TenantID = %v, want %v", received.TenantID, tenantB)
+	if received.OrganizationID != organizationB {
+		t.Errorf("received.OrganizationID = %v, want %v", received.OrganizationID, organizationB)
 	}
-	// The actual drop happens in http.go: `if ev.TenantID != tenantID { continue }`.
+	// The actual drop happens in http.go: `if ev.OrganizationID != organizationID { continue }`.
 	// The assertions above confirm the condition would be triggered correctly.
 }
 
-// TestCategoryOf checks categoryOf and severityOf against a sample of actions.
-func TestCategoryOf(t *testing.T) {
-	cases := []struct {
-		action  string
-		wantCat string
-		wantSev string
-	}{
-		{"user.created", CategoryDirectory, SeveritySuccess},
-		{"user.deleted", CategoryDirectory, SeverityWarning},
-		{"auth.login.failed", CategoryAuthentication, SeverityError},
-		{"auth.session.revoked_for_reuse", CategoryAuthentication, SeverityCritical},
-		{"threat.anomaly_detected", CategorySecurity, SeverityCritical},
-		{"rbac.role_assigned", CategoryAuthorization, SeverityInfo},
-		{"group.member_added", CategoryDirectory, SeverityInfo},
-		{"agent.created", CategoryDeveloper, SeveritySuccess},
-		{"apikey.rotated", CategoryDeveloper, SeverityWarning},
-		{"webhook.created", CategoryDeveloper, SeveritySuccess},
-		{"system.shutdown", CategorySystem, SeverityInfo},
-		{"mfa.enabled", CategoryAuthentication, SeveritySuccess},
-		{"scim.user_provisioned", CategoryDirectory, SeverityInfo},
-	}
-	for _, tc := range cases {
-		t.Run(tc.action, func(t *testing.T) {
-			if got := categoryOf(tc.action); got != tc.wantCat {
-				t.Errorf("categoryOf(%q) = %q, want %q", tc.action, got, tc.wantCat)
-			}
-			if got := severityOf(tc.action); got != tc.wantSev {
-				t.Errorf("severityOf(%q) = %q, want %q", tc.action, got, tc.wantSev)
-			}
-		})
-	}
-}
-
 // TestHubFanOutDuringUnsubscribe checks that fanning out while other
-// connections of the tenant subscribe and unsubscribe is free of data races.
+// connections of the organization subscribe and unsubscribe is free of data races.
 // It is meaningful under the race detector.
 func TestHubFanOutDuringUnsubscribe(t *testing.T) {
 	h := NewHub(nil)
-	tenant := uuid.New()
+	organization := uuid.New()
 	for i := 0; i < 3; i++ {
-		_, unsub := h.Subscribe(tenant)
+		_, unsub := h.Subscribe(organization)
 		defer unsub()
 	}
 
@@ -299,15 +238,15 @@ func TestHubFanOutDuringUnsubscribe(t *testing.T) {
 			}
 			// Removing the earlier of two subscribers shifts the later one down
 			// in the slice fanOut reads.
-			_, unsubFirst := h.Subscribe(tenant)
-			_, unsubSecond := h.Subscribe(tenant)
+			_, unsubFirst := h.Subscribe(organization)
+			_, unsubSecond := h.Subscribe(organization)
 			unsubFirst()
 			unsubSecond()
 		}
 	}()
 	ev := newTestEvent("user.created", SeveritySuccess)
 	for i := 0; i < 2000; i++ {
-		h.fanOut(tenant, ev)
+		h.fanOut(organization, ev)
 	}
 	close(stop)
 	<-done

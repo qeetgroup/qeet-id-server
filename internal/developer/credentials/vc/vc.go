@@ -1,5 +1,5 @@
 // Package vc issues and verifies W3C Verifiable Credentials in the JWT
-// serialization (JWT-VC): ES256-signed by the platform issuer (verifiable via the
+// serialization (JWT-VC): signed by the platform issuer (verifiable via the
 // same JWKS), tracked in auth.credentials for listing/revocation. Verification
 // checks signature + issuer + expiry, then the revocation registry.
 package vc
@@ -8,23 +8,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/vc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 const vcContext = "https://www.w3.org/ns/credentials/v2"
@@ -62,7 +57,7 @@ type Holder struct {
 
 // IssueInput is a credential to issue. TTLSeconds <= 0 issues one that never
 // expires. UserID, optional, is the person it is for, a member of the
-// organisation; the signed credential doesn't carry it.
+// organization; the signed credential doesn't carry it.
 type IssueInput struct {
 	Subject    string         `json:"subject"`
 	Type       string         `json:"type"`
@@ -78,49 +73,32 @@ type IssueResult struct {
 	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
 }
 
-// pgtTS converts a *time.Time to pgtype.Timestamptz (null when nil).
-func pgtTS(t *time.Time) pgtype.Timestamptz {
-	if t == nil {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: *t, Valid: true}
-}
-
-// tsPtr converts a pgtype.Timestamptz to *time.Time (nil when not valid).
-func tsPtr(p pgtype.Timestamptz) *time.Time {
-	if !p.Valid {
-		return nil
-	}
-	t := p.Time
-	return &t
-}
-
 // Issue records a credential and returns its signed JWT-VC, recorded as
 // actor's.
-func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, in IssueInput, actor audit.Actor) (*IssueResult, error) {
+func (s *Service) Issue(ctx context.Context, organizationID uuid.UUID, in IssueInput, actor audit.Actor) (*IssueResult, error) {
 	subject := strings.TrimSpace(in.Subject)
 	credType := strings.TrimSpace(in.Type)
 	claims, ttlSeconds := in.Claims, in.TTLSeconds
 	if subject == "" || credType == "" {
-		return nil, errs.ErrVCSubjectTypeRequired
+		return nil, ErrSubjectTypeRequired
 	}
-	holder := pgtype.UUID{}
+	var holder *uuid.UUID
 	if in.UserID != nil {
-		member, err := s.q.IsOrganisationMember(ctx, dbgen.IsOrganisationMemberParams{UserID: *in.UserID, TenantID: tenantID})
+		member, err := s.q.IsOrganizationMember(ctx, dbgen.IsOrganizationMemberParams{UserID: *in.UserID, OrganizationID: organizationID})
 		if err != nil {
 			return nil, err
 		}
 		if !member {
-			return nil, errs.ErrVCUserNotMember
+			return nil, ErrUserNotMember
 		}
-		holder = pgtype.UUID{Bytes: *in.UserID, Valid: true}
+		holder = in.UserID
 	}
 	if claims == nil {
 		claims = map[string]any{}
 	}
 	claimsJSON, err := json.Marshal(claims)
 	if err != nil {
-		return nil, errs.ErrVCClaimsInvalid
+		return nil, ErrClaimsInvalid
 	}
 	now := time.Now().UTC()
 	var expiresAt *time.Time
@@ -135,12 +113,12 @@ func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, in IssueInput, 
 	}
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).CreateCredential(ctx, dbgen.CreateCredentialParams{
-		TenantID:  tenantID,
-		Subject:   subject,
-		Type:      credType,
-		Claims:    claimsJSON,
-		ExpiresAt: pgtTS(expiresAt),
-		UserID:    holder,
+		OrganizationID: organizationID,
+		Subject:        subject,
+		Type:           credType,
+		Claims:         claimsJSON,
+		ExpiresAt:      expiresAt,
+		UserID:         holder,
 	})
 	if err != nil {
 		return nil, err
@@ -185,10 +163,10 @@ func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, in IssueInput, 
 	if in.UserID != nil {
 		metadata["user_id"] = *in.UserID
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "credential.issued", "credential", id, metadata)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "credential.issued", "credential", id, metadata)); err != nil {
 		return nil, err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "credential.events", EventType: "credential.issued", Payload: map[string]any{"credential_id": id, "tenant_id": tenantID, "subject": subject, "type": credType, "expires_at": expiresAt}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "credential.events", EventType: "credential.issued", Payload: map[string]any{"credential_id": id, "organization_id": organizationID, "subject": subject, "type": credType, "expires_at": expiresAt}}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -260,15 +238,15 @@ func (s *Service) Verify(ctx context.Context, raw string) (*VerifyResult, error)
 		return invalid(ReasonUnknown), nil
 	case err != nil:
 		return nil, err
-	case revokedAt.Valid:
+	case revokedAt != nil:
 		return invalid(ReasonRevoked), nil
 	}
 	return res, nil
 }
 
-// List returns the tenant's credentials.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Credential, error) {
-	rows, err := s.q.ListCredentials(ctx, tenantID)
+// List returns the organization's credentials.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Credential, error) {
+	rows, err := s.q.ListCredentials(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -279,8 +257,8 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Credential, e
 			Subject:   row.Subject,
 			Type:      row.Type,
 			IssuedAt:  row.IssuedAt,
-			ExpiresAt: tsPtr(row.ExpiresAt),
-			Revoked:   row.RevokedAt.Valid,
+			ExpiresAt: row.ExpiresAt,
+			Revoked:   row.RevokedAt != nil,
 			User:      holderOf(row),
 		})
 	}
@@ -289,10 +267,10 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Credential, e
 
 // holderOf is the person row's credential was issued to, or nil.
 func holderOf(row dbgen.ListCredentialsRow) *Holder {
-	if !row.UserID.Valid {
+	if row.UserID == nil {
 		return nil
 	}
-	h := &Holder{ID: row.UserID.Bytes}
+	h := &Holder{ID: *row.UserID}
 	if row.UserEmail != nil {
 		h.Email = *row.UserEmail
 	}
@@ -302,115 +280,26 @@ func holderOf(row dbgen.ListCredentialsRow) *Holder {
 	return h
 }
 
-// Revoke marks one of the tenant's credentials revoked, so Verify refuses it,
+// Revoke marks one of the organization's credentials revoked, so Verify refuses it,
 // recorded as actor's.
-func (s *Service) Revoke(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+func (s *Service) Revoke(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	n, err := s.q.WithTx(tx).RevokeCredential(ctx, dbgen.RevokeCredentialParams{ID: id, TenantID: tenantID})
+	n, err := s.q.WithTx(tx).RevokeCredential(ctx, dbgen.RevokeCredentialParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
-		return errs.ErrVCCredentialNotFound
+		return ErrCredentialNotFound
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "credential.revoked", "credential", id, nil)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "credential.revoked", "credential", id, nil)); err != nil {
 		return err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "credential.events", EventType: "credential.revoked", Payload: map[string]any{"credential_id": id, "tenant_id": tenantID}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "credential.events", EventType: "credential.revoked", Payload: map[string]any{"credential_id": id, "organization_id": organizationID}}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-// Handler serves the verifiable credential HTTP API.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers tenant-scoped admin endpoints (require a user JWT / API key).
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/credentials", h.list)
-	r.Post("/tenants/{tenantID}/credentials", h.issue)
-	r.Post("/tenants/{tenantID}/credentials/{id}/revoke", h.revoke)
-}
-
-// MountPublic registers the public verify endpoint — any relying party can
-// present a JWT-VC to check it (no session). CSRF-exempt (see router.go).
-func (h *Handler) MountPublic(r chi.Router) {
-	r.Post("/credentials/verify", h.verify)
-}
-
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Service.List(r.Context(), tenantID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
-}
-
-func (h *Handler) issue(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var in IssueInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	res, err := h.Service.Issue(r.Context(), tenantID, in, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusCreated, res)
-}
-
-func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
-		return
-	}
-	if err := h.Service.Revoke(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"revoked": true})
-}
-
-func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Credential string `json:"credential"`
-	}
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if strings.TrimSpace(in.Credential) == "" {
-		httpx.WriteError(w, r, errs.ErrVCCredentialRequired)
-		return
-	}
-	res, err := h.Service.Verify(r.Context(), in.Credential)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, res)
 }

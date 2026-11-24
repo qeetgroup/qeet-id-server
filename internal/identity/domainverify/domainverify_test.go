@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
@@ -70,7 +72,7 @@ func TestDeriveStatus(t *testing.T) {
 	}
 }
 
-// TestLoginRecordsAreDeterministic checks that a tenant's DNS instructions are
+// TestLoginRecordsAreDeterministic checks that an organization's DNS instructions are
 // the same on every call, so records an operator created stay valid.
 func TestLoginRecordsAreDeterministic(t *testing.T) {
 	id := uuid.MustParse("fa139717-1577-496e-823a-6a335738898a")
@@ -80,7 +82,7 @@ func TestLoginRecordsAreDeterministic(t *testing.T) {
 	if len(a) != 2 || a[0].Type != "CNAME" || a[1].Type != "TXT" {
 		t.Fatalf("unexpected records: %+v", a)
 	}
-	if a[0].Name != "auth.acme.com" || a[0].Value != "fa139717.tenants.id.qeet.in" {
+	if a[0].Name != "auth.acme.com" || a[0].Value != "fa139717.organizations.id.qeet.in" {
 		t.Errorf("CNAME = %s -> %s", a[0].Name, a[0].Value)
 	}
 	if a[1].Name != "_qeetid-verify.auth.acme.com" || a[1].Value != "qeetid-verify=fa139717" {
@@ -128,7 +130,7 @@ func hostedLogin(t *testing.T, status int, body string, trusted bool) *http.Clie
 // to active only as each stage is observed: its DNS records, a certificate
 // valid for it, and the hosted login answering on it.
 func TestLoginDomainStages(t *testing.T) {
-	tenant := uuid.MustParse("fa139717-1577-496e-823a-6a335738898a")
+	organization := uuid.MustParse("fa139717-1577-496e-823a-6a335738898a")
 	published := txtResolver{"qeetid-verify=fa139717"}
 	healthy := `{"status":"ok","service":"qeet-id-hosted"}`
 	for _, tc := range []struct {
@@ -148,7 +150,7 @@ func TestLoginDomainStages(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Service{resolver: tc.dns, web: tc.web}
-			st := s.loginDomainStatus(t.Context(), tenant, tc.host)
+			st := s.loginDomainStatus(t.Context(), organization, tc.host)
 			if st.Status != tc.status || st.TLSState != tc.tlsState || st.EndpointState != tc.endpoint {
 				t.Errorf("status %s, TLS %s, endpoint %s; want %s, %s, %s",
 					st.Status, st.TLSState, st.EndpointState, tc.status, tc.tlsState, tc.endpoint)
@@ -163,3 +165,29 @@ func TestLoginDomainStages(t *testing.T) {
 		})
 	}
 }
+
+// TestNewServiceNeedsItsDependencies checks that the domain service can't be
+// built without its plan gate, its owner check or the member permissions
+// domain capture tells administrators by.
+func TestNewServiceNeedsItsDependencies(t *testing.T) {
+	full := Deps{Gate: stubGate{}, Owners: stubOwners{}, MemberPermissions: []string{"user.read"}}
+	for name, drop := range map[string]func(*Deps){
+		"Gate":              func(d *Deps) { d.Gate = nil },
+		"Owners":            func(d *Deps) { d.Owners = nil },
+		"MemberPermissions": func(d *Deps) { d.MemberPermissions = nil },
+	} {
+		d := full
+		drop(&d)
+		if svc, err := NewService(&pgxpool.Pool{}, d); err == nil {
+			t.Errorf("NewService without %s: %v, nil; want an error", name, svc)
+		}
+	}
+	if _, err := NewService(&pgxpool.Pool{}, full); err != nil {
+		t.Errorf("NewService with every dependency: %v", err)
+	}
+}
+
+type (
+	stubGate   struct{ entitlements.PlanGate }
+	stubOwners struct{ OwnerChecker }
+)

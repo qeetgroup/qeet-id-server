@@ -1,0 +1,39 @@
+get:
+  operationId: startAccountConnection
+  summary: Begin connecting a third-party account
+  tags:
+    - Token Vault
+  parameters:
+    - name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[^/\\]+$'
+  security:
+    - bearerAuth: []
+  description: >-
+    Returns the authorize_url to redirect the user's browser to, starting a
+    standard OAuth2 authorization-code ceremony (with PKCE, S256) against the
+    organization's registered provider config. The answer also sets an HttpOnly cookie
+    binding the ceremony to this browser, so call it with credentials included
+    (fetch credentials: 'include') from the browser that will open the link: the
+    callback connects the account only in that browser.
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              authorize_url:
+                type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

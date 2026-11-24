@@ -4,13 +4,14 @@ package search
 
 import (
 	"net/http"
+	"net/url"
 	"slices"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -22,24 +23,24 @@ type page struct {
 	NextCursor string   `json:"next_cursor"`
 }
 
-// TestSearchFindsOnlyTheOrganisationsOwn checks that a search finds the
+// TestSearchFindsOnlyTheOrganizationsOwn checks that a search finds the
 // matching users, groups, roles, applications and audit events of the
-// caller's organisation and none of another's, that each type needs its read
+// caller's organization and none of another's, that each type needs its read
 // permission, that types narrow it, and that pages follow the cursor.
-func TestSearchFindsOnlyTheOrganisationsOwn(t *testing.T) {
+func TestSearchFindsOnlyTheOrganizationsOwn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	mine, theirs := dbtest.Tenant(t), dbtest.Tenant(t)
+	mine, theirs := dbtest.Organization(t), dbtest.Organization(t)
 	reader := dbtest.User(t, mine)
-	dbtest.Assign(t, reader.ID, mine, dbtest.Role(t, mine, "user.read", "tenant.read", "group.read", "role.read", "connection.read", "audit.read"))
+	dbtest.Assign(t, reader.ID, mine, dbtest.Role(t, mine, "user.read", "organization.read", "group.read", "role.read", "connection.read", "audit.read"))
 	narrow := dbtest.User(t, mine)
 	dbtest.Assign(t, narrow.ID, mine, dbtest.Role(t, mine, "group.read"))
-	for _, tenant := range []uuid.UUID{mine, theirs} {
+	for _, organization := range []uuid.UUID{mine, theirs} {
 		for _, sql := range []string{
-			`INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Zephyr engineering')`,
-			`INSERT INTO rbac.roles (tenant_id, name) VALUES ($1, 'Zephyr admin')`,
+			`INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Zephyr engineering')`,
+			`INSERT INTO rbac.roles (organization_id, name) VALUES ($1, 'Zephyr admin')`,
 		} {
-			if _, err := pool.Exec(ctx, sql, tenant); err != nil {
+			if _, err := pool.Exec(ctx, sql, organization); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -47,7 +48,7 @@ func TestSearchFindsOnlyTheOrganisationsOwn(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(tenant, "zephyr.rotated", "key", uuid.New(), nil)); err != nil {
+		if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(organization, "zephyr.rotated", "key", uuid.New(), nil)); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -81,7 +82,7 @@ func TestSearchFindsOnlyTheOrganisationsOwn(t *testing.T) {
 		t.Errorf("types found %v; want groups, roles and audit events", got)
 	}
 	if len(all.Results) != 3 {
-		t.Errorf("found %d results, want the organisation's 3 (none of the other's)", len(all.Results))
+		t.Errorf("found %d results, want the organization's 3 (none of the other's)", len(all.Results))
 	}
 	if got := typesOf(search(narrow.ID, "q=zephyr")); !slices.Equal(got, []string{TypeGroup}) {
 		t.Errorf("with group.read alone, types %v; want groups only", got)
@@ -99,5 +100,33 @@ func TestSearchFindsOnlyTheOrganisationsOwn(t *testing.T) {
 	}
 	if rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(reader.ID, mine), (&Handler{Service: svc}).Mount), http.MethodGet, "/search?q=", nil); rec.Code != http.StatusBadRequest {
 		t.Errorf("an empty query: %d, want 400", rec.Code)
+	}
+}
+
+// TestSearchTakesWildcardsLiterally checks that _ and % in a query match only
+// themselves: "a_b" doesn't find "aXb", and "%" finds only names holding one.
+func TestSearchTakesWildcardsLiterally(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	organization := dbtest.Organization(t)
+	reader := dbtest.User(t, organization)
+	dbtest.Assign(t, reader.ID, organization, dbtest.Role(t, organization, "group.read"))
+	for _, name := range []string{"qa_b team", "qaXb team", "100% team", "plain team"} {
+		if _, err := pool.Exec(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, $2)`, organization, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := dbtest.Serve(dbtest.Principal(reader.ID, organization), (&Handler{Service: NewService(pool, rbac.NewRepository(pool))}).Mount)
+	for query, want := range map[string][]string{"qa_b": {"qa_b team"}, "%": {"100% team"}} {
+		rec := dbtest.Do(t, h, http.MethodGet, "/search?types=group&q="+url.QueryEscape(query), nil)
+		var p page
+		dbtest.Decode(t, rec, &p)
+		var got []string
+		for _, r := range p.Results {
+			got = append(got, r.Title)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("search %q: %d %v, want %v", query, rec.Code, got, want)
+		}
 	}
 }

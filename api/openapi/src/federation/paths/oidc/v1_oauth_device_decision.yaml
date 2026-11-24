@@ -1,0 +1,60 @@
+post:
+  operationId: submitDeviceDecision
+  summary: Device decision (approve)
+  description: >-
+    The SSO-cookie-identified user approves or denies a pending device request
+    identified by user_code. On approval the user (who must belong to the
+    client's organization, and approve from an address its address rules allow, else
+    403 auth.address_not_allowed) is bound and the device can complete its token
+    poll. Approving for an organization that requires a second factor of the
+    user needs a hosted sign-in that met one (403 step_up_required or
+    mfa.enrollment_required otherwise).
+  tags:
+    - OIDC
+  security:
+    - ssoCookie: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - user_code
+            - approve
+          properties:
+            user_code:
+              type: string
+              minLength: 1
+            approve:
+              type: boolean
+  responses:
+    "200":
+      description: Decision recorded
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - status
+            properties:
+              status:
+                type: string
+                enum:
+                  - authorized
+                  - denied
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

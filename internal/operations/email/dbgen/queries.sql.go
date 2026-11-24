@@ -12,29 +12,29 @@ import (
 )
 
 const deleteEmailTemplate = `-- name: DeleteEmailTemplate :exec
-DELETE FROM tenant.email_templates
-WHERE tenant_id = $1 AND template_key = $2
+DELETE FROM organization.email_templates
+WHERE organization_id = $1 AND template_key = $2
 `
 
 type DeleteEmailTemplateParams struct {
-	TenantID    uuid.UUID
-	TemplateKey string
+	OrganizationID uuid.UUID
+	TemplateKey    string
 }
 
 func (q *Queries) DeleteEmailTemplate(ctx context.Context, arg DeleteEmailTemplateParams) error {
-	_, err := q.db.Exec(ctx, deleteEmailTemplate, arg.TenantID, arg.TemplateKey)
+	_, err := q.db.Exec(ctx, deleteEmailTemplate, arg.OrganizationID, arg.TemplateKey)
 	return err
 }
 
 const getEmailTemplateOverride = `-- name: GetEmailTemplateOverride :one
 SELECT subject, body, options
-FROM tenant.email_templates
-WHERE tenant_id = $1 AND template_key = $2
+FROM organization.email_templates
+WHERE organization_id = $1 AND template_key = $2
 `
 
 type GetEmailTemplateOverrideParams struct {
-	TenantID    uuid.UUID
-	TemplateKey string
+	OrganizationID uuid.UUID
+	TemplateKey    string
 }
 
 type GetEmailTemplateOverrideRow struct {
@@ -44,7 +44,7 @@ type GetEmailTemplateOverrideRow struct {
 }
 
 func (q *Queries) GetEmailTemplateOverride(ctx context.Context, arg GetEmailTemplateOverrideParams) (GetEmailTemplateOverrideRow, error) {
-	row := q.db.QueryRow(ctx, getEmailTemplateOverride, arg.TenantID, arg.TemplateKey)
+	row := q.db.QueryRow(ctx, getEmailTemplateOverride, arg.OrganizationID, arg.TemplateKey)
 	var i GetEmailTemplateOverrideRow
 	err := row.Scan(&i.Subject, &i.Body, &i.Options)
 	return i, err
@@ -52,32 +52,45 @@ func (q *Queries) GetEmailTemplateOverride(ctx context.Context, arg GetEmailTemp
 
 const getRecipientLocale = `-- name: GetRecipientLocale :one
 SELECT COALESCE(u.metadata->>'locale', '')::text AS locale
-FROM "user".users u
+FROM account.users u
 WHERE LOWER(u.email) = LOWER($1) AND u.deleted_at IS NULL
-  AND (u.tenant_id = $2::uuid
-       OR EXISTS (SELECT 1 FROM rbac.user_roles r WHERE r.user_id = u.id AND r.tenant_id = $2::uuid))
+  AND (u.organization_id = $2::uuid
+       OR EXISTS (SELECT 1 FROM rbac.user_roles r WHERE r.user_id = u.id AND r.organization_id = $2::uuid))
 `
 
 type GetRecipientLocaleParams struct {
-	Email    string
-	TenantID uuid.UUID
+	Email          string
+	OrganizationID uuid.UUID
 }
 
 // GetRecipientLocale is the language the account at an address chose for its
-// profile, empty for none, if the account belongs to the organisation: its home
+// profile, empty for none, if the account belongs to the organization: its home
 // or one where it holds a role.
 func (q *Queries) GetRecipientLocale(ctx context.Context, arg GetRecipientLocaleParams) (string, error) {
-	row := q.db.QueryRow(ctx, getRecipientLocale, arg.Email, arg.TenantID)
+	row := q.db.QueryRow(ctx, getRecipientLocale, arg.Email, arg.OrganizationID)
 	var locale string
 	err := row.Scan(&locale)
 	return locale, err
 }
 
+const getVerifiedEmail = `-- name: GetVerifiedEmail :one
+SELECT email FROM account.users
+WHERE id = $1 AND email_verified_at IS NOT NULL AND status = 'active' AND deleted_at IS NULL
+`
+
+// The verified address of an active account, where a test email may go.
+func (q *Queries) GetVerifiedEmail(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getVerifiedEmail, id)
+	var email string
+	err := row.Scan(&email)
+	return email, err
+}
+
 const listEmailTemplateOverrides = `-- name: ListEmailTemplateOverrides :many
 
 SELECT template_key, subject, body, options
-FROM tenant.email_templates
-WHERE tenant_id = $1
+FROM organization.email_templates
+WHERE organization_id = $1
 `
 
 type ListEmailTemplateOverridesRow struct {
@@ -88,10 +101,10 @@ type ListEmailTemplateOverridesRow struct {
 }
 
 // Queries for the email-templates domain.
-// Static queries against tenant.email_templates live here and are compiled by
+// Static queries against organization.email_templates live here and are compiled by
 // sqlc into ./dbgen. There are no dynamic queries in this domain.
-func (q *Queries) ListEmailTemplateOverrides(ctx context.Context, tenantID uuid.UUID) ([]ListEmailTemplateOverridesRow, error) {
-	rows, err := q.db.Query(ctx, listEmailTemplateOverrides, tenantID)
+func (q *Queries) ListEmailTemplateOverrides(ctx context.Context, organizationID uuid.UUID) ([]ListEmailTemplateOverridesRow, error) {
+	rows, err := q.db.Query(ctx, listEmailTemplateOverrides, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -116,9 +129,9 @@ func (q *Queries) ListEmailTemplateOverrides(ctx context.Context, tenantID uuid.
 }
 
 const upsertEmailTemplate = `-- name: UpsertEmailTemplate :exec
-INSERT INTO tenant.email_templates (tenant_id, template_key, subject, body, options, updated_at)
+INSERT INTO organization.email_templates (organization_id, template_key, subject, body, options, updated_at)
 VALUES ($1, $2, $3, $4, $5, NOW())
-ON CONFLICT (tenant_id, template_key) DO UPDATE
+ON CONFLICT (organization_id, template_key) DO UPDATE
     SET subject    = EXCLUDED.subject,
         body       = EXCLUDED.body,
         options    = EXCLUDED.options,
@@ -126,16 +139,16 @@ ON CONFLICT (tenant_id, template_key) DO UPDATE
 `
 
 type UpsertEmailTemplateParams struct {
-	TenantID    uuid.UUID
-	TemplateKey string
-	Subject     string
-	Body        string
-	Options     []byte
+	OrganizationID uuid.UUID
+	TemplateKey    string
+	Subject        string
+	Body           string
+	Options        []byte
 }
 
 func (q *Queries) UpsertEmailTemplate(ctx context.Context, arg UpsertEmailTemplateParams) error {
 	_, err := q.db.Exec(ctx, upsertEmailTemplate,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.TemplateKey,
 		arg.Subject,
 		arg.Body,

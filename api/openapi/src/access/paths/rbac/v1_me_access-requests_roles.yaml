@@ -1,0 +1,28 @@
+get:
+  operationId: listRequestableRoles
+  summary: List roles I can ask for
+  description: >-
+    The organization's roles the signed-in person can ask for (every role but
+    the owner role), marking the ones they already hold directly.
+  tags:
+    - RBAC
+  security:
+    - bearerAuth: []
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - roles
+            properties:
+              roles:
+                type: array
+                items:
+                  $ref: ../../components/schemas/RequestableRole.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

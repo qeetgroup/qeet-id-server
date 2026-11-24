@@ -1,0 +1,31 @@
+type: object
+description: >-
+  One link in an authorization decision's grant path: a role that confers the
+  requested permission and how that role reaches the user.
+required:
+  - permission
+  - granted_by
+  - via
+  - role_id
+  - role_name
+properties:
+  permission:
+    type: string
+  granted_by:
+    type: string
+    description: The conferring role, e.g. "role:admin".
+  via:
+    type: string
+    description: '"direct" for a user grant, or "group:<name>" for a group-derived grant.'
+  group_id:
+    type: string
+    format: uuid
+    description: Set only when via is a group grant.
+  group_name:
+    type: string
+    description: The group's name, set only when via is a group grant.
+  role_id:
+    type: string
+    format: uuid
+  role_name:
+    type: string

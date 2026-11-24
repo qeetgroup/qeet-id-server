@@ -18,17 +18,17 @@ import (
 // directory it used; Subject is the login name a sign-in tried and UserID the
 // person it was for, once known.
 type Operation struct {
-	TenantID     uuid.UUID
-	ConnectionID uuid.UUID
-	Operation    string
-	Resource     string
-	Status       int
-	Started      time.Time
-	Duration     time.Duration
-	Reason       string
-	Params       map[string]string
-	Subject      string
-	UserID       *uuid.UUID
+	OrganizationID uuid.UUID
+	ConnectionID   uuid.UUID
+	Operation      string
+	Resource       string
+	Status         int
+	Started        time.Time
+	Duration       time.Duration
+	Reason         string
+	Params         map[string]string
+	Subject        string
+	UserID         *uuid.UUID
 }
 
 // OperationObserver records each directory operation.
@@ -36,17 +36,11 @@ type OperationObserver interface {
 	RecordLDAPOperation(context.Context, Operation) error
 }
 
-// SetOperationObserver sets where directory operations are recorded.
-func (service *Service) SetOperationObserver(observer OperationObserver) { service.observer = observer }
-
 // recordOperation records c's operation that began at started and ended in
 // operationError, for subject and the person userID when a sign-in names them.
 func (service *Service) recordOperation(ctx context.Context, c *connFull, operation, resource string, started time.Time, operationError error, subject string, userID *uuid.UUID) {
-	if service.observer == nil {
-		return
-	}
 	op := Operation{
-		TenantID: c.TenantID, ConnectionID: c.ID, Operation: operation, Resource: resource,
+		OrganizationID: c.OrganizationID, ConnectionID: c.ID, Operation: operation, Resource: resource,
 		Status: operationStatus(operation, operationError), Started: started, Duration: time.Since(started),
 		Subject: subject, UserID: userID,
 	}
@@ -56,35 +50,44 @@ func (service *Service) recordOperation(ctx context.Context, c *connFull, operat
 	if u, err := url.Parse(c.ServerURL); err == nil && u.Host != "" {
 		op.Params = map[string]string{"host": u.Host}
 	}
+	service.observe(ctx, op)
+}
+
+// observe records op, best effort.
+func (service *Service) observe(ctx context.Context, op Operation) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
 	if err := service.observer.RecordLDAPOperation(ctx, op); err != nil {
-		slog.Warn("LDAP operation telemetry unavailable", "tenant_id", c.TenantID, "err", err)
+		slog.Warn("LDAP operation telemetry unavailable", "organization_id", op.OrganizationID, "err", err)
 	}
 }
 
 // operationStatus is how an operation's outcome is recorded: a person's own
 // credentials refused (401) apart from the service account refused (403), the
-// directory unreachable (502), and a sign-in this organisation refuses (422).
+// directory unreachable (502), a sign-in or sync this organization refuses (422),
+// and a sync stopped because the directory's answer looked incomplete (412).
 func operationStatus(operation string, err error) int {
+	unreachable := errors.Is(err, ErrDialFailed) || errors.Is(err, ErrDirectoryUnreachable) || errors.Is(err, ErrSyncSearchFailed)
 	switch {
 	case err == nil:
 		return http.StatusOK
-	case errors.Is(err, errs.ErrLDAPInvalidCredentials), errors.Is(err, errs.ErrLDAPCredentialsRequired):
+	case errors.Is(err, ErrInvalidCredentials), errors.Is(err, ErrCredentialsRequired):
 		return http.StatusUnauthorized
-	case errors.Is(err, errs.ErrLDAPServiceBindFailed):
+	case errors.Is(err, ErrServiceBindFailed):
 		return http.StatusForbidden
-	case operation == "sign-in" && !errors.Is(err, errs.ErrLDAPDialFailed) && !errors.Is(err, errs.ErrLDAPDirectoryUnreachable):
+	case errors.Is(err, ErrSyncEmptyResult), errors.Is(err, ErrSyncPeopleDropped):
+		return http.StatusPreconditionFailed
+	case (operation == "sign-in" || operation == "sync") && !unreachable && reasonOf(err) != "":
 		return http.StatusUnprocessableEntity
 	default:
 		return http.StatusBadGateway
 	}
 }
 
-// TestConnection binds to one of the tenant's LDAP connections and reports
+// TestConnection binds to one of the organization's LDAP connections and reports
 // the error, if any.
-func (service *Service) TestConnection(ctx context.Context, tenantID, connectionID uuid.UUID) (resultError error) {
-	connection, err := service.getFull(ctx, connectionID, tenantID)
+func (service *Service) TestConnection(ctx context.Context, organizationID, connectionID uuid.UUID) (resultError error) {
+	connection, err := service.getFull(ctx, connectionID, organizationID)
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,44 @@
+type: object
+required:
+  - id
+  - organization_id
+  - name
+  - description
+  - is_system
+  - created_at
+properties:
+  id:
+    type: string
+    format: uuid
+  organization_id:
+    type: string
+    format: uuid
+  name:
+    type: string
+  description:
+    type: string
+  is_system:
+    type: boolean
+    description: >-
+      A built-in role (owner, admin, member or viewer), whose permissions can't
+      be changed and which doesn't count against the plan's custom roles.
+  created_at:
+    type: string
+    format: date-time
+  holders:
+    type: object
+    description: Who holds the role, in the roles list only.
+    required:
+      - people_direct
+      - people_through_groups
+      - groups
+    properties:
+      people_direct:
+        type: integer
+        description: People granted the role themselves.
+      people_through_groups:
+        type: integer
+        description: People holding it only through a group.
+      groups:
+        type: integer
+        description: Groups granted the role.

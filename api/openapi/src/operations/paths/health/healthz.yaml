@@ -1,0 +1,23 @@
+get:
+  operationId: checkLiveness
+  description: >-
+    Returns 200 whenever the process can answer the request, reporting only that
+    the instance is running rather than that its dependencies are reachable.
+    Requires no authentication and performs no dependency checks, making it the
+    cheapest way to confirm connectivity. Container orchestrators use this
+    signal to decide whether to restart the instance.
+  summary: Liveness
+  tags:
+    - Health
+  security: []
+  responses:
+    "200":
+      description: Alive
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+                example: ok

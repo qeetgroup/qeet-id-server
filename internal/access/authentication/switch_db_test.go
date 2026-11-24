@@ -1,6 +1,6 @@
 //go:build integration
 
-package auth
+package authentication
 
 import (
 	"errors"
@@ -14,21 +14,21 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// TestSwitchAppliesTheTargetsRules checks that a switch from one organisation,
+// TestSwitchAppliesTheTargetsRules checks that a switch from one organization,
 // a request scoped to it by row-level security, still applies the target
-// organisation's second-factor rule, and enters one without such a rule.
+// organization's second-factor rule, and enters one without such a rule.
 func TestSwitchAppliesTheTargetsRules(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
-	svc.SetMFA(&poolFactors{pool: pool})
+	svc.mfa = &poolFactors{pool: pool}
 	a, home := member(t)
-	strict, open := dbtest.Tenant(t), dbtest.Tenant(t)
-	for _, tenant := range []uuid.UUID{strict, open} {
-		dbtest.Assign(t, a.ID, tenant, dbtest.Role(t, tenant))
+	strict, open := dbtest.Organization(t), dbtest.Organization(t)
+	for _, organization := range []uuid.UUID{strict, open} {
+		dbtest.Assign(t, a.ID, organization, dbtest.Role(t, organization))
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tenant.security_policies (tenant_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since)
+		INSERT INTO organization.security_policies (organization_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since)
 		VALUES ($1, 'required', 0, NOW())
 	`, strict); err != nil {
 		t.Fatalf("require a second factor: %v", err)
@@ -36,74 +36,74 @@ func TestSwitchAppliesTheTargetsRules(t *testing.T) {
 	pair := signIn(t, svc, a)
 	p := dbtest.Principal(a.ID, home)
 	p.SessionID = &pair.SessionID
-	h := dbtest.Serve(p, (&Handler{Service: svc, Validate: validator.New(validator.WithRequiredStructEnabled())}).MountAuthed)
-	switchTo := func(tenant uuid.UUID) (int, string) {
+	h := dbtest.Serve(p, (&Handler{Service: svc, Throttle: passThrough, Bot: noBots{}, Validate: validator.New(validator.WithRequiredStructEnabled())}).MountAuthed)
+	switchTo := func(organization uuid.UUID) (int, string) {
 		t.Helper()
-		rec := dbtest.Do(t, h, http.MethodPost, "/auth/switch-tenant", map[string]string{"tenant_id": tenant.String()})
+		rec := dbtest.Do(t, h, http.MethodPost, "/auth/switch-organization", map[string]string{"organization_id": organization.String()})
 		var body struct {
-			TenantID uuid.UUID `json:"tenant_id"`
-			Error    struct {
+			OrganizationID uuid.UUID `json:"organization_id"`
+			Error          struct {
 				Code string `json:"code"`
 			} `json:"error"`
 		}
 		dbtest.Decode(t, rec, &body)
-		if rec.Code == http.StatusOK && body.TenantID != tenant {
-			t.Errorf("switched into %s, want %s", body.TenantID, tenant)
+		if rec.Code == http.StatusOK && body.OrganizationID != organization {
+			t.Errorf("switched into %s, want %s", body.OrganizationID, organization)
 		}
 		return rec.Code, body.Error.Code
 	}
 
 	if status, code := switchTo(strict); status != http.StatusForbidden || code != errs.CodeMFAEnrollmentRequired {
-		t.Errorf("switch into an organisation requiring a second factor, with none: %d %q, want 403 %q", status, code, errs.CodeMFAEnrollmentRequired)
+		t.Errorf("switch into an organization requiring a second factor, with none: %d %q, want 403 %q", status, code, errs.CodeMFAEnrollmentRequired)
 	}
 	if status, code := switchTo(open); status != http.StatusOK {
-		t.Errorf("switch into an organisation with no such rule: %d %q, want 200", status, code)
+		t.Errorf("switch into an organization with no such rule: %d %q, want 200", status, code)
 	}
 }
 
-// TestOwnOrganisationNeedsNoRole checks that an account signs in to its own
-// organisation and switches back into it holding no role there, while a guest
+// TestOwnOrganizationNeedsNoRole checks that an account signs in to its own
+// organization and switches back into it holding no role there, while a guest
 // whose roles were removed, or a suspended account, can't switch in.
-func TestOwnOrganisationNeedsNoRole(t *testing.T) {
+func TestOwnOrganizationNeedsNoRole(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
-	home, guestOf := dbtest.Tenant(t), dbtest.Tenant(t)
+	home, guestOf := dbtest.Organization(t), dbtest.Organization(t)
 	a := dbtest.User(t, home, guestOf)
 	dbtest.SetPassword(t, a.ID, testPassword)
-	switchTo := func(from *TokenPair, tenant uuid.UUID) (*TokenPair, error) {
-		return svc.SwitchTenant(ctx, SwitchTenantInput{UserID: a.ID, FromSessionID: from.SessionID, TenantID: tenant})
+	switchTo := func(from *TokenPair, organization uuid.UUID) (*TokenPair, error) {
+		return svc.SwitchOrganization(ctx, SwitchOrganizationInput{UserID: a.ID, FromSessionID: from.SessionID, OrganizationID: organization})
 	}
 
 	signedIn := signIn(t, svc, a)
-	if signedIn.TenantID == nil || *signedIn.TenantID != home {
-		t.Fatalf("signed in to %v, want their own organisation %s", signedIn.TenantID, home)
+	if signedIn.OrganizationID == nil || *signedIn.OrganizationID != home {
+		t.Fatalf("signed in to %v, want their own organization %s", signedIn.OrganizationID, home)
 	}
 	there, err := switchTo(signedIn, guestOf)
 	if err != nil {
-		t.Fatalf("switch into the organisation they hold a role in: %v", err)
+		t.Fatalf("switch into the organization they hold a role in: %v", err)
 	}
 	back, err := switchTo(there, home)
-	if err != nil || back.TenantID == nil || *back.TenantID != home {
-		t.Fatalf("switch back into their own organisation: %+v, %v", back, err)
+	if err != nil || back.OrganizationID == nil || *back.OrganizationID != home {
+		t.Fatalf("switch back into their own organization: %+v, %v", back, err)
 	}
 
-	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, a.ID, guestOf); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, a.ID, guestOf); err != nil {
 		t.Fatal(err)
 	}
-	if next, err := switchTo(back, guestOf); !errors.Is(err, errs.ErrAuthNotTenantMember) || next != nil {
-		t.Errorf("switch into an organisation whose roles were removed: %+v, %v; want %v", next, err, errs.ErrAuthNotTenantMember)
+	if next, err := switchTo(back, guestOf); !errors.Is(err, ErrNotOrganizationMember) || next != nil {
+		t.Errorf("switch into an organization whose roles were removed: %+v, %v; want %v", next, err, ErrNotOrganizationMember)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, a.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	if next, err := switchTo(back, home); !errors.Is(err, errs.ErrAuthNotTenantMember) || next != nil {
-		t.Errorf("a suspended account switching into its own organisation: %+v, %v; want %v", next, err, errs.ErrAuthNotTenantMember)
+	if next, err := switchTo(back, home); !errors.Is(err, ErrNotOrganizationMember) || next != nil {
+		t.Errorf("a suspended account switching into its own organization: %+v, %v; want %v", next, err, ErrNotOrganizationMember)
 	}
 }
 
 // TestOpenedSessionsContinueTheirSignIn checks that a session opened by
-// switching to, joining or creating an organisation keeps the sign-in it came
+// switching to, joining or creating an organization keeps the sign-in it came
 // from: when it happened and when it ends, so none lengthens a sign-in or
 // makes it look recent.
 func TestOpenedSessionsContinueTheirSignIn(t *testing.T) {
@@ -111,9 +111,9 @@ func TestOpenedSessionsContinueTheirSignIn(t *testing.T) {
 	pool := dbtest.Pool(t)
 	svc := newService(t)
 	a, home := member(t)
-	other, invited, created := dbtest.Tenant(t), dbtest.Tenant(t), dbtest.Tenant(t)
-	for _, tenant := range []uuid.UUID{other, invited, created} {
-		dbtest.Assign(t, a.ID, tenant, dbtest.Role(t, tenant))
+	other, invited, created := dbtest.Organization(t), dbtest.Organization(t), dbtest.Organization(t)
+	for _, organization := range []uuid.UUID{other, invited, created} {
+		dbtest.Assign(t, a.ID, organization, dbtest.Role(t, organization))
 	}
 	from := signIn(t, svc, a)
 	if _, err := pool.Exec(ctx, `
@@ -134,13 +134,44 @@ func TestOpenedSessionsContinueTheirSignIn(t *testing.T) {
 		}
 	}
 
-	joined, err := svc.EnterInvitedTenant(ctx, a.ID, invited, from.SessionID, "192.0.2.1", "test")
-	continues("joining an organisation", joined, err)
-	founded, err := svc.EnterCreatedTenant(ctx, a.ID, created, from.SessionID, "192.0.2.1", "test")
-	continues("creating an organisation", founded, err)
-	switched, err := svc.SwitchTenant(ctx, SwitchTenantInput{UserID: a.ID, FromSessionID: from.SessionID, TenantID: other})
-	continues("switching organisation", switched, err)
-	if *switched.TenantID == home {
-		t.Errorf("switched into the home organisation, want %s", other)
+	joined, err := svc.EnterInvitedOrganization(ctx, a.ID, invited, from.SessionID, "192.0.2.1", "test")
+	continues("joining an organization", joined, err)
+	founded, err := svc.EnterCreatedOrganization(ctx, a.ID, created, from.SessionID, "192.0.2.1", "test")
+	continues("creating an organization", founded, err)
+	switched, err := svc.SwitchOrganization(ctx, SwitchOrganizationInput{UserID: a.ID, FromSessionID: from.SessionID, OrganizationID: other})
+	continues("switching organization", switched, err)
+	if *switched.OrganizationID == home {
+		t.Errorf("switched into the home organization, want %s", other)
+	}
+}
+
+// TestCapturedAddressCannotSwitchIntoItsOrganization checks that once an
+// organization requires single sign-on on a member's domain, no session of
+// theirs is switched into it, as its identity provider signs them in there,
+// while a session they hold still switches into an organization where they
+// are a guest.
+func TestCapturedAddressCannotSwitchIntoItsOrganization(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := newService(t)
+	home, guestOf := dbtest.Organization(t), dbtest.Organization(t)
+	domain := dbtest.Domain(t, home)
+	a := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, home, guestOf)
+	dbtest.SetPassword(t, a.ID, testPassword)
+	switchTo := func(from *TokenPair, organization uuid.UUID) (*TokenPair, error) {
+		return svc.SwitchOrganization(ctx, SwitchOrganizationInput{UserID: a.ID, FromSessionID: from.SessionID, OrganizationID: organization})
+	}
+	signedIn := signIn(t, svc, a)
+
+	if _, err := pool.Exec(ctx, `UPDATE organization.domains SET sso_enabled = TRUE WHERE organization_id = $1`, home); err != nil {
+		t.Fatal(err)
+	}
+	svc.capture = captureDomain(domain)
+	there, err := switchTo(signedIn, guestOf)
+	if err != nil {
+		t.Fatalf("switch into an organization they are a guest of: %v", err)
+	}
+	if back, err := switchTo(there, home); !errors.Is(err, errs.ErrAuthSSORequired) || back != nil {
+		t.Errorf("switch into the organization that captures their address: %+v, %v; want %v", back, err, errs.ErrAuthSSORequired)
 	}
 }

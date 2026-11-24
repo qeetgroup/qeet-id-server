@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
@@ -30,21 +30,6 @@ type OTPFactor struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-func maskDestination(channel, dest string) string {
-	if channel == "email" {
-		at := strings.IndexByte(dest, '@')
-		if at <= 1 {
-			return dest
-		}
-		return dest[:1] + strings.Repeat("*", at-1) + dest[at:]
-	}
-	// phone: keep the last 3 digits.
-	if len(dest) <= 3 {
-		return dest
-	}
-	return strings.Repeat("*", len(dest)-3) + dest[len(dest)-3:]
-}
-
 // Limits on email and SMS codes, at the pace of a person asking for one, so
 // the service cannot be used to flood an inbox or phone or run up SMS bills.
 const (
@@ -54,31 +39,31 @@ const (
 	maxOTPFactors                 = 5                // email and SMS factors one person may hold
 )
 
-// otpSend is one code to send: whose, in which organisation (nil: none; it
+// otpSend is one code to send: whose, in which organization (nil: none; it
 // decides whether SMS is in the plan), to which factor, and why ("enrollment",
 // "step_up" or "sign_in", as audited).
 type otpSend struct {
-	userID      uuid.UUID
-	tenantID    *uuid.UUID
-	factorID    uuid.UUID
-	channel     string
-	destination string
-	purpose     string
+	userID         uuid.UUID
+	organizationID *uuid.UUID
+	factorID       uuid.UUID
+	channel        string
+	destination    string
+	purpose        string
 }
 
 // sendOTP sends a fresh code to a factor, ending its earlier unused codes, and
 // audits the send with the destination masked. It fails with
 // ErrMFACodeSendLimited (retry_after in seconds) inside the resend wait or past
-// an hourly limit, and refuses SMS unless the organisation's plan includes it.
+// an hourly limit, and refuses SMS unless the organization's plan includes it.
 func (s *Service) sendOTP(ctx context.Context, in otpSend) error {
-	if s.deliverable != nil && !s.deliverable(in.channel) {
-		return errs.ErrMFADeliveryUnavailable.WithMetadata(map[string]any{"channel": in.channel})
+	if !s.deliverable(in.channel) {
+		return ErrDeliveryUnavailable.WithMetadata(map[string]any{"channel": in.channel})
 	}
-	if in.channel == "sms" && s.plan != nil {
-		if in.tenantID == nil {
+	if in.channel == "sms" {
+		if in.organizationID == nil {
 			return errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "sms_mfa"})
 		}
-		ok, err := s.plan.FeatureAllowed(ctx, *in.tenantID, "sms_mfa")
+		ok, err := s.plan.FeatureAllowed(ctx, *in.organizationID, "sms_mfa")
 		if err != nil {
 			return err
 		}
@@ -95,22 +80,20 @@ func (s *Service) sendOTP(ctx context.Context, in otpSend) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
 	// One send at a time per factor, so two requests cannot both pass the wait.
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM auth.mfa_otp_factors WHERE id = $1 FOR UPDATE`, in.factorID); err != nil {
+	if err := q.LockOTPFactor(ctx, in.factorID); err != nil {
 		return err
 	}
-	if wait, err := otpSendWait(ctx, tx, in); err != nil {
+	if wait, err := otpSendWait(ctx, q, in); err != nil {
 		return err
 	} else if wait > 0 {
 		return errs.ErrMFACodeSendLimited.WithMetadata(map[string]any{"retry_after": int(wait.Round(time.Second).Seconds())})
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.mfa_otp_codes SET expires_at = NOW()
-		WHERE factor_id = $1 AND used_at IS NULL AND expires_at > NOW()
-	`, in.factorID); err != nil {
+	if err := q.ExpireLiveOTPCodes(ctx, in.factorID); err != nil {
 		return err
 	}
-	if err := s.q.WithTx(tx).InsertMFAOTPCode(ctx, dbgen.InsertMFAOTPCodeParams{
+	if err := q.InsertMFAOTPCode(ctx, dbgen.InsertMFAOTPCodeParams{
 		FactorID:  in.factorID,
 		CodeHash:  codes.Hash(code),
 		ExpiresAt: time.Now().UTC().Add(otpTTL),
@@ -118,32 +101,34 @@ func (s *Service) sendOTP(ctx context.Context, in otpSend) error {
 	}); err != nil {
 		return err
 	}
-	factor := in.factorID
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     in.tenantID,
-		ActorUserID:  &in.userID,
-		ActorType:    "user",
-		Action:       "mfa.otp_sent",
-		ResourceType: "mfa_factor",
-		ResourceID:   &factor,
-		Metadata: map[string]any{"channel": in.channel, "destination": maskDestination(in.channel, in.destination),
-			"purpose": in.purpose},
-	}); err != nil {
+	if err := audit.Record(ctx, tx, in.event("mfa.otp_sent")); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	if err := s.sender.Send(ctx, notifier.Message{
-		Channel: in.channel,
-		To:      in.destination,
-		Subject: "Your verification code",
-		Body:    fmt.Sprintf(otpWording[in.purpose], s.issuer, code, otpTTL),
-	}); err != nil {
+	if err := s.sender.Send(ctx, in.message(s.issuer, code)); err != nil {
 		s.undeliveredOTP(ctx, in, code)
 		return errs.ErrMFADeliveryFailed.Wrap(err)
 	}
 	return nil
+}
+
+// message is in's code as sent. Only an emailed sign-in code uses the
+// organization's mfa_otp template: step-up and enrollment wording says what the code does.
+func (in otpSend) message(issuer, code string) notifier.Message {
+	m := notifier.Message{
+		Channel: in.channel,
+		To:      in.destination,
+		Subject: "Your verification code",
+		Body:    fmt.Sprintf(otpWording[in.purpose], issuer, code, otpTTL),
+	}
+	if in.channel == "email" && in.purpose == "sign_in" && in.organizationID != nil && *in.organizationID != uuid.Nil {
+		m.TemplateKey = "mfa_otp"
+		m.TemplateVariables = map[string]string{"code": code, "ttl": fmt.Sprintf("%d minutes", int(otpTTL.Minutes()))}
+		m.OrganizationID = in.organizationID.String()
+	}
+	return m
 }
 
 // otpWording is each purpose's message, so a person asked for a code knows
@@ -154,49 +139,33 @@ var otpWording = map[string]string{
 	"enrollment": "Your %s code to add this as a way to verify your sign-ins is %s. It expires in %s.",
 }
 
+// event is the audit event of action on in's code, by its person, with the
+// destination masked.
+func (in otpSend) event(action string) audit.Event {
+	return audit.Actor{UserID: &in.userID, Type: "user"}.EventIn(in.organizationID, action, "mfa_factor", in.factorID,
+		map[string]any{"channel": in.channel, "destination": notifier.MaskDestination(in.channel, in.destination), "purpose": in.purpose})
+}
+
 // undeliveredOTP withdraws a code the provider did not take, so it counts
 // against no limit and can never be used, and audits the failure. Best effort:
 // the caller already reports the failure.
 func (s *Service) undeliveredOTP(ctx context.Context, in otpSend, code string) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_otp_codes WHERE factor_id = $1 AND code_hash = $2`,
-		in.factorID, codes.Hash(code)); err != nil {
-		return
-	}
-	factor := in.factorID
-	if audit.Record(ctx, tx, audit.Event{
-		TenantID: in.tenantID, ActorUserID: &in.userID, ActorType: "user",
-		Action: "mfa.otp_delivery_failed", ResourceType: "mfa_factor", ResourceID: &factor,
-		Metadata: map[string]any{"channel": in.channel, "destination": maskDestination(in.channel, in.destination),
-			"purpose": in.purpose},
-	}) == nil {
-		_ = tx.Commit(ctx)
-	}
+	_ = s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.q.WithTx(tx).WithdrawOTPCode(ctx, dbgen.WithdrawOTPCodeParams{FactorID: in.factorID, CodeHash: codes.Hash(code)}); err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, in.event("mfa.otp_delivery_failed"))
+	})
 }
 
 // otpSendWait is how long until another code may go to in's factor: the rest
 // of otpResendAfter since its last code, or until the oldest send counted
 // against an hourly limit leaves the hour. Zero: one may go now.
-func otpSendWait(ctx context.Context, tx pgx.Tx, in otpSend) (time.Duration, error) {
-	var factorLast, userOldest, destOldest *time.Time
-	var userHour, destHour int
-	if err := tx.QueryRow(ctx, `
-		SELECT
-		    (SELECT max(c.created_at) FROM auth.mfa_otp_codes c WHERE c.factor_id = $1),
-		    (SELECT count(*) FROM auth.mfa_otp_codes c JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
-		      WHERE f.user_id = $2 AND c.created_at > NOW() - INTERVAL '1 hour'),
-		    (SELECT min(c.created_at) FROM auth.mfa_otp_codes c JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
-		      WHERE f.user_id = $2 AND c.created_at > NOW() - INTERVAL '1 hour'),
-		    (SELECT count(*) FROM auth.mfa_otp_codes c JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
-		      WHERE f.channel = $3 AND f.destination = $4 AND c.created_at > NOW() - INTERVAL '1 hour'),
-		    (SELECT min(c.created_at) FROM auth.mfa_otp_codes c JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
-		      WHERE f.channel = $3 AND f.destination = $4 AND c.created_at > NOW() - INTERVAL '1 hour')
-	`, in.factorID, in.userID, in.channel, in.destination).
-		Scan(&factorLast, &userHour, &userOldest, &destHour, &destOldest); err != nil {
+func otpSendWait(ctx context.Context, q *dbgen.Queries, in otpSend) (time.Duration, error) {
+	sent, err := q.OTPSendHistory(ctx, dbgen.OTPSendHistoryParams{
+		FactorID: in.factorID, UserID: in.userID, Channel: in.channel, Destination: in.destination,
+	})
+	if err != nil {
 		return 0, err
 	}
 	var wait time.Duration
@@ -205,14 +174,13 @@ func otpSendWait(ctx context.Context, tx pgx.Tx, in otpSend) (time.Duration, err
 			wait = d
 		}
 	}
-	if factorLast != nil {
-		later(otpResendAfter - time.Since(*factorLast))
+	// With no code to go by a time is the epoch, which imposes no wait.
+	later(otpResendAfter - time.Since(sent.FactorLast))
+	if sent.UserHour >= otpSendsPerHourPerUser {
+		later(time.Hour - time.Since(sent.UserOldest))
 	}
-	if userHour >= otpSendsPerHourPerUser && userOldest != nil {
-		later(time.Hour - time.Since(*userOldest))
-	}
-	if destHour >= otpSendsPerHourPerDestination && destOldest != nil {
-		later(time.Hour - time.Since(*destOldest))
+	if sent.DestinationHour >= otpSendsPerHourPerDestination {
+		later(time.Hour - time.Since(sent.DestinationOldest))
 	}
 	if wait > 0 && wait < time.Second {
 		wait = time.Second
@@ -221,31 +189,27 @@ func otpSendWait(ctx context.Context, tx pgx.Tx, in otpSend) (time.Duration, err
 }
 
 // EnrollOTPStart registers (or re-arms) a channel and sends a confirmation
-// code. The factor is unverified until EnrollOTPConfirm succeeds. tenantID is
-// the caller's organisation (nil: none), whose plan decides SMS. A person may
+// code. The factor is unverified until EnrollOTPConfirm succeeds. organizationID is
+// the caller's organization (nil: none), whose plan decides SMS. A person may
 // hold at most maxOTPFactors email and SMS factors.
-func (s *Service) EnrollOTPStart(ctx context.Context, userID uuid.UUID, tenantID *uuid.UUID, channel, destination string) (uuid.UUID, error) {
+func (s *Service) EnrollOTPStart(ctx context.Context, userID uuid.UUID, organizationID *uuid.UUID, channel, destination string) (uuid.UUID, error) {
 	channel = strings.ToLower(strings.TrimSpace(channel))
 	destination = strings.TrimSpace(destination)
 	if channel != "email" && channel != "sms" {
-		return uuid.Nil, errs.ErrMFAChannelInvalid
+		return uuid.Nil, ErrChannelInvalid
 	}
 	if destination == "" {
-		return uuid.Nil, errs.ErrMFADestinationRequired
+		return uuid.Nil, ErrDestinationRequired
 	}
-	if s.deliverable != nil && !s.deliverable(channel) {
-		return uuid.Nil, errs.ErrMFADeliveryUnavailable.WithMetadata(map[string]any{"channel": channel})
+	if !s.deliverable(channel) {
+		return uuid.Nil, ErrDeliveryUnavailable.WithMetadata(map[string]any{"channel": channel})
 	}
-	var held int
-	var already bool
-	if err := s.pool.QueryRow(ctx, `
-		SELECT count(*), COALESCE(bool_or(channel = $2 AND destination = $3), FALSE)
-		FROM auth.mfa_otp_factors WHERE user_id = $1
-	`, userID, channel, destination).Scan(&held, &already); err != nil {
+	holdings, err := s.q.OTPFactorHoldings(ctx, dbgen.OTPFactorHoldingsParams{UserID: userID, Channel: channel, Destination: destination})
+	if err != nil {
 		return uuid.Nil, err
 	}
-	if !already && held >= maxOTPFactors {
-		return uuid.Nil, errs.ErrMFAFactorLimit
+	if !holdings.Already && holdings.Held >= maxOTPFactors {
+		return uuid.Nil, ErrFactorLimit
 	}
 	factorID, err := s.q.UpsertMFAOTPFactor(ctx, dbgen.UpsertMFAOTPFactorParams{
 		UserID:      userID,
@@ -255,15 +219,30 @@ func (s *Service) EnrollOTPStart(ctx context.Context, userID uuid.UUID, tenantID
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if err := s.sendOTP(ctx, otpSend{userID: userID, tenantID: tenantID, factorID: factorID, channel: channel,
+	if err := s.sendOTP(ctx, otpSend{userID: userID, organizationID: organizationID, factorID: factorID, channel: channel,
 		destination: destination, purpose: "enrollment"}); err != nil {
 		return uuid.Nil, err
 	}
 	return factorID, nil
 }
 
-// EnrollOTPConfirm verifies the code and marks the factor usable.
-func (s *Service) EnrollOTPConfirm(ctx context.Context, tx pgx.Tx, attempt Attempt, factorID uuid.UUID, code string) error {
+// EnrollOTPConfirm verifies the code sent to userID's factor and marks the
+// factor usable, recorded as by's. Each try spends one of the attempts at
+// confirming that factor.
+func (s *Service) EnrollOTPConfirm(ctx context.Context, userID, factorID uuid.UUID, code string, by Caller) error {
+	return s.withAttempt(ctx, userID, PurposeOTPEnroll(factorID), func(attempt Attempt) error {
+		return s.inTx(ctx, func(tx pgx.Tx) error {
+			if err := s.enrollOTPConfirm(ctx, tx, attempt, factorID, code); err != nil {
+				return err
+			}
+			return audit.Record(ctx, tx, by.event("mfa.otp_factor_added", userID, nil))
+		})
+	})
+}
+
+// enrollOTPConfirm is EnrollOTPConfirm inside tx with a reserved attempt,
+// unaudited.
+func (s *Service) enrollOTPConfirm(ctx context.Context, tx pgx.Tx, attempt Attempt, factorID uuid.UUID, code string) error {
 	userID := attempt.userID
 	qtx := s.q.WithTx(tx)
 	codeID, err := qtx.GetOTPCodeForConfirm(ctx, dbgen.GetOTPCodeForConfirmParams{
@@ -272,17 +251,17 @@ func (s *Service) EnrollOTPConfirm(ctx context.Context, tx pgx.Tx, attempt Attem
 		CodeHash: codes.Hash(strings.TrimSpace(code)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return attemptError(errs.ErrMFAOTPCodeInvalid, attempt.remaining)
+		return attemptError(ErrOTPCodeInvalid, attempt.remaining)
 	}
 	if err != nil {
 		return err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL`, codeID)
+	n, err := qtx.MarkOTPCodeUsed(ctx, codeID)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
-		return attemptError(errs.ErrMFAOTPCodeInvalid, attempt.remaining)
+	if n != 1 {
+		return attemptError(ErrOTPCodeInvalid, attempt.remaining)
 	}
 	if err := qtx.MarkOTPFactorVerified(ctx, factorID); err != nil {
 		return err
@@ -304,16 +283,27 @@ func (s *Service) ListOTPFactors(ctx context.Context, userID uuid.UUID) ([]OTPFa
 		out = append(out, OTPFactor{
 			ID:          m.ID,
 			Channel:     m.Channel,
-			Destination: maskDestination(m.Channel, m.Destination),
-			Verified:    m.VerifiedAt.Valid,
+			Destination: notifier.MaskDestination(m.Channel, m.Destination),
+			Verified:    m.VerifiedAt != nil,
 			CreatedAt:   m.CreatedAt,
 		})
 	}
 	return out, nil
 }
 
-// DeleteOTPFactor removes one of the user's SMS or email factors.
-func (s *Service) DeleteOTPFactor(ctx context.Context, tx pgx.Tx, userID, factorID uuid.UUID) error {
+// DeleteOTPFactor removes one of userID's SMS or email factors, recorded as
+// by's.
+func (s *Service) DeleteOTPFactor(ctx context.Context, userID, factorID uuid.UUID, by Caller) error {
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.deleteOTPFactor(ctx, tx, userID, factorID); err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, by.event("mfa.otp_factor_removed", userID, nil))
+	})
+}
+
+// deleteOTPFactor is DeleteOTPFactor inside tx, unaudited.
+func (s *Service) deleteOTPFactor(ctx context.Context, tx pgx.Tx, userID, factorID uuid.UUID) error {
 	n, err := s.q.WithTx(tx).DeleteOTPFactor(ctx, dbgen.DeleteOTPFactorParams{
 		ID:     factorID,
 		UserID: userID,
@@ -327,13 +317,13 @@ func (s *Service) DeleteOTPFactor(ctx context.Context, tx pgx.Tx, userID, factor
 	return nil
 }
 
-// ChallengeOTP sends a fresh code to a verified factor for a step-up. tenantID
-// is the caller's organisation (nil: none), whose plan decides SMS.
-func (s *Service) ChallengeOTP(ctx context.Context, userID uuid.UUID, tenantID *uuid.UUID, factorID uuid.UUID) error {
-	return s.challengeOTP(ctx, userID, tenantID, factorID, "step_up")
+// ChallengeOTP sends a fresh code to a verified factor for a step-up. organizationID
+// is the caller's organization (nil: none), whose plan decides SMS.
+func (s *Service) ChallengeOTP(ctx context.Context, userID uuid.UUID, organizationID *uuid.UUID, factorID uuid.UUID) error {
+	return s.challengeOTP(ctx, userID, organizationID, factorID, "step_up")
 }
 
-func (s *Service) challengeOTP(ctx context.Context, userID uuid.UUID, tenantID *uuid.UUID, factorID uuid.UUID, purpose string) error {
+func (s *Service) challengeOTP(ctx context.Context, userID uuid.UUID, organizationID *uuid.UUID, factorID uuid.UUID, purpose string) error {
 	row, err := s.q.GetOTPFactorForChallenge(ctx, dbgen.GetOTPFactorForChallengeParams{
 		ID:     factorID,
 		UserID: userID,
@@ -344,16 +334,34 @@ func (s *Service) challengeOTP(ctx context.Context, userID uuid.UUID, tenantID *
 	if err != nil {
 		return err
 	}
-	if !row.VerifiedAt.Valid {
-		return errs.ErrMFAFactorNotConfirmed
+	if row.VerifiedAt == nil {
+		return ErrFactorNotConfirmed
 	}
-	return s.sendOTP(ctx, otpSend{userID: userID, tenantID: tenantID, factorID: factorID, channel: row.Channel,
+	return s.sendOTP(ctx, otpSend{userID: userID, organizationID: organizationID, factorID: factorID, channel: row.Channel,
 		destination: row.Destination, purpose: purpose})
 }
 
-// VerifyOTP consumes a step-up code sent to any of the user's verified OTP
-// factors; a sign-in code never counts.
-func (s *Service) VerifyOTP(ctx context.Context, tx pgx.Tx, attempt Attempt, code string) (bool, error) {
+// VerifyOTP consumes a step-up code sent to any of userID's verified OTP
+// factors, a sign-in code never counting, and steps up by's session.
+// ErrMFACodeInvalid for a wrong code; each try spends one of the person's
+// attempts.
+func (s *Service) VerifyOTP(ctx context.Context, userID uuid.UUID, code string, by Caller) error {
+	return s.withAttempt(ctx, userID, PurposeOTPVerify, func(attempt Attempt) error {
+		return s.inTx(ctx, func(tx pgx.Tx) error {
+			ok, err := s.verifyOTP(ctx, tx, attempt, code)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errs.ErrMFACodeInvalid
+			}
+			return s.recordStepUp(ctx, tx, userID, by, "otp")
+		})
+	})
+}
+
+// verifyOTP is VerifyOTP inside tx with a reserved attempt, unrecorded.
+func (s *Service) verifyOTP(ctx context.Context, tx pgx.Tx, attempt Attempt, code string) (bool, error) {
 	userID := attempt.userID
 	qtx := s.q.WithTx(tx)
 	codeID, err := qtx.GetOTPCodeForVerify(ctx, dbgen.GetOTPCodeForVerifyParams{
@@ -367,11 +375,11 @@ func (s *Service) VerifyOTP(ctx context.Context, tx pgx.Tx, attempt Attempt, cod
 	if err != nil {
 		return false, err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL`, codeID)
+	n, err := qtx.MarkOTPCodeUsed(ctx, codeID)
 	if err != nil {
 		return false, err
 	}
-	if tag.RowsAffected() != 1 {
+	if n != 1 {
 		return false, attemptError(errs.ErrMFACodeInvalid, attempt.remaining)
 	}
 	if err := clearMFAAttempt(ctx, tx, userID, attempt.purpose); err != nil {

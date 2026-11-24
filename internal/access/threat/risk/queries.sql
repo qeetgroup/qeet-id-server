@@ -4,23 +4,23 @@
 -- name: GetRiskSettings :one
 SELECT medium_threshold, high_threshold, force_mfa_at_level,
        impossible_travel_enabled, min_travel_hours, device_reputation_enabled
-FROM auth.risk_settings WHERE tenant_id = $1;
+FROM auth.risk_settings WHERE organization_id = $1;
 
 -- LockRiskSettings is GetRiskSettings holding the row until the update that
 -- replaces it commits.
 -- name: LockRiskSettings :one
 SELECT medium_threshold, high_threshold, force_mfa_at_level,
        impossible_travel_enabled, min_travel_hours, device_reputation_enabled
-FROM auth.risk_settings WHERE tenant_id = $1
+FROM auth.risk_settings WHERE organization_id = $1
 FOR UPDATE;
 
 -- name: UpsertRiskSettings :exec
 INSERT INTO auth.risk_settings (
-    tenant_id, medium_threshold, high_threshold, force_mfa_at_level,
+    organization_id, medium_threshold, high_threshold, force_mfa_at_level,
     impossible_travel_enabled, min_travel_hours, device_reputation_enabled, updated_at
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-ON CONFLICT (tenant_id) DO UPDATE SET
+ON CONFLICT (organization_id) DO UPDATE SET
     medium_threshold           = EXCLUDED.medium_threshold,
     high_threshold             = EXCLUDED.high_threshold,
     force_mfa_at_level         = EXCLUDED.force_mfa_at_level,
@@ -31,15 +31,20 @@ ON CONFLICT (tenant_id) DO UPDATE SET
 
 -- name: GetLastCountry :one
 SELECT country, seen_at FROM auth.login_context_history
-WHERE tenant_id = $1 AND user_id = $2 AND country IS NOT NULL AND country <> ''
+WHERE organization_id = $1 AND user_id = $2 AND country IS NOT NULL AND country <> ''
 ORDER BY seen_at DESC LIMIT 1;
 
 -- name: DeviceSeenBefore :one
 SELECT EXISTS(
     SELECT 1 FROM auth.login_context_history
-    WHERE tenant_id = $1 AND user_id = $2 AND device_key = $3
+    WHERE organization_id = $1 AND user_id = $2 AND device_key = $3
 ) AS exists;
 
 -- name: InsertLoginContext :exec
-INSERT INTO auth.login_context_history (tenant_id, user_id, device_key, country)
+INSERT INTO auth.login_context_history (organization_id, user_id, device_key, country)
 VALUES ($1, $2, $3, $4);
+
+-- name: PurgeSignInHistory :execrows
+-- Deletes at most @max_rows sign-in history entries seen before @cutoff.
+DELETE FROM auth.login_context_history WHERE ctid = ANY(ARRAY(
+    SELECT h.ctid FROM auth.login_context_history h WHERE h.seen_at < @cutoff LIMIT @max_rows));

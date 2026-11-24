@@ -15,18 +15,18 @@ import (
 const deviceSeenBefore = `-- name: DeviceSeenBefore :one
 SELECT EXISTS(
     SELECT 1 FROM auth.login_context_history
-    WHERE tenant_id = $1 AND user_id = $2 AND device_key = $3
+    WHERE organization_id = $1 AND user_id = $2 AND device_key = $3
 ) AS exists
 `
 
 type DeviceSeenBeforeParams struct {
-	TenantID  uuid.UUID
-	UserID    uuid.UUID
-	DeviceKey string
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	DeviceKey      string
 }
 
 func (q *Queries) DeviceSeenBefore(ctx context.Context, arg DeviceSeenBeforeParams) (bool, error) {
-	row := q.db.QueryRow(ctx, deviceSeenBefore, arg.TenantID, arg.UserID, arg.DeviceKey)
+	row := q.db.QueryRow(ctx, deviceSeenBefore, arg.OrganizationID, arg.UserID, arg.DeviceKey)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -34,13 +34,13 @@ func (q *Queries) DeviceSeenBefore(ctx context.Context, arg DeviceSeenBeforePara
 
 const getLastCountry = `-- name: GetLastCountry :one
 SELECT country, seen_at FROM auth.login_context_history
-WHERE tenant_id = $1 AND user_id = $2 AND country IS NOT NULL AND country <> ''
+WHERE organization_id = $1 AND user_id = $2 AND country IS NOT NULL AND country <> ''
 ORDER BY seen_at DESC LIMIT 1
 `
 
 type GetLastCountryParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
 type GetLastCountryRow struct {
@@ -49,7 +49,7 @@ type GetLastCountryRow struct {
 }
 
 func (q *Queries) GetLastCountry(ctx context.Context, arg GetLastCountryParams) (GetLastCountryRow, error) {
-	row := q.db.QueryRow(ctx, getLastCountry, arg.TenantID, arg.UserID)
+	row := q.db.QueryRow(ctx, getLastCountry, arg.OrganizationID, arg.UserID)
 	var i GetLastCountryRow
 	err := row.Scan(&i.Country, &i.SeenAt)
 	return i, err
@@ -59,7 +59,7 @@ const getRiskSettings = `-- name: GetRiskSettings :one
 
 SELECT medium_threshold, high_threshold, force_mfa_at_level,
        impossible_travel_enabled, min_travel_hours, device_reputation_enabled
-FROM auth.risk_settings WHERE tenant_id = $1
+FROM auth.risk_settings WHERE organization_id = $1
 `
 
 type GetRiskSettingsRow struct {
@@ -73,8 +73,8 @@ type GetRiskSettingsRow struct {
 
 // Queries for the threat-detection/risk domain.
 // All queries are static and compiled by sqlc into ./dbgen.
-func (q *Queries) GetRiskSettings(ctx context.Context, tenantID uuid.UUID) (GetRiskSettingsRow, error) {
-	row := q.db.QueryRow(ctx, getRiskSettings, tenantID)
+func (q *Queries) GetRiskSettings(ctx context.Context, organizationID uuid.UUID) (GetRiskSettingsRow, error) {
+	row := q.db.QueryRow(ctx, getRiskSettings, organizationID)
 	var i GetRiskSettingsRow
 	err := row.Scan(
 		&i.MediumThreshold,
@@ -88,20 +88,20 @@ func (q *Queries) GetRiskSettings(ctx context.Context, tenantID uuid.UUID) (GetR
 }
 
 const insertLoginContext = `-- name: InsertLoginContext :exec
-INSERT INTO auth.login_context_history (tenant_id, user_id, device_key, country)
+INSERT INTO auth.login_context_history (organization_id, user_id, device_key, country)
 VALUES ($1, $2, $3, $4)
 `
 
 type InsertLoginContextParams struct {
-	TenantID  uuid.UUID
-	UserID    uuid.UUID
-	DeviceKey string
-	Country   *string
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	DeviceKey      string
+	Country        *string
 }
 
 func (q *Queries) InsertLoginContext(ctx context.Context, arg InsertLoginContextParams) error {
 	_, err := q.db.Exec(ctx, insertLoginContext,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.UserID,
 		arg.DeviceKey,
 		arg.Country,
@@ -112,7 +112,7 @@ func (q *Queries) InsertLoginContext(ctx context.Context, arg InsertLoginContext
 const lockRiskSettings = `-- name: LockRiskSettings :one
 SELECT medium_threshold, high_threshold, force_mfa_at_level,
        impossible_travel_enabled, min_travel_hours, device_reputation_enabled
-FROM auth.risk_settings WHERE tenant_id = $1
+FROM auth.risk_settings WHERE organization_id = $1
 FOR UPDATE
 `
 
@@ -127,8 +127,8 @@ type LockRiskSettingsRow struct {
 
 // LockRiskSettings is GetRiskSettings holding the row until the update that
 // replaces it commits.
-func (q *Queries) LockRiskSettings(ctx context.Context, tenantID uuid.UUID) (LockRiskSettingsRow, error) {
-	row := q.db.QueryRow(ctx, lockRiskSettings, tenantID)
+func (q *Queries) LockRiskSettings(ctx context.Context, organizationID uuid.UUID) (LockRiskSettingsRow, error) {
+	row := q.db.QueryRow(ctx, lockRiskSettings, organizationID)
 	var i LockRiskSettingsRow
 	err := row.Scan(
 		&i.MediumThreshold,
@@ -141,13 +141,32 @@ func (q *Queries) LockRiskSettings(ctx context.Context, tenantID uuid.UUID) (Loc
 	return i, err
 }
 
+const purgeSignInHistory = `-- name: PurgeSignInHistory :execrows
+DELETE FROM auth.login_context_history WHERE ctid = ANY(ARRAY(
+    SELECT h.ctid FROM auth.login_context_history h WHERE h.seen_at < $1 LIMIT $2))
+`
+
+type PurgeSignInHistoryParams struct {
+	Cutoff  time.Time
+	MaxRows int32
+}
+
+// Deletes at most @max_rows sign-in history entries seen before @cutoff.
+func (q *Queries) PurgeSignInHistory(ctx context.Context, arg PurgeSignInHistoryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeSignInHistory, arg.Cutoff, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertRiskSettings = `-- name: UpsertRiskSettings :exec
 INSERT INTO auth.risk_settings (
-    tenant_id, medium_threshold, high_threshold, force_mfa_at_level,
+    organization_id, medium_threshold, high_threshold, force_mfa_at_level,
     impossible_travel_enabled, min_travel_hours, device_reputation_enabled, updated_at
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-ON CONFLICT (tenant_id) DO UPDATE SET
+ON CONFLICT (organization_id) DO UPDATE SET
     medium_threshold           = EXCLUDED.medium_threshold,
     high_threshold             = EXCLUDED.high_threshold,
     force_mfa_at_level         = EXCLUDED.force_mfa_at_level,
@@ -158,7 +177,7 @@ ON CONFLICT (tenant_id) DO UPDATE SET
 `
 
 type UpsertRiskSettingsParams struct {
-	TenantID                uuid.UUID
+	OrganizationID          uuid.UUID
 	MediumThreshold         float64
 	HighThreshold           float64
 	ForceMfaAtLevel         string
@@ -169,7 +188,7 @@ type UpsertRiskSettingsParams struct {
 
 func (q *Queries) UpsertRiskSettings(ctx context.Context, arg UpsertRiskSettingsParams) error {
 	_, err := q.db.Exec(ctx, upsertRiskSettings,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.MediumThreshold,
 		arg.HighThreshold,
 		arg.ForceMfaAtLevel,

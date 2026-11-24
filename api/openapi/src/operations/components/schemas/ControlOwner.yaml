@@ -1,0 +1,19 @@
+type: object
+description: The person the organization has made answer for a control, as it is now.
+properties:
+  control_id:
+    type: string
+  user_id:
+    type: string
+    format: uuid
+  email:
+    type:
+      - string
+      - "null"
+  display_name:
+    type:
+      - string
+      - "null"
+  updated_at:
+    type: string
+    format: date-time

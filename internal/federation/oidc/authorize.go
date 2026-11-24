@@ -3,19 +3,20 @@ package oidc
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
 
 // Authorize validates an authorization request for an authenticated user and
-// returns a one-time authorization code and the client's tenant ID. The code is
-// tied to no hosted-login session, so organisations with address rules refuse
+// returns a one-time authorization code and the client's organization ID. The code is
+// tied to no hosted-login session, so organizations with address rules refuse
 // it; the browser flow uses AuthorizeInLoginSession.
 func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
 	return s.AuthorizeInLoginSession(ctx, AuthorizeInput{
@@ -33,11 +34,11 @@ type AuthorizeInput struct {
 	Scopes                             []string
 	Nonce                              string
 	CodeChallenge, CodeChallengeMethod string
-	// IP is the browser's address (httpx.ClientIP), which the organisation's
+	// IP is the browser's address (httpx.ClientIP), which the organization's
 	// address rules must allow.
 	IP string
 	// Resource ("" for none) is the RFC 8707 resource the token is for, which
-	// the organisation must have registered; the code carries it.
+	// the organization must have registered; the code carries it.
 	Resource string
 	// AuthTime is when the person signed in (zero: unknown); the ID token
 	// reports it as auth_time.
@@ -51,37 +52,37 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, in AuthorizeInput
 	nonce, challenge, challengeMethod, ip, resource := in.Nonce, in.CodeChallenge, in.CodeChallengeMethod, in.IP, in.Resource
 	info, err := s.q.GetClientRedirectInfo(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", uuid.Nil, errs.ErrOIDCClientUnknown
+		return "", uuid.Nil, ErrClientUnknown
 	}
 	if err != nil {
 		return "", uuid.Nil, err
 	}
-	member, err := s.activeClientTenantMember(ctx, userID, clientID)
+	member, err := s.activeClientOrganizationMember(ctx, userID, clientID)
 	if err != nil {
 		return "", uuid.Nil, err
 	}
 	if !member {
-		return "", uuid.Nil, errs.ErrOIDCUserTenantMismatch
+		return "", uuid.Nil, ErrUserOrganizationMismatch
 	}
-	if !redirectRegistered(info.RedirectUris, redirectURI) {
-		return "", uuid.Nil, errs.ErrOIDCRedirectURIInvalid
+	if !redirectRegistered(info.RedirectUris, redirectURI, info.Type) {
+		return "", uuid.Nil, ErrRedirectURIInvalid
 	}
-	if !contains(info.GrantTypes, "authorization_code") {
-		return "", uuid.Nil, errs.ErrOIDCGrantTypeNotAllowed
+	if !slices.Contains(info.GrantTypes, "authorization_code") {
+		return "", uuid.Nil, ErrGrantTypeNotAllowed
 	}
 	for _, sc := range scopes {
 		if !scopePermitted(info.Scopes, info.GrantTypes, sc) {
-			return "", uuid.Nil, errs.ErrOIDCScopeNotPermitted
+			return "", uuid.Nil, ErrScopeNotPermitted
 		}
 	}
 	if err := validateSignInRequest(info.Type, info.PkceExempt, nonce, challenge, challengeMethod); err != nil {
 		return "", uuid.Nil, err
 	}
-	if err := checkResource(ctx, s.q, info.TenantID, resource); err != nil {
+	if err := checkResource(ctx, s.q, info.OrganizationID, resource); err != nil {
 		return "", uuid.Nil, err
 	}
 	// This is where the person signs in to the application, from the browser.
-	if err := s.checkAddress(ctx, info.TenantID, userID, ip, "oidc_authorize"); err != nil {
+	if err := s.checkAddress(ctx, info.OrganizationID, userID, ip, "oidc_authorize"); err != nil {
 		return "", uuid.Nil, err
 	}
 	raw, hash, err := codes.URLToken()
@@ -92,20 +93,20 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, in AuthorizeInput
 		CodeHash:            hash,
 		ClientID:            clientID,
 		UserID:              userID,
-		TenantID:            info.TenantID,
+		OrganizationID:      info.OrganizationID,
 		RedirectUri:         redirectURI,
 		Scopes:              scopes,
 		Nonce:               nonce,
 		CodeChallenge:       challenge,
 		CodeChallengeMethod: challengeMethod,
-		LoginSessionID:      optionalUUID(loginSessionID),
+		LoginSessionID:      postgres.NullIfZero(loginSessionID),
 		Resource:            resource,
-		AuthTime:            optionalTime(in.AuthTime),
+		AuthTime:            postgres.NullIfZero(in.AuthTime),
 	})
 	if err != nil {
 		return "", uuid.Nil, err
 	}
-	return raw, info.TenantID, nil
+	return raw, info.OrganizationID, nil
 }
 
 // scopeOfflineAccess is the OpenID scope that asks for a refresh token, to act
@@ -115,7 +116,7 @@ const scopeOfflineAccess = "offline_access"
 // scopePermitted reports whether a client registered for scopes and grantTypes
 // may request scope: one it registered, or offline_access when it may renew.
 func scopePermitted(scopes, grantTypes []string, scope string) bool {
-	return contains(scopes, scope) || (scope == scopeOfflineAccess && contains(grantTypes, "refresh_token"))
+	return slices.Contains(scopes, scope) || (scope == scopeOfflineAccess && slices.Contains(grantTypes, "refresh_token"))
 }
 
 // issuesRefreshToken reports whether a grant of granted to a client registered
@@ -123,10 +124,10 @@ func scopePermitted(scopes, grantTypes []string, scope string) bool {
 // refresh_token grant. A client that registered offline_access gets one only
 // when that was granted (OIDC Core §11); any other gets one with every grant.
 func issuesRefreshToken(scopes, grantTypes, granted []string) bool {
-	if !contains(grantTypes, "refresh_token") {
+	if !slices.Contains(grantTypes, "refresh_token") {
 		return false
 	}
-	return !contains(scopes, scopeOfflineAccess) || contains(granted, scopeOfflineAccess)
+	return !slices.Contains(scopes, scopeOfflineAccess) || slices.Contains(granted, scopeOfflineAccess)
 }
 
 func validPKCEValue(value string, minLength, maxLength int) bool {
@@ -143,21 +144,21 @@ func validPKCEValue(value string, minLength, maxLength int) bool {
 	return true
 }
 
-// activeClientTenantMember reports whether userID is an active member of the
-// client's active tenant: its own account, or holding a role there.
-func (s *Service) activeClientTenantMember(ctx context.Context, userID uuid.UUID, clientID string) (bool, error) {
+// activeClientOrganizationMember reports whether userID is an active member of the
+// client's active organization: its own account, or holding a role there.
+func (s *Service) activeClientOrganizationMember(ctx context.Context, userID uuid.UUID, clientID string) (bool, error) {
 	return s.q.IsActiveClientMember(ctx, dbgen.IsActiveClientMemberParams{UserID: userID, ClientID: clientID})
 }
 
 // HasConsent reports whether the user has already granted the client every
 // requested scope (so the consent screen can be skipped).
 func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) (bool, error) {
-	member, err := s.activeClientTenantMember(ctx, userID, clientID)
+	member, err := s.activeClientOrganizationMember(ctx, userID, clientID)
 	if err != nil {
 		return false, err
 	}
 	if !member {
-		return false, errs.ErrOIDCUserTenantMismatch
+		return false, ErrUserOrganizationMismatch
 	}
 	granted, err := s.q.GetConsent(ctx, dbgen.GetConsentParams{UserID: userID, ClientID: clientID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -167,7 +168,7 @@ func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, clientID str
 		return false, err
 	}
 	for _, sc := range scopes {
-		if !contains(granted, sc) {
+		if !slices.Contains(granted, sc) {
 			return false, nil
 		}
 	}
@@ -177,12 +178,12 @@ func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, clientID str
 // GrantConsent records the user's approval of a client for the given scopes,
 // replacing any prior grant for that (user, client) pair.
 func (s *Service) GrantConsent(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) error {
-	member, err := s.activeClientTenantMember(ctx, userID, clientID)
+	member, err := s.activeClientOrganizationMember(ctx, userID, clientID)
 	if err != nil {
 		return err
 	}
 	if !member {
-		return errs.ErrOIDCUserTenantMismatch
+		return ErrUserOrganizationMismatch
 	}
 	return s.q.UpsertConsent(ctx, dbgen.UpsertConsentParams{UserID: userID, ClientID: clientID, Scopes: scopes})
 }

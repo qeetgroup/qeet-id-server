@@ -1,0 +1,24 @@
+get:
+  operationId: getUserTrends
+  summary: User directory 30-day trends
+  description: >-
+    30-day daily total/MFA-enrolled series for the Users KPI sparklines.
+    Requires `user.read`.
+  tags:
+    - Users
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Trend series
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/UserTrends.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

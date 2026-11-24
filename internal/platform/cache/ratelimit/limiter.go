@@ -1,5 +1,5 @@
 // Package ratelimit provides string-keyed token-bucket limiters: per IP before
-// sign-in, and per tenant, user or API key after. The default Store is in
+// sign-in, and per organization, user or API key after. The default Store is in
 // process; NewRedisStore shares buckets across replicas.
 package ratelimit
 
@@ -139,12 +139,12 @@ func (l *Limiter) Take(ctx context.Context, key string) (bool, int) {
 
 // KeyFunc extracts a bucket key from a request. Returning the empty string
 // disables rate limiting for that request — useful when the desired identifier
-// is not present (e.g. PerTenant on a pre-auth endpoint).
+// is not present (e.g. PerOrganization on a pre-auth endpoint).
 type KeyFunc func(r *http.Request) string
 
 // MiddlewareBy applies the limiter using a custom key extractor. scopeName is
 // prefixed to the key so one Limiter/Store can host buckets for multiple scopes
-// ("ip:1.2.3.4" never collides with "tenant:1.2.3.4"). On rejection it returns
+// ("ip:1.2.3.4" never collides with "organization:1.2.3.4"). On rejection it returns
 // 429 with Retry-After.
 func (l *Limiter) MiddlewareBy(scopeName string, extract KeyFunc) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -156,6 +156,7 @@ func (l *Limiter) MiddlewareBy(scopeName string, extract KeyFunc) func(http.Hand
 			}
 			allowed, retry := l.Take(r.Context(), scopeName+":"+id)
 			if !allowed {
+				rejections.WithLabelValues(scopeName).Inc()
 				w.Header().Set("Retry-After", strconv.Itoa(retry))
 				// Write the standard error envelope, not a bare status, so clients get a
 				// code to branch on.
@@ -185,13 +186,13 @@ func PerIP(r *http.Request) string {
 	return ip
 }
 
-// PerTenant keys requests by the principal's tenant ID. Empty when unauthenticated.
-func PerTenant(r *http.Request) string {
+// PerOrganization keys requests by the principal's organization ID. Empty when unauthenticated.
+func PerOrganization(r *http.Request) string {
 	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.TenantID == nil {
+	if p == nil || p.OrganizationID == nil {
 		return ""
 	}
-	return p.TenantID.String()
+	return p.OrganizationID.String()
 }
 
 // PerUser keys requests by the principal's user ID. Empty when missing.

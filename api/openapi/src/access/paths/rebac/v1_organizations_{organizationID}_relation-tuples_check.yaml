@@ -1,0 +1,106 @@
+post:
+  operationId: checkRelation
+  description: >-
+    Evaluates whether a user holds a relation on an object, composing every
+    model: an ABAC deny policy for the object's type with the relation as action
+    refuses and stops; otherwise a relationship tuple (following userset
+    references transitively), a role granting type:relation or type.relation, or
+    an ABAC allow policy permits. A role grant counts without a tuple. An engine
+    error refuses. The response names the deciding model and rule in decided_by;
+    pass explain=true to also receive the chain of tuples that granted access
+    and the decision's trace. A check expands at most 1,000 distinct
+    object#relation pairs, and the check with its explanation reads at most
+    5,000 relationship sets; past either it is refused with 422
+    rebac.check_too_complex. This is a read-only decision; author the
+    underlying tuples with the write-tuple call.
+  summary: Check relation
+  tags:
+    - ReBAC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: explain
+      in: query
+      required: false
+      description: >-
+        When "true", returns the root-to-leaf chain of relation tuples that
+        granted (or would grant) access instead of just the boolean.
+      schema:
+        type: string
+        enum:
+          - "true"
+          - "false"
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - object
+            - relation
+            - user_id
+          properties:
+            object:
+              type: string
+              minLength: 1
+            relation:
+              type: string
+              minLength: 1
+            user_id:
+              type: string
+              minLength: 1
+  responses:
+    "200":
+      description: >-
+        { allowed, decided_by } by default; with explain=true also path, where
+        each step is { object, relation, subject, depth }, and trace
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - allowed
+              - decided_by
+            properties:
+              allowed:
+                type: boolean
+              decided_by:
+                $ref: ../../components/schemas/AuthzDecidedBy.yaml
+              trace:
+                type: array
+                items:
+                  type: string
+              path:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - object
+                    - relation
+                    - subject
+                    - depth
+                  properties:
+                    object:
+                      type: string
+                    relation:
+                      type: string
+                    subject:
+                      type: string
+                    depth:
+                      type: integer
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,40 @@
+post:
+  operationId: createExportRequest
+  summary: Request a GDPR data export
+  tags:
+    - GDPR
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/ExportInput.yaml
+  description: >-
+    Queues an async export job; poll GET .../gdpr/export/{id} for status and
+    payload. Nobody exports someone who outranks them (403
+    rbac.target_is_owner for an owner, unless the caller is one, or 403
+    rbac.target_outranks_caller), as for deleting their account.
+  responses:
+    "202":
+      description: Accepted
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/ExportRequest.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

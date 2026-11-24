@@ -1,0 +1,58 @@
+post:
+  operationId: revokeToken
+  description: >-
+    Revokes a refresh token (RFC 7009), with Qeet acting as the OAuth
+    authorization server. Callers authenticate with OAuth client credentials.
+    Revoking a refresh token ends the whole grant it belongs to, every earlier
+    and later rotation of it, so no link of the chain stays usable;
+    introspection then reports every link inactive, the grant leaves the admin
+    grant list, and the revocation is audited as oidc.grant_revoked. An access
+    token can't be revoked (it is stateless and lasts out its short lifetime):
+    presenting one answers 400 unsupported_token_type. Per the RFC the endpoint
+    returns 200 for an unknown or already-invalid token, and for another
+    client's token, which it leaves untouched. Mounted at the root, not under
+    /v1. A public client may revoke its own tokens with its client_id alone. A
+    browser may call it from an origin one of the applications allows
+    (web_origins), without credentials.
+  summary: Token revoke (RFC 7009)
+  tags:
+    - OIDC
+  security:
+    - clientCredentials: []
+  requestBody:
+    required: true
+    content:
+      application/x-www-form-urlencoded:
+        schema:
+          type: object
+          required:
+            - token
+          properties:
+            token:
+              type: string
+            token_type_hint:
+              type: string
+              enum:
+                - access_token
+                - refresh_token
+            client_id:
+              type: string
+              description: >-
+                The client's ID, when it authenticates in the form body rather
+                than with HTTP Basic; a public client sends only this.
+            client_secret:
+              type: string
+              description: >-
+                A confidential client's secret, when it authenticates in the
+                form body (client_secret_post).
+  responses:
+    "200":
+      description: "Revoked (RFC 7009: always 200 even for unknown tokens)"
+    "400":
+      $ref: ../../components/responses/OAuthOrBadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

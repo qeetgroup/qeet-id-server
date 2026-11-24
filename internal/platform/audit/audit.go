@@ -1,0 +1,462 @@
+// Package audit records mutations to audit.events inside the caller's transaction, so each row commits
+// with the change it describes. Each row's SHA-256 hash chains to the previous row of its chain (its
+// organization's, or one of the PlatformChainShards): deleting, editing or reordering a row breaks
+// the chain, which operations/audit's Verifier detects.
+package audit
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"reflect"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+)
+
+// ChainSeed is the prev_hash of the first row of a chain.
+const ChainSeed = "0000000000000000000000000000000000000000000000000000000000000000"
+
+// PlatformChainShards is how many platform chains there are, numbered from 0,
+// so writers of events with no organization don't all queue on one chain's lock.
+// Changing it leaves rows outside the range, which verification reports.
+const PlatformChainShards = 16
+
+// platformShard is the platform chain tx's events go on: its database
+// connection's, so a transaction only ever takes one platform chain's lock
+// (two taken in opposite orders by two transactions would deadlock), and
+// concurrent transactions spread across the chains. Tests replace it.
+var platformShard = func(tx pgx.Tx) int16 {
+	return int16(tx.Conn().PgConn().PID() % PlatformChainShards) // #nosec G115 -- below PlatformChainShards
+}
+
+// Event is an audit row to record. A nil OrganizationID puts it on a platform
+// chain, and an empty ActorType means "user".
+type Event struct {
+	OrganizationID *uuid.UUID
+	ActorUserID    *uuid.UUID
+	ActorType      string
+	Action         string
+	ResourceType   string
+	ResourceID     *uuid.UUID
+	IP             string
+	UserAgent      string
+	RequestID      string
+	Metadata       map[string]any
+}
+
+// Actor is the request's provenance (who and from where) that a service
+// attaches to the audit rows it writes.
+type Actor struct {
+	UserID    *uuid.UUID
+	Type      string
+	IP        string
+	UserAgent string
+	RequestID string
+}
+
+// ActorOf returns who made r, for its audit events: its principal (a user
+// unless the principal names another actor type) or, with none, the system,
+// with r's client address, user agent and request ID.
+func ActorOf(r *http.Request) Actor {
+	a := Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
+		a.UserID, a.Type = p.UserID, "user"
+		if p.ActorType != "" {
+			a.Type = p.ActorType
+		}
+	}
+	return a
+}
+
+// Identity returns the actor's user, if any, and type: an Event's
+// ActorUserID and ActorType.
+func (a Actor) Identity() (*uuid.UUID, string) { return a.UserID, a.Type }
+
+// EventIn returns an audit Event of an action by a: on organizationID's chain,
+// or with a nil organizationID on a platform chain. A uuid.Nil resourceID
+// records no resource.
+func (a Actor) EventIn(organizationID *uuid.UUID, action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
+	e := Event{
+		ActorUserID:  a.UserID,
+		ActorType:    a.Type,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   postgres.NullIfZero(resourceID),
+		IP:           a.IP,
+		UserAgent:    a.UserAgent,
+		RequestID:    a.RequestID,
+		Metadata:     metadata,
+	}
+	if organizationID != nil {
+		e.OrganizationID = new(*organizationID)
+	}
+	return e
+}
+
+// Event returns an audit Event of an organization-scoped action by a.
+func (a Actor) Event(organizationID uuid.UUID, action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
+	return a.EventIn(&organizationID, action, resourceType, resourceID, metadata)
+}
+
+// PlatformEvent returns an audit Event on the platform chain, not scoped to an
+// organization.
+func (a Actor) PlatformEvent(action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
+	return a.EventIn(nil, action, resourceType, resourceID, metadata)
+}
+
+// Changes returns the fields of after whose value differs from before, each as
+// {"from": old, "to": new}: what an update changed, for its audit metadata.
+func Changes(before, after map[string]any) map[string]any {
+	out := map[string]any{}
+	for field, to := range after {
+		if from := before[field]; !reflect.DeepEqual(from, to) {
+			out[field] = map[string]any{"from": from, "to": to}
+		}
+	}
+	return out
+}
+
+// canonicalRow is the serialisation each row's hash covers; its field order is
+// fixed by this declaration. Changing it breaks every existing chain, so add a
+// chain-version column first. ChainShard is left out at 0, so a row of an
+// organization's chain or of platform chain 0 hashes as it always has.
+type canonicalRow struct {
+	ID             string          `json:"id"`
+	OrganizationID string          `json:"organization_id"`
+	ActorUserID    string          `json:"actor_user_id"`
+	ActorType      string          `json:"actor_type"`
+	Action         string          `json:"action"`
+	ResourceType   string          `json:"resource_type"`
+	ResourceID     string          `json:"resource_id"`
+	IP             string          `json:"ip"`
+	UserAgent      string          `json:"user_agent"`
+	RequestID      string          `json:"request_id"`
+	Metadata       json.RawMessage `json:"metadata"`
+	CreatedAt      string          `json:"created_at"`
+	PrevHash       string          `json:"prev_hash"`
+	ChainShard     int16           `json:"chain_shard,omitempty"`
+}
+
+func canonicalize(e Event, shard int16, id uuid.UUID, createdAt time.Time, metaJSON []byte, prevHash string) ([]byte, error) {
+	return json.Marshal(canonicalRow{
+		ID:             id.String(),
+		OrganizationID: uuidStr(e.OrganizationID),
+		ActorUserID:    uuidStr(e.ActorUserID),
+		ActorType:      e.ActorType,
+		Action:         e.Action,
+		ResourceType:   e.ResourceType,
+		ResourceID:     uuidStr(e.ResourceID),
+		IP:             e.IP,
+		UserAgent:      e.UserAgent,
+		RequestID:      e.RequestID,
+		Metadata:       metaJSON,
+		CreatedAt:      createdAt.UTC().Format(time.RFC3339Nano),
+		PrevHash:       prevHash,
+		ChainShard:     shard,
+	})
+}
+
+// RowHash is the hash a row of e carries on its chain (platform chain shard,
+// for an event with no organization): over its contents, the stored id,
+// created_at and metadata, and the previous row's hash.
+func RowHash(e Event, shard int16, id uuid.UUID, createdAt time.Time, metaJSON []byte, prevHash string) (string, error) {
+	canonical, err := canonicalize(e, shard, id, createdAt, metaJSON, prevHash)
+	if err != nil {
+		return "", err
+	}
+	return hashHex(canonical), nil
+}
+
+func hashHex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func uuidStr(u *uuid.UUID) string {
+	if u == nil {
+		return ""
+	}
+	return u.String()
+}
+
+// clock is this instance's time, which an audit row is stamped with unless
+// its chain's tip is later. A test sets it to stand for another instance.
+var clock = time.Now
+
+// SetClock makes this instance's clock now until restore is called, so a test
+// can stand for another instance. Tests only.
+func SetClock(now func() time.Time) (restore func()) {
+	prev := clock
+	clock = now
+	return func() { clock = prev }
+}
+
+// PinPlatformShard puts every platform event on platform chain shard until
+// restore is called, so a test knows which chain it writes. Tests only.
+func PinPlatformShard(shard int16) (restore func()) {
+	prev := platformShard
+	platformShard = func(pgx.Tx) int16 { return shard }
+	return func() { platformShard = prev }
+}
+
+// labelQueries read the name of a role, group or ABAC policy by its id in
+// the event's organization.
+var labelQueries = map[string]func(*dbgen.Queries, context.Context, uuid.UUID, *uuid.UUID) (string, error){
+	"role": func(q *dbgen.Queries, ctx context.Context, id uuid.UUID, organizationID *uuid.UUID) (string, error) {
+		return q.GetRoleName(ctx, dbgen.GetRoleNameParams{ID: id, OrganizationID: organizationID})
+	},
+	"group": func(q *dbgen.Queries, ctx context.Context, id uuid.UUID, organizationID *uuid.UUID) (string, error) {
+		return q.GetGroupName(ctx, dbgen.GetGroupNameParams{ID: id, OrganizationID: organizationID})
+	},
+	"abac_policy": func(q *dbgen.Queries, ctx context.Context, id uuid.UUID, organizationID *uuid.UUID) (string, error) {
+		return q.GetABACPolicyName(ctx, dbgen.GetABACPolicyNameParams{ID: id, OrganizationID: organizationID})
+	},
+}
+
+// labelled is e's metadata with the current names of the roles, groups and ABAC policies the event is
+// about: target_name for its resource, role_name or group_name for a role_id or group_id. A target
+// already gone keeps the caller's "name". People stay ids only: the chain can't change, so a name in
+// it would outlive the person's erasure.
+func labelled(ctx context.Context, tx pgx.Tx, e Event) (map[string]any, error) {
+	meta := make(map[string]any, len(e.Metadata)+2)
+	for k, v := range e.Metadata {
+		meta[k] = v
+	}
+	if _, named := labelQueries[e.ResourceType]; named && meta["target_name"] == nil && e.ResourceID != nil {
+		name, err := label(ctx, tx, e.ResourceType, *e.ResourceID, e.OrganizationID)
+		if err != nil {
+			return nil, err
+		}
+		if given, ok := meta["name"].(string); ok && name == "" {
+			name = given
+		}
+		if name != "" {
+			meta["target_name"] = name
+		}
+	}
+	for _, kind := range []string{"role", "group"} {
+		id, ok := idOf(meta[kind+"_id"])
+		if _, named := meta[kind+"_name"]; !ok || named {
+			continue
+		}
+		name, err := label(ctx, tx, kind, id, e.OrganizationID)
+		if err != nil {
+			return nil, err
+		}
+		if name != "" {
+			meta[kind+"_name"] = name
+		}
+	}
+	return meta, nil
+}
+
+// label is the name of the kind of thing id is, or "" for a kind without one
+// or an id not found.
+func label(ctx context.Context, tx pgx.Tx, kind string, id uuid.UUID, organizationID *uuid.UUID) (string, error) {
+	read, ok := labelQueries[kind]
+	if !ok {
+		return "", nil
+	}
+	name, err := read(dbgen.New(tx), ctx, id, organizationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return name, err
+}
+
+// idOf reads an id from metadata, as a UUID or its string.
+func idOf(v any) (uuid.UUID, bool) {
+	switch id := v.(type) {
+	case uuid.UUID:
+		return id, id != uuid.Nil
+	case *uuid.UUID:
+		if id != nil {
+			return *id, *id != uuid.Nil
+		}
+	case string:
+		if parsed, err := uuid.Parse(id); err == nil {
+			return parsed, true
+		}
+	}
+	return uuid.Nil, false
+}
+
+// Record writes one audit row in tx, as the next link of its chain, with the
+// names of what it is about (see labelled): its organization's chain, or with no
+// organization the platform chain of tx's connection. A per-chain advisory lock
+// serialises concurrent writers until tx ends.
+func Record(ctx context.Context, tx pgx.Tx, e Event) error {
+	if e.ActorType == "" {
+		e.ActorType = "user"
+	}
+	labels, err := labelled(ctx, tx, e)
+	if err != nil {
+		return err
+	}
+	// An API key, agent or service principal is told apart by its own id, which
+	// the event's actor user (an API key's owner, if any) doesn't say.
+	if p := httpx.PrincipalFromCtx(ctx); p != nil && p.ActorType == e.ActorType && e.ActorType != "user" && p.Subject != "" {
+		if _, given := labels["actor_id"]; !given {
+			labels["actor_id"] = p.Subject
+		}
+	}
+	// Where the request came from, approximately, when the proxy says.
+	if _, given := labels["geo"]; !given {
+		geo := map[string]any{}
+		if c := httpx.GeoCountry(ctx); c != "" {
+			geo["country"] = c
+		}
+		if c := httpx.GeoCity(ctx); c != "" {
+			geo["city"] = c
+		}
+		if len(geo) > 0 {
+			labels["geo"] = geo
+		}
+	}
+	e.Metadata = labels
+	var shard int16
+	if e.OrganizationID == nil {
+		shard = platformShard(tx)
+	}
+	return appendEvent(ctx, tx, e, shard)
+}
+
+// RecordAlone writes e in a transaction of its own on db (a pool, usually): for
+// an event no change commits with, such as a refusal, a read or a test call.
+func RecordAlone(ctx context.Context, db interface {
+	Begin(context.Context) (pgx.Tx, error)
+}, e Event) error {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := Record(ctx, tx, e); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// LockChain takes the advisory lock of a chain, held until tx ends: an
+// organization's, or with no organization platform chain shard. Chain 0's key is the one
+// the single platform chain had.
+func LockChain(ctx context.Context, tx pgx.Tx, organizationID *uuid.UUID, shard int16) error {
+	key := "audit:platform"
+	switch {
+	case organizationID != nil:
+		key = "audit:" + organizationID.String()
+	case shard != 0:
+		key += ":" + strconv.Itoa(int(shard))
+	}
+	// Raw SQL: pg_advisory_xact_lock returns void, which sqlc cannot model.
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, key)
+	return err
+}
+
+// appendEvent writes e in tx as the next link of its organization's chain, or with no
+// organization of platform chain shard.
+func appendEvent(ctx context.Context, tx pgx.Tx, e Event, shard int16) error {
+	meta, err := json.Marshal(e.Metadata)
+	if err != nil {
+		return err
+	}
+	if len(meta) == 0 || string(meta) == "null" {
+		meta = []byte("{}")
+	}
+	if err := LockChain(ctx, tx, e.OrganizationID, shard); err != nil {
+		return err
+	}
+
+	q := dbgen.New(tx)
+
+	prevHash := ChainSeed
+	createdAt := clock().UTC().Truncate(time.Microsecond)
+	tip, err := q.GetAuditChainTip(ctx, dbgen.GetAuditChainTipParams{OrganizationID: e.OrganizationID, ChainShard: shard})
+	switch {
+	case err == nil:
+		prevHash = strings.TrimSpace(*tip.RowHash)
+		// The chain is ordered by created_at, and each instance has its own
+		// clock: a row stamped no later than the tip would sort before it and
+		// fork the chain, so it goes just after.
+		if !createdAt.After(tip.CreatedAt) {
+			createdAt = tip.CreatedAt.Add(time.Microsecond)
+		}
+	case errors.Is(err, pgx.ErrNoRows):
+		// First row in chain; keep the seed.
+	default:
+		return err
+	}
+
+	id := uuid.New()
+	canonical, err := canonicalize(e, shard, id, createdAt, meta, prevHash)
+	if err != nil {
+		return err
+	}
+	rowHash := hashHex(canonical)
+
+	return q.InsertAuditEvent(ctx, dbgen.InsertAuditEventParams{
+		ID:             id,
+		OrganizationID: e.OrganizationID,
+		ActorUserID:    e.ActorUserID,
+		ActorType:      e.ActorType,
+		Action:         e.Action,
+		ResourceType:   e.ResourceType,
+		ResourceID:     e.ResourceID,
+		Ip:             e.IP, // NULLIF($8,'')::inet in the SQL handles empty→NULL
+		UserAgent:      new(e.UserAgent),
+		RequestID:      new(e.RequestID),
+		Metadata:       meta,
+		CreatedAt:      createdAt,
+		PrevHash:       new(prevHash),
+		RowHash:        new(rowHash),
+		ChainShard:     shard,
+	})
+}
+
+// OpenPlatformChains starts each platform chain that has no row yet with an
+// audit.chain_opened event, so every chain always has a tip and verification
+// can tell one whose rows were removed from one never written to.
+func OpenPlatformChains(ctx context.Context, pool *pgxpool.Pool) error {
+	for shard := range int16(PlatformChainShards) {
+		if err := openPlatformChain(ctx, pool, shard); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func openPlatformChain(ctx context.Context, pool *pgxpool.Pool, shard int16) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := LockChain(ctx, tx, nil, shard); err != nil {
+		return err
+	}
+	_, err = dbgen.New(tx).GetAuditChainTip(ctx, dbgen.GetAuditChainTipParams{ChainShard: shard})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	opened := Event{ActorType: "system", Action: "audit.chain_opened", ResourceType: "audit_chain",
+		Metadata: map[string]any{"chain_shard": shard}}
+	if err := appendEvent(ctx, tx, opened, shard); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}

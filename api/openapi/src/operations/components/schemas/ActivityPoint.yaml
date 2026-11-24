@@ -1,0 +1,27 @@
+type: object
+required:
+  - date
+  - ldap
+  - magic_link
+  - oidc
+  - passkey
+  - password
+  - saml
+  - social
+properties:
+  date:
+    type: string
+  ldap:
+    type: integer
+  magic_link:
+    type: integer
+  oidc:
+    type: integer
+  passkey:
+    type: integer
+  password:
+    type: integer
+  saml:
+    type: integer
+  social:
+    type: integer

@@ -1,0 +1,100 @@
+patch:
+  operationId: updateDirectoryAlert
+  summary: Change or pause a directory failure alert
+  description: >-
+    Requires connection.write. Changes the fields given on one of the
+    organization's alerts: enabled false pauses it, a connection_id of "" makes
+    it cover every connection. Audited as directory.alert_updated.
+  tags:
+    - Directory
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: alertID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            name:
+              type:
+                - string
+                - "null"
+              minLength: 1
+              maxLength: 100
+            connection_id:
+              type:
+                - string
+                - "null"
+              description: A connection of the organization, or "" for every connection.
+            threshold:
+              type:
+                - integer
+                - "null"
+              minimum: 1
+              maximum: 100
+            enabled:
+              type:
+                - boolean
+                - "null"
+  responses:
+    "200":
+      description: The alert as changed
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/DirectoryAlert.yaml
+    "400":
+      description: Invalid alert settings
+    "401":
+      description: Authentication required
+    "403":
+      description: Organization mismatch or missing connection.write
+    "404":
+      description: No such alert in the organization, or an unknown connection
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+delete:
+  operationId: deleteDirectoryAlert
+  summary: Remove a directory failure alert
+  description: >-
+    Requires connection.write. Removes one of the organization's alerts. Audited
+    as directory.alert_deleted.
+  tags:
+    - Directory
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: alertID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    "204":
+      description: Removed
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      description: Authentication required
+    "403":
+      description: Organization mismatch or missing connection.write
+    "404":
+      description: No such alert in the organization
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -46,13 +46,13 @@ func TestRetriesGetTheFirstAnswer(t *testing.T) {
 		w.WriteHeader(status)
 		fmt.Fprintf(w, `{"run":%d}`, n)
 	}))
-	tenant, user := uuid.New(), uuid.New()
+	organization, user := uuid.New(), uuid.New()
 	send := func(path, key, body string, as uuid.UUID) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 		if key != "" {
 			r.Header.Set(Header, key)
 		}
-		r = r.WithContext(httpx.WithPrincipal(r.Context(), &httpx.Principal{ActorType: "user", Subject: as.String(), UserID: &as, TenantID: &tenant}))
+		r = r.WithContext(httpx.WithPrincipal(r.Context(), &httpx.Principal{ActorType: "user", Subject: as.String(), UserID: &as, OrganizationID: &organization}))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, r)
 		return rec
@@ -90,17 +90,17 @@ func TestRetriesGetTheFirstAnswer(t *testing.T) {
 	}
 }
 
-// sender sends POST /v1/things through h as one caller of one organisation.
+// sender sends POST /v1/things through h as one caller of one organization.
 type sender struct {
-	h            http.Handler
-	tenant, user uuid.UUID
+	h                  http.Handler
+	organization, user uuid.UUID
 }
 
 func (s sender) send(t *testing.T, key, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	r := httptest.NewRequest(http.MethodPost, "/v1/things", strings.NewReader(body))
 	r.Header.Set(Header, key)
-	r = r.WithContext(httpx.WithPrincipal(r.Context(), &httpx.Principal{ActorType: "user", Subject: s.user.String(), UserID: &s.user, TenantID: &s.tenant}))
+	r = r.WithContext(httpx.WithPrincipal(r.Context(), &httpx.Principal{ActorType: "user", Subject: s.user.String(), UserID: &s.user, OrganizationID: &s.organization}))
 	rec := httptest.NewRecorder()
 	s.h.ServeHTTP(rec, r)
 	return rec
@@ -120,13 +120,13 @@ func TestInterruptedRequestIsNotRunAgain(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusCreated)
 	}))
-	s := sender{h: h, tenant: uuid.New(), user: uuid.New()}
+	s := sender{h: h, organization: uuid.New(), user: uuid.New()}
 	func() {
 		defer func() { _ = recover() }()
 		r := httptest.NewRequest(http.MethodPost, "/v1/things", strings.NewReader(`{"name":"a"}`))
 		r.Header.Set(Header, "key-1")
 		r.Header.Set("X-Crash", "1")
-		r = r.WithContext(httpx.WithPrincipal(r.Context(), &httpx.Principal{ActorType: "user", Subject: s.user.String(), UserID: &s.user, TenantID: &s.tenant}))
+		r = r.WithContext(httpx.WithPrincipal(r.Context(), &httpx.Principal{ActorType: "user", Subject: s.user.String(), UserID: &s.user, OrganizationID: &s.organization}))
 		h.ServeHTTP(httptest.NewRecorder(), r)
 	}()
 
@@ -134,7 +134,7 @@ func TestInterruptedRequestIsNotRunAgain(t *testing.T) {
 		t.Errorf("retry at once: %d %s, want 409 idempotency.in_progress", rec.Code, rec.Body)
 	}
 	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
-		UPDATE platform.idempotency_keys SET created_at = NOW() - interval '2 minutes' WHERE scope LIKE $1`, s.tenant.String()+"|%"); err != nil {
+		UPDATE platform.idempotency_keys SET created_at = NOW() - interval '2 minutes' WHERE scope LIKE $1`, s.organization.String()+"|%"); err != nil {
 		t.Fatal(err)
 	}
 	if rec := s.send(t, "key-1", `{"name":"a"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "idempotency.outcome_unknown") {
@@ -163,7 +163,7 @@ func TestConcurrentRequestsRunOnce(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"run":1}`))
 	}))
-	s := sender{h: h, tenant: uuid.New(), user: uuid.New()}
+	s := sender{h: h, organization: uuid.New(), user: uuid.New()}
 	first := make(chan *httptest.ResponseRecorder, 1)
 	go func() { first <- s.send(t, "key-1", `{}`) }()
 	<-entered

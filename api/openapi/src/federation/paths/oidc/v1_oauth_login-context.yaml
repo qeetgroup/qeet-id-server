@@ -1,0 +1,158 @@
+get:
+  operationId: getLoginContext
+  description: >-
+    Returns the context the hosted-login application needs to render itself for
+    a given OAuth client: the client's display name, logo and home page, its
+    organization, the organization's enabled social login providers, self-registration and
+    remember-device flags, and optional per-organization branding (only while the
+    organization's plan includes custom_branding; otherwise none, and the hosted login
+    shows its default look). Consumed by the hosted login UI during the
+    authorize flow. It carries no tokens and performs no state change.
+    sign_in_methods ({password, passkey, magic_link}) says which first-factor
+    methods the client's organization allows, so the hosted login offers only
+    those. password_policy, magic_link_ttl_minutes and remember_device_days are
+    the organization's settings the hosted pages show before anyone signs in.
+    logo_uri and client_uri are the values the organization's admin registered
+    for the client, never anything from the request, and are absent when not
+    set.
+  summary: Login context
+  tags:
+    - OIDC
+  parameters:
+    - in: query
+      name: client_id
+      required: true
+      schema:
+        type: string
+  security: []
+  responses:
+    "200":
+      description: Hosted-login context (client name, logo, home page, branding)
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+            required:
+              - client_name
+              - organization_id
+              - providers
+              - self_registration_enabled
+              - remember_device_enabled
+              - sign_in_methods
+              - branding
+            properties:
+              client_name:
+                type: string
+              organization_id:
+                type: string
+                format: uuid
+              providers:
+                type: array
+                items:
+                  type: string
+                description: >-
+                  The names of the social sign-in providers the organization
+                  has turned on, for GET /v1/social/{provider}/start; empty
+                  when none is, or they can't be read.
+              self_registration_enabled:
+                type: boolean
+                description: >-
+                  Whether people may create an account here; false when the
+                  setting can't be read.
+              remember_device_enabled:
+                type: boolean
+                description: >-
+                  Whether a device may skip the second step for
+                  remember_device_days; false when the setting can't be read.
+              sign_in_methods:
+                type: object
+                description: >-
+                  Which first-factor methods the organization allows. All true
+                  when the setting can't be read; each is refused anyway where
+                  the credential is accepted.
+                required:
+                  - password
+                  - passkey
+                  - magic_link
+                properties:
+                  password:
+                    type: boolean
+                  passkey:
+                    type: boolean
+                  magic_link:
+                    type: boolean
+              logo_uri:
+                type: string
+                format: uri
+                description: >-
+                  The application's registered logo (https); absent when not
+                  set.
+              client_uri:
+                type: string
+                format: uri
+                description: >-
+                  The application's registered home page (https); absent when
+                  not set. The hosted page shows its host.
+              organization_name:
+                type: string
+                description: >-
+                  The name of the organization the application belongs to, so
+                  the hosted pages can say whose rules apply. Absent when it
+                  can't be read.
+              password_policy:
+                type: object
+                description: >-
+                  The rules the organization's new passwords must meet, so the
+                  hosted pages can show them as they are met. The server still
+                  checks them when a password is set. Absent when the policy
+                  can't be read.
+                required:
+                  - min_length
+                  - require_uppercase
+                  - require_number
+                  - require_symbol
+                properties:
+                  min_length:
+                    type: integer
+                  require_uppercase:
+                    type: boolean
+                  require_number:
+                    type: boolean
+                  require_symbol:
+                    type: boolean
+              magic_link_ttl_minutes:
+                type: integer
+                description: >-
+                  How long a sign-in link the organization sends works, in
+                  minutes.
+              remember_device_days:
+                type: integer
+                description: >-
+                  How long the organization remembers a device that skipped the
+                  second step, in days. Applies only when
+                  remember_device_enabled.
+              branding:
+                type:
+                  - object
+                  - "null"
+                description: >-
+                  The organization's brand for the hosted pages, each part
+                  present only when set; null when none is (or the plan doesn't
+                  include custom_branding).
+                properties:
+                  logo_url:
+                    type: string
+                  primary_color:
+                    type: string
+                  secondary_color:
+                    type: string
+                  background_color:
+                    type: string
+                    description: Optional page background from organization branding settings.
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -47,12 +47,12 @@ func TestFactorsOverHTTP(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
 	svc, authSvc := services(t, mail)
-	a, tenant := member(t)
-	pair, err := authSvc.IssuePair(ctx, a.ID, tenant, "192.0.2.1", "test", "password")
+	a, organization := member(t)
+	pair, err := authSvc.IssuePair(ctx, a.ID, organization, "192.0.2.1", "test", "password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := dbtest.Principal(a.ID, tenant)
+	p := dbtest.Principal(a.ID, organization)
 	p.SessionID = &pair.SessionID
 	c := api{t, dbtest.Serve(p, (&Handler{Service: svc}).Mount)}
 
@@ -71,11 +71,11 @@ func TestFactorsOverHTTP(t *testing.T) {
 
 	// Regenerating recovery codes needs a step-up of the calling session:
 	// refused to another session until it meets the authenticator app.
-	second, err := authSvc.IssuePair(ctx, a.ID, tenant, "192.0.2.1", "test", "password")
+	second, err := authSvc.IssuePair(ctx, a.ID, organization, "192.0.2.1", "test", "password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2 := dbtest.Principal(a.ID, tenant)
+	p2 := dbtest.Principal(a.ID, organization)
 	p2.SessionID = &second.SessionID
 	c = api{t, dbtest.Serve(p2, (&Handler{Service: svc}).Mount)}
 	c.call(http.MethodPost, "/mfa/recovery-codes/regenerate", nil, http.StatusForbidden)
@@ -102,7 +102,7 @@ func TestFactorsOverHTTP(t *testing.T) {
 	c.call(http.MethodDelete, "/mfa/otp/factors/"+factor, nil, http.StatusNoContent)
 
 	// A phone: linked directly, listed, revoked; a pairing code made and withdrawn.
-	device := c.call(http.MethodPost, "/mfa/push/devices", map[string]string{"name": "Phone", "push_token": "ExponentPushToken[x]", "platform": "ios"}, http.StatusCreated)
+	device := c.call(http.MethodPost, "/mfa/push/devices", map[string]string{"name": "Phone", "push_token": "a1b2c3d4e5f6", "platform": "ios"}, http.StatusCreated)
 	if device["device_token"] == "" {
 		t.Errorf("register device: %v", device)
 	}

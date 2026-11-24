@@ -1,0 +1,112 @@
+get:
+  operationId: listProfileMappings
+  description: >-
+    Lists the effective profile attribute-mapping rules configured for a
+    directory connection, together with the supported profile target fields.
+    Requires connection.read and is scoped to the organization in the path. These
+    rules apply to SCIM user writes and LDAP just-in-time provisioning; create
+    rules with POST and remove them with DELETE.
+  summary: List effective profile mapping rules
+  tags:
+    - Directory
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: connectionID
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[^/\\]+$'
+  responses:
+    "200":
+      description: Rules and supported profile target types
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/DirectoryMapping.yaml
+              targets:
+                type: object
+                additionalProperties:
+                  type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      description: Authentication required
+    "403":
+      description: Organization mismatch or missing connection.read
+    "404":
+      description: Connection not found in this organization
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: createProfileMapping
+  summary: Create a profile mapping
+  description: >-
+    Requires connection.write. Maximum 50 rules per connection and one enabled
+    rule per target. Rules apply to SCIM user writes and LDAP JIT provisioning.
+    Profile data is organization-scoped; groups are profile labels, not role or group
+    membership grants. Email mapping affects creation, not existing account
+    email addresses. Secret sources and privilege targets are rejected.
+  tags:
+    - Directory
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: connectionID
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[^/\\]+$'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/DirectoryMapping.yaml
+  responses:
+    "201":
+      description: Mapping created and audited
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/DirectoryMapping.yaml
+    "400":
+      description: Invalid id, version or body
+    "401":
+      description: Authentication required
+    "403":
+      description: Organization mismatch or missing connection.write
+    "404":
+      description: Connection not found in this organization
+    "409":
+      description: Duplicate enabled target or rule limit reached
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      description: >-
+        Mapping refused: validation_failed, with error.fields[0].field naming
+        the property at fault (source_attribute, target_field, value_type,
+        transform or pattern) and error.fields[0].code the reason:
+        directory.mapping_source_invalid, directory.mapping_source_credential,
+        directory.mapping_target_unsupported,
+        directory.mapping_value_type_mismatch,
+        directory.mapping_transform_unsupported,
+        directory.mapping_pattern_unexpected or
+        directory.mapping_pattern_invalid.
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

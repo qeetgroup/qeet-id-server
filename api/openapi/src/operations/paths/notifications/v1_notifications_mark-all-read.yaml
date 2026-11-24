@@ -1,0 +1,18 @@
+post:
+  operationId: markAllNotificationsRead
+  description: >-
+    Clears the unread state on all of the authenticated user's notifications in
+    a single call. The notifications themselves are retained; only their read
+    status changes. A subsequent list reports an unread count of zero.
+  summary: Mark all read
+  tags:
+    - Notifications
+  security:
+    - bearerAuth: []
+  responses:
+    "204":
+      description: All notifications marked read
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

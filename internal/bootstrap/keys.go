@@ -12,7 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	secret "github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secret"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope/reseal"
@@ -47,7 +47,7 @@ func loadKeys(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) k
 	}
 	if cfg.JWTSigningKey == "" {
 		if !cfg.IsDev() {
-			slog.Error("JWT_SIGNING_KEY is required outside dev (PEM-encoded EC P-256 private key)")
+			slog.Error("JWT_SIGNING_KEY is required outside dev (a PEM private key: EC P-256 or RSA)")
 			os.Exit(1)
 		}
 		// A workstation with no key uses the database's active one, and makes one
@@ -138,48 +138,48 @@ const (
 func EncryptedColumns() []reseal.Column {
 	byID := func(table, ciphertext, nonce, purpose string) reseal.Column {
 		return reseal.Column{Table: table, Key: []string{"id"}, Ciphertext: ciphertext, Nonce: nonce,
-			Tenant: "tenant_id", Purpose: purpose, Resource: "id"}
+			Organization: "organization_id", Purpose: purpose, Resource: "id"}
 	}
 	grant := func(ciphertext, nonce, purpose string) reseal.Column {
-		return reseal.Column{Table: "tenant.token_vault_grants", Key: []string{"id"}, Ciphertext: ciphertext, Nonce: nonce,
-			Tenant: "tenant_id", Purpose: purpose, Resource: "user_id::text || ':' || provider"}
+		return reseal.Column{Table: "organization.token_vault_grants", Key: []string{"id"}, Ciphertext: ciphertext, Nonce: nonce,
+			Organization: "organization_id", Purpose: purpose, Resource: "user_id::text || ':' || provider"}
 	}
 	totp := func(ciphertext, nonce string) reseal.Column {
 		return reseal.Column{Table: "auth.mfa_totp", Key: []string{"user_id"}, Ciphertext: ciphertext, Nonce: nonce,
-			Tenant: "user_id", Purpose: "mfa-totp", Resource: "user_id"}
+			Organization: "user_id", Purpose: "mfa-totp", Resource: "user_id"}
 	}
 	return []reseal.Column{
-		{Table: "tenant.secrets", Key: []string{"id"}, Ciphertext: "ciphertext", Nonce: "nonce",
-			Tenant: "tenant_id", Purpose: "secret", Resource: "name"},
+		{Table: "organization.secrets", Key: []string{"id"}, Ciphertext: "ciphertext", Nonce: "nonce",
+			Organization: "organization_id", Purpose: "secret", Resource: "name"},
 		grant("access_token_ct", "access_token_nonce", "token-vault-access"),
 		grant("refresh_token_ct", "refresh_token_nonce", "token-vault-refresh"),
-		{Table: "tenant.token_vault_providers", Key: []string{"id"}, Ciphertext: "client_secret_ct", Nonce: "client_secret_nonce",
-			Tenant: "tenant_id", Purpose: "token-vault-provider", Resource: "provider"},
-		{Table: "tenant.social_providers", Key: []string{"id"}, Ciphertext: "client_secret_ct", Nonce: "client_secret_nonce",
-			Tenant: "tenant_id", Purpose: "social-provider", Resource: "provider"},
-		byID("tenant.webhook_subscriptions", "secret_ct", "secret_nonce", "webhook-signing"),
-		byID("tenant.webhook_subscriptions", "previous_secret_ct", "previous_secret_nonce", "webhook-signing"),
-		byID("tenant.auth_hooks", "secret_ct", "secret_nonce", "auth-hook-signing"),
-		byID("tenant.ldap_connections", "bind_password_ct", "bind_password_nonce", "ldap-bind"),
-		byID("tenant.log_sinks", "token_ct", "token_nonce", "siem-token"),
-		byID("tenant.oidc_connections", "client_secret_ct", "client_secret_nonce", "oidc-connection"),
-		{Table: "tenant.saml_connection_keys", Key: []string{"connection_id"}, Ciphertext: "key_ct", Nonce: "key_nonce",
-			Tenant: "tenant_id", Purpose: "saml-sp-key", Resource: "connection_id"},
-		{Table: "qeetai.provider_settings", Key: []string{"tenant_id"}, Ciphertext: "key_ciphertext", Nonce: "key_nonce",
-			Tenant: "tenant_id", Purpose: "qeetai-provider", Resource: "'api-key'"},
+		{Table: "organization.token_vault_providers", Key: []string{"id"}, Ciphertext: "client_secret_ct", Nonce: "client_secret_nonce",
+			Organization: "organization_id", Purpose: "token-vault-provider", Resource: "provider"},
+		{Table: "organization.social_providers", Key: []string{"id"}, Ciphertext: "client_secret_ct", Nonce: "client_secret_nonce",
+			Organization: "organization_id", Purpose: "social-provider", Resource: "provider"},
+		byID("organization.webhook_subscriptions", "secret_ct", "secret_nonce", "webhook-signing"),
+		byID("organization.webhook_subscriptions", "previous_secret_ct", "previous_secret_nonce", "webhook-signing"),
+		byID("organization.auth_hooks", "secret_ct", "secret_nonce", "auth-hook-signing"),
+		byID("organization.ldap_connections", "bind_password_ct", "bind_password_nonce", "ldap-bind"),
+		byID("organization.log_sinks", "token_ct", "token_nonce", "siem-token"),
+		byID("organization.oidc_connections", "client_secret_ct", "client_secret_nonce", "oidc-connection"),
+		{Table: "organization.saml_connection_keys", Key: []string{"connection_id"}, Ciphertext: "key_ct", Nonce: "key_nonce",
+			Organization: "organization_id", Purpose: "saml-sp-key", Resource: "connection_id"},
+		{Table: "qeetai.provider_settings", Key: []string{"organization_id"}, Ciphertext: "key_ciphertext", Nonce: "key_nonce",
+			Organization: "organization_id", Purpose: "qeetai-provider", Resource: "'api-key'"},
 		totp("secret_ct", "secret_nonce"),
 		totp("pending_secret_ct", "pending_secret_nonce"),
 		{Table: "auth.mfa_push_devices", Key: []string{"id"}, Ciphertext: "push_token_ct", Nonce: "push_token_nonce",
-			Tenant: "user_id", Purpose: "mfa-push-token", Resource: "push_token_hash"},
-		// A kept rotation is sealed under its session, as a session may have no tenant.
+			Organization: "user_id", Purpose: "mfa-push-token", Resource: "push_token_hash"},
+		// A kept rotation is sealed under its session, as a session may have no organization.
 		{Table: "auth.refresh_tokens", Key: []string{"id"}, Ciphertext: "replacement_enc", Nonce: "replacement_nonce",
-			Tenant: "session_id", Purpose: "refresh-token-retry", Resource: "id"},
+			Organization: "session_id", Purpose: "refresh-token-retry", Resource: "id"},
 		{Table: "platform.idempotency_keys", Key: []string{"scope", "key"}, Ciphertext: "body_enc", Nonce: "body_nonce",
-			Tenant: "scope", TenantOf: idempotency.SealedAs, Purpose: "idempotency", Resource: "scope || '|' || key"},
+			Organization: "scope", OrganizationOf: idempotency.SealedAs, Purpose: "idempotency", Resource: "scope || '|' || key"},
 		// The signing key registry's copy of each private key, sealed under its
 		// fixed namespace; re-sealing leaves the signing key itself unchanged.
 		{Table: "platform.jwt_signing_keys", Key: []string{"kid"}, Ciphertext: "private_key_ct", Nonce: "private_key_nonce",
-			Tenant: "'00000000-0000-5000-8000-000000000017'", Purpose: "jwt-signing-key", Resource: "kid"},
+			Organization: "'00000000-0000-5000-8000-000000000017'", Purpose: "jwt-signing-key", Resource: "kid"},
 	}
 }
 

@@ -1,9 +1,9 @@
-package auth
+package authentication
 
 // Sign-in lockout counts failed password sign-ins in PostgreSQL, so all replicas
 // agree: per account and network, per account across networks, and per network
 // across accounts (spraying). Unknown addresses count like real ones. If the
-// counters are unavailable, sign-in fails closed with ErrAuthSignInUnavailable.
+// counters are unavailable, sign-in fails closed with ErrSignInUnavailable.
 
 import (
 	"context"
@@ -16,7 +16,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
@@ -81,12 +80,19 @@ type Lockout struct {
 	Duration  time.Duration
 }
 
-// LockoutSource returns the lockout a tenant applies (uuid.Nil: no tenant —
+// noLooserThan is l held at least as strict as base: the lower threshold and
+// the longer window and lock win. It governs the lock on one network; the lock
+// on every network always uses the platform's settings.
+func (l Lockout) noLooserThan(base Lockout) Lockout {
+	return Lockout{Threshold: min(l.Threshold, base.Threshold), Window: max(l.Window, base.Window), Duration: max(l.Duration, base.Duration)}
+}
+
+// LockoutSource returns the lockout an organization applies (uuid.Nil: no organization —
 // the platform defaults). Satisfied in bootstrap by the auth-policy service;
 // a func so auth doesn't import authpolicy.
-type LockoutSource func(ctx context.Context, tenantID uuid.UUID) (Lockout, error)
+type LockoutSource func(ctx context.Context, organizationID uuid.UUID) (Lockout, error)
 
-// LockoutConfig is the platform-wide part of the sign-in protections (env).
+// LockoutConfig is the platform-wide part of the sign-in protections.
 type LockoutConfig struct {
 	// Defaults applies when no LockoutSource is wired.
 	Defaults Lockout
@@ -113,13 +119,6 @@ func DefaultLockoutConfig() LockoutConfig {
 		SourceBlock:       15 * time.Minute,
 	}
 }
-
-// SetLockoutConfig sets the platform-wide lockout configuration (from
-// LOGIN_LOCKOUT_* and LOGIN_SPRAY_*).
-func (s *Service) SetLockoutConfig(c LockoutConfig) { s.lockout = c }
-
-// SetLockoutSource wires the per-tenant lockout settings.
-func (s *Service) SetLockoutSource(f LockoutSource) { s.lockoutSource = f }
 
 // AccountLock describes a lock at the moment it is set, for security monitoring.
 type AccountLock struct {
@@ -150,55 +149,56 @@ type signInAttempt struct {
 	now     time.Time
 }
 
-// SignInTenant returns the tenant whose authentication policy governs a sign-in
-// before the credential is verified: the hosted login's OAuth client's tenant,
-// or uuid.Nil for the platform defaults. It never uses the account's own tenant,
+// SignInOrganization returns the organization whose authentication policy governs a sign-in
+// before the credential is verified: the hosted login's OAuth client's organization,
+// or uuid.Nil for the platform defaults. It never uses the account's own organization,
 // which would reveal whether the address has an account.
-func (s *Service) SignInTenant(ctx context.Context, clientID string) (uuid.UUID, error) {
+func (s *Service) SignInOrganization(ctx context.Context, clientID string) (uuid.UUID, error) {
 	if clientID == "" {
 		return uuid.Nil, nil
 	}
-	tenantID, err := s.q.GetClientTenant(ctx, clientID)
+	organizationID, err := s.q.GetClientOrganization(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, nil
 	}
-	return tenantID, err
+	return organizationID, err
 }
 
 // newSignInAttempt resolves the lockout an attempt is held to.
 func (s *Service) newSignInAttempt(ctx context.Context, in SignInAttempt) (signInAttempt, error) {
-	if s.lockoutSource == nil {
-		return s.signInAttemptIn(ctx, uuid.Nil, in.Email, in.IP)
-	}
 	lctx, cancel := lockoutContext(ctx)
 	defer cancel()
-	tenantID, err := s.SignInTenant(lctx, in.ClientID)
+	organizationID, err := s.SignInOrganization(lctx, in.ClientID)
 	if err != nil {
 		return signInAttempt{}, lockoutFailed(stageSettings, err)
 	}
-	return s.signInAttemptIn(ctx, tenantID, in.Email, in.IP)
+	return s.signInAttemptIn(ctx, organizationID, in.Email, in.IP)
 }
 
 // signInAttemptIn is an attempt to sign in as account from ip, held to
-// tenantID's lockout (uuid.Nil: the platform defaults).
-func (s *Service) signInAttemptIn(ctx context.Context, tenantID uuid.UUID, account, ip string) (signInAttempt, error) {
+// organizationID's lockout (uuid.Nil: the platform defaults). A sign-in may name any
+// organization's application, so its lockout can tighten the platform's but
+// never loosen it for someone else's account.
+func (s *Service) signInAttemptIn(ctx context.Context, organizationID uuid.UUID, account, ip string) (signInAttempt, error) {
 	a := signInAttempt{
-		email:   strings.ToLower(strings.TrimSpace(account)),
 		network: httpx.SourceNetwork(ip),
 		lockout: s.lockout.Defaults,
 		// Microseconds, as PostgreSQL stores them, so a lock this attempt sets
 		// reads back equal to the one it asked for.
 		now: time.Now().UTC().Truncate(time.Microsecond),
 	}
-	if s.lockoutSource == nil {
-		return a, nil
-	}
 	ctx, cancel := lockoutContext(ctx)
 	defer cancel()
+	// The address is folded by the database's LOWER, as the account lookup
+	// folds it, so a case variant never gets a counter of its own.
 	var err error
-	if a.lockout, err = s.lockoutSource(ctx, tenantID); err != nil {
+	if a.email, err = s.q.FoldAddress(ctx, strings.TrimSpace(account)); err != nil {
 		return a, lockoutFailed(stageSettings, err)
 	}
+	if a.lockout, err = s.lockoutSource(ctx, organizationID); err != nil {
+		return a, lockoutFailed(stageSettings, err)
+	}
+	a.lockout = a.lockout.noLooserThan(s.lockout.Defaults)
 	return a, nil
 }
 
@@ -210,7 +210,7 @@ func lockoutContext(ctx context.Context) (context.Context, context.CancelFunc) {
 // sign-in (fail closed). The cause is kept for the request log.
 func lockoutFailed(stage string, err error) error {
 	lockoutUnavailable.WithLabelValues(stage).Inc()
-	return errs.ErrAuthSignInUnavailable.Wrap(fmt.Errorf("sign-in lockout %s: %w", stage, err))
+	return ErrSignInUnavailable.Wrap(fmt.Errorf("sign-in lockout %s: %w", stage, err))
 }
 
 // checkLockout refuses an attempt from a throttled source network, or for an
@@ -223,10 +223,10 @@ func (s *Service) checkLockout(ctx context.Context, a signInAttempt) error {
 	if err != nil {
 		return lockoutFailed(stageCheck, err)
 	}
-	if locks.SourceThrottledUntil.Valid {
+	if locks.SourceThrottledUntil != nil {
 		return errs.ErrTooManyRequests
 	}
-	if locks.NetworkLockedUntil.Valid || locks.AccountLockedUntil.Valid {
+	if locks.NetworkLockedUntil != nil || locks.AccountLockedUntil != nil {
 		return errs.ErrAuthAccountLocked
 	}
 	return nil
@@ -266,17 +266,13 @@ func (s *Service) recordFailedSignIn(ctx context.Context, a signInAttempt, f Sig
 		lockoutsSet.WithLabelValues(lock.Counter).Inc()
 		slog.Warn("sign-in lockout: account locked",
 			"counter", lock.Counter, "network", lock.Network, "failures", lock.Failures, "locked_until", lock.LockedUntil)
-		if s.anomaly != nil {
-			s.anomaly.OnAccountLocked(ctx, lock)
-		}
+		s.anomaly.OnAccountLocked(ctx, lock)
 	}
 	if throttle != nil {
 		sourceThrottles.Inc()
 		slog.Warn("sign-in lockout: source network throttled for spraying",
 			"network", throttle.Network, "distinct_accounts", len(throttle.Accounts), "throttled_until", throttle.ThrottledUntil)
-		if s.anomaly != nil {
-			s.anomaly.OnSourceThrottled(ctx, *throttle)
-		}
+		s.anomaly.OnSourceThrottled(ctx, *throttle)
 	}
 	return nil
 }
@@ -307,20 +303,24 @@ func (s *Service) countFailure(ctx context.Context, a signInAttempt) ([]AccountL
 			Window: a.lockout.Window, LockedUntil: lockUntil,
 		})
 	}
-	accountCap := a.lockout.Threshold * max(s.lockout.AccountMultiplier, 1)
+	// The lock on every network is the platform's alone: an organization's
+	// stricter settings would let its application lock anyone out everywhere.
+	platform := s.lockout.Defaults
+	accountCap := platform.Threshold * max(s.lockout.AccountMultiplier, 1)
+	accountUntil := a.now.Add(platform.Duration)
 	account, err := q.RecordAccountFailure(ctx, dbgen.RecordAccountFailureParams{
-		Email: a.email, Now: a.now, WindowStart: windowStart,
-		Threshold: int32(accountCap), LockUntil: lockUntil, // #nosec G115 -- bounded threshold × small multiplier
+		Email: a.email, Now: a.now, WindowStart: a.now.Add(-platform.Window),
+		Threshold: int32(accountCap), LockUntil: accountUntil, // #nosec G115 -- bounded threshold × small multiplier
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	if setNow(account.LockedUntil, lockUntil) {
+	if setNow(account.LockedUntil, accountUntil) {
 		locks = append(locks, AccountLock{
 			Email: a.email, Network: a.network, Counter: CounterAccount,
 			Reason:   fmt.Sprintf("%d failed sign-ins from any network", account.FailedCount),
 			Failures: int(account.FailedCount), Threshold: accountCap,
-			Window: a.lockout.Window, LockedUntil: lockUntil,
+			Window: platform.Window, LockedUntil: accountUntil,
 		})
 	}
 
@@ -373,8 +373,8 @@ func (s *Service) countSourceFailure(ctx context.Context, q *dbgen.Queries, a si
 
 // setNow reports whether a counter's lock is the one this attempt asked for,
 // i.e. this attempt set it (an older lock has an older expiry).
-func setNow(lockedUntil pgtype.Timestamptz, asked time.Time) bool {
-	return lockedUntil.Valid && lockedUntil.Time.Equal(asked)
+func setNow(lockedUntil *time.Time, asked time.Time) bool {
+	return lockedUntil != nil && lockedUntil.Equal(asked)
 }
 
 // clearFailedSignIns forgets the account's failures after a successful

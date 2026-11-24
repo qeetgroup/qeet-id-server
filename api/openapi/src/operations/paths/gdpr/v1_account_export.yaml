@@ -1,0 +1,101 @@
+post:
+  operationId: exportMyAccount
+  description: >-
+    Assembles the authenticated user's own portable data across every
+    organization they belong to and returns it synchronously as a downloadable
+    JSON attachment, supporting the data-portability right. The caller is
+    identified from the session or key, so no user identifier is supplied and no
+    organization scope is required.
+  summary: Export the authenticated user's portable account data
+  tags:
+    - GDPR
+  security:
+    - bearerAuth: []
+  responses:
+    "200":
+      description: The caller's personal data, as a downloadable JSON document.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - profile
+              - sessions
+              - passkeys
+              - roles
+              - mfa_totp_enabled
+              - identities
+              - otp_factors
+              - app_consents
+              - app_grants
+              - groups
+              - sign_ins
+              - generated_at
+            properties:
+              profile:
+                type: object
+                additionalProperties: true
+                description: >-
+                  Email, phone, display name, avatar, metadata, status and
+                  verification times.
+              sessions:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              passkeys:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              roles:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              mfa_totp_enabled:
+                type: boolean
+              identities:
+                type: array
+                description: Linked social and single sign-on accounts.
+                items:
+                  type: object
+                  additionalProperties: true
+              otp_factors:
+                type: array
+                description: Email and SMS second factors, their destinations masked.
+                items:
+                  type: object
+                  additionalProperties: true
+              app_consents:
+                type: array
+                description: Applications consented to and the scopes granted.
+                items:
+                  type: object
+                  additionalProperties: true
+              app_grants:
+                type: array
+                description: Live application grants.
+                items:
+                  type: object
+                  additionalProperties: true
+              groups:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              sign_ins:
+                type: array
+                description: >-
+                  The latest 1000 sign-ins, made and failed, with address and
+                  user agent.
+                items:
+                  type: object
+                  additionalProperties: true
+              generated_at:
+                type: string
+                format: date-time
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

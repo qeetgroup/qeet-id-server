@@ -1,0 +1,251 @@
+# sqlc for every package's dbgen/: one entry per package, each generating
+# <package>/dbgen from <package>/queries.sql against the migrations. Options and
+# type overrides are anchored on the first entry and shared by every other one;
+# a NULL-able uuid, timestamptz or date is a *uuid.UUID or *time.Time (nil is
+# NULL).
+# Regenerate with `make sqlc`; `make sqlc-check` fails on drift or on a
+# queries.sql missing here.
+version: "2"
+sql:
+  - &package
+    engine: postgresql
+    schema: internal/platform/database/migrations
+    queries: internal/access/authentication/queries.sql
+    gen:
+      go: &go
+        package: dbgen
+        out: internal/access/authentication/dbgen
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_interface: false
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+        overrides:
+          - &uuid { db_type: uuid, go_type: github.com/google/uuid.UUID }
+          - &uuid_null {
+              db_type: uuid,
+              nullable: true,
+              go_type: { import: github.com/google/uuid, type: UUID, pointer: true },
+            }
+          - &time { db_type: timestamptz, go_type: time.Time }
+          - &time_null {
+              db_type: timestamptz,
+              nullable: true,
+              go_type: { import: time, type: Time, pointer: true },
+            }
+          - &date { db_type: date, go_type: time.Time }
+          - &date_null {
+              db_type: date,
+              nullable: true,
+              go_type: { import: time, type: Time, pointer: true },
+            }
+  - <<: *package
+    queries: internal/access/accountnotice/queries.sql
+    gen: { go: { <<: *go, out: internal/access/accountnotice/dbgen } }
+  - <<: *package
+    queries: internal/access/authpolicy/queries.sql
+    gen: { go: { <<: *go, out: internal/access/authpolicy/dbgen } }
+  - <<: *package
+    queries: internal/access/authorization/abac/queries.sql
+    gen: { go: { <<: *go, out: internal/access/authorization/abac/dbgen } }
+  - <<: *package
+    queries: internal/access/authorization/accessrequest/queries.sql
+    gen: { go: { <<: *go, out: internal/access/authorization/accessrequest/dbgen } }
+  - <<: *package
+    queries: internal/access/authorization/decisionlog/queries.sql
+    gen: { go: { <<: *go, out: internal/access/authorization/decisionlog/dbgen } }
+  - <<: *package
+    queries: internal/access/authorization/rbac/queries.sql
+    gen: { go: { <<: *go, out: internal/access/authorization/rbac/dbgen } }
+  - <<: *package
+    queries: internal/access/authorization/rebac/queries.sql
+    gen: { go: { <<: *go, out: internal/access/authorization/rebac/dbgen } }
+  - <<: *package
+    queries: internal/access/mfa/queries.sql
+    gen: { go: { <<: *go, out: internal/access/mfa/dbgen } }
+  - <<: *package
+    queries: internal/access/passkey/queries.sql
+    gen: { go: { <<: *go, out: internal/access/passkey/dbgen } }
+  - <<: *package
+    queries: internal/access/recovery/queries.sql
+    gen: { go: { <<: *go, out: internal/access/recovery/dbgen } }
+  - <<: *package
+    queries: internal/access/ipallow/queries.sql
+    gen: { go: { <<: *go, out: internal/access/ipallow/dbgen } }
+  - <<: *package
+    queries: internal/access/threat/bot/queries.sql
+    gen: { go: { <<: *go, out: internal/access/threat/bot/dbgen } }
+  - <<: *package
+    queries: internal/access/threat/risk/queries.sql
+    gen: { go: { <<: *go, out: internal/access/threat/risk/dbgen } }
+  - <<: *package
+    queries: internal/access/threat/queries.sql
+    gen: { go: { <<: *go, out: internal/access/threat/dbgen } }
+  - <<: *package
+    queries: internal/developer/agent/queries.sql
+    gen: { go: { <<: *go, out: internal/developer/agent/dbgen } }
+  - <<: *package
+    queries: internal/developer/apikey/queries.sql
+    gen: { go: { <<: *go, out: internal/developer/apikey/dbgen } }
+  - <<: *package
+    queries: internal/developer/authhook/queries.sql
+    gen: { go: { <<: *go, out: internal/developer/authhook/dbgen } }
+  - <<: *package
+    queries: internal/developer/credentials/secret/queries.sql
+    gen: { go: { <<: *go, out: internal/developer/credentials/secret/dbgen } }
+  - <<: *package
+    queries: internal/developer/credentials/tokenvault/queries.sql
+    gen: { go: { <<: *go, out: internal/developer/credentials/tokenvault/dbgen } }
+  - <<: *package
+    queries: internal/developer/credentials/vc/queries.sql
+    gen: { go: { <<: *go, out: internal/developer/credentials/vc/dbgen } }
+  - <<: *package
+    queries: internal/developer/principal/queries.sql
+    gen: { go: { <<: *go, out: internal/developer/principal/dbgen } }
+  - <<: *package
+    queries: internal/developer/webhook/queries.sql
+    gen: { go: { <<: *go, out: internal/developer/webhook/dbgen } }
+  - <<: *package
+    queries: internal/federation/adminportal/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/adminportal/dbgen } }
+  - <<: *package
+    queries: internal/federation/directory/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/directory/dbgen } }
+  - <<: *package
+    queries: internal/federation/identitylink/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/identitylink/dbgen } }
+  - <<: *package
+    queries: internal/federation/ldap/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/ldap/dbgen } }
+  - <<: *package
+    queries: internal/federation/logincode/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/logincode/dbgen } }
+  - <<: *package
+    queries: internal/federation/oauthstate/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/oauthstate/dbgen } }
+  - <<: *package
+    queries: internal/federation/oidc/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/oidc/dbgen } }
+  - <<: *package
+    queries: internal/federation/oidcsso/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/oidcsso/dbgen } }
+  - <<: *package
+    queries: internal/federation/provision/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/provision/dbgen } }
+  - <<: *package
+    queries: internal/federation/saml/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/saml/dbgen } }
+  - <<: *package
+    queries: internal/federation/scim/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/scim/dbgen } }
+  - <<: *package
+    queries: internal/federation/social/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/social/dbgen } }
+  - <<: *package
+    queries: internal/federation/ssosync/queries.sql
+    gen: { go: { <<: *go, out: internal/federation/ssosync/dbgen } }
+  - <<: *package
+    queries: internal/identity/domainverify/queries.sql
+    gen: { go: { <<: *go, out: internal/identity/domainverify/dbgen } }
+  - <<: *package
+    queries: internal/identity/group/queries.sql
+    gen: { go: { <<: *go, out: internal/identity/group/dbgen } }
+  - <<: *package
+    queries: internal/identity/invite/queries.sql
+    gen: { go: { <<: *go, out: internal/identity/invite/dbgen } }
+  - <<: *package
+    queries: internal/identity/organization/branding/queries.sql
+    gen: { go: { <<: *go, out: internal/identity/organization/branding/dbgen } }
+  - <<: *package
+    queries: internal/identity/organization/queries.sql
+    gen: { go: { <<: *go, out: internal/identity/organization/dbgen } }
+  - <<: *package
+    queries: internal/identity/user/queries.sql
+    gen: { go: { <<: *go, out: internal/identity/user/dbgen } }
+  - <<: *package
+    queries: internal/identity/verification/queries.sql
+    gen: { go: { <<: *go, out: internal/identity/verification/dbgen } }
+  - <<: *package
+    queries: internal/operations/activity/queries.sql
+    gen:
+      go:
+        <<: *go
+        out: internal/operations/activity/dbgen
+        overrides:
+          [
+            *uuid,
+            *uuid_null,
+            *time,
+            *time_null,
+            *date,
+            *date_null,
+            { db_type: jsonb, go_type: encoding/json.RawMessage },
+          ]
+  - <<: *package
+    queries: internal/operations/analytics/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/analytics/dbgen } }
+  - <<: *package
+    queries: internal/operations/audit/anomaly/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/audit/anomaly/dbgen } }
+  - <<: *package
+    queries: internal/operations/audit/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/audit/dbgen } }
+  - <<: *package
+    queries: internal/operations/billing/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/billing/dbgen } }
+  - <<: *package
+    queries: internal/operations/compliance/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/compliance/dbgen } }
+  - <<: *package
+    queries: internal/operations/email/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/email/dbgen } }
+  - <<: *package
+    queries: internal/operations/gdpr/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/gdpr/dbgen } }
+  - <<: *package
+    queries: internal/operations/notification/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/notification/dbgen } }
+  - <<: *package
+    queries: internal/operations/overview/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/overview/dbgen } }
+  - <<: *package
+    queries: internal/operations/qeetai/queries.sql
+    gen:
+      go:
+        <<: *go
+        out: internal/operations/qeetai/dbgen
+        overrides:
+          [
+            *uuid,
+            *uuid_null,
+            *time,
+            *time_null,
+            *date,
+            *date_null,
+            { db_type: jsonb, go_type: encoding/json.RawMessage },
+          ]
+  - <<: *package
+    queries: internal/operations/ratelimits/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/ratelimits/dbgen } }
+  - <<: *package
+    queries: internal/operations/retention/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/retention/dbgen } }
+  - <<: *package
+    queries: internal/operations/sales/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/sales/dbgen } }
+  - <<: *package
+    queries: internal/operations/search/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/search/dbgen } }
+  - <<: *package
+    queries: internal/operations/servicehealth/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/servicehealth/dbgen } }
+  - <<: *package
+    queries: internal/operations/siem/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/siem/dbgen } }
+  - <<: *package
+    queries: internal/platform/audit/queries.sql
+    gen: { go: { <<: *go, out: internal/platform/audit/dbgen } }
+  - <<: *package
+    queries: internal/platform/messaging/delivery/queries.sql
+    gen: { go: { <<: *go, out: internal/platform/messaging/delivery/dbgen } }

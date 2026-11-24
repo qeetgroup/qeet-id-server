@@ -1,0 +1,51 @@
+type: object
+required:
+  - id
+  - type
+  - severity
+  - detail
+  - status
+  - created_at
+properties:
+  resolved_by:
+    type: string
+    format: uuid
+    description: The person who resolved it; absent while open.
+  resolved_by_email:
+    type: string
+  id:
+    type: string
+    format: uuid
+  type:
+    type: string
+    description: >-
+      e.g. credential_stuffing (an account locked after repeated failed
+      sign-ins) or password_spraying (a source network throttled for failing
+      against many accounts).
+  severity:
+    type: string
+  detail:
+    type: string
+  status:
+    type: string
+  user_id:
+    type: string
+    format: uuid
+  user_email:
+    type: string
+  ip:
+    type: string
+  metadata:
+    type: object
+    additionalProperties: true
+    description: >-
+      The detection's structured context. For a sign-in lock: reason, account,
+      network, counter (account_network or account), failures, threshold,
+      window_minutes, locked_until. For a throttled source: reason, network,
+      counter (source), distinct_accounts, window_minutes, throttled_until.
+  created_at:
+    type: string
+    format: date-time
+  resolved_at:
+    type: string
+    format: date-time

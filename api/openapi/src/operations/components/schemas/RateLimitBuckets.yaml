@@ -1,0 +1,12 @@
+type: object
+required:
+  - organization
+  - user
+  - api_key
+properties:
+  organization:
+    $ref: ./RateLimitBucket.yaml
+  user:
+    $ref: ./RateLimitBucket.yaml
+  api_key:
+    $ref: ./RateLimitBucket.yaml

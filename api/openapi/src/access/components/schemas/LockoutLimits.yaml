@@ -1,0 +1,20 @@
+type: object
+readOnly: true
+description: >-
+  The platform defaults for the lockout settings (threshold 5, window and
+  duration 15 minutes) and the inclusive bounds an organization may choose within. The
+  bounds run from the defaults toward stricter only: a threshold down to 3, a
+  window and lock up to 24 hours. An organization's settings govern the lock on one
+  network; the lock on every network (4 times the platform threshold) always
+  uses the platform defaults. Ignored on update.
+required:
+  - defaults
+  - min
+  - max
+properties:
+  defaults:
+    $ref: ./LockoutSettings.yaml
+  min:
+    $ref: ./LockoutSettings.yaml
+  max:
+    $ref: ./LockoutSettings.yaml

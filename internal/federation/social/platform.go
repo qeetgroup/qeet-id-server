@@ -1,51 +1,55 @@
 package social
 
-// Platform sign-in is the console's own tenant-less social sign-in. It uses
-// env-configured providers and its own state and code tables, matches people by
-// their globally unique email, and issues a tenant-less session.
+// Platform sign-in is the console's own organization-less social sign-in. It uses
+// env-configured providers and its own kind of state and code, matches people
+// by their globally unique email, and issues an organization-less session.
 
 import (
 	"context"
 	"errors"
-	"net/url"
-	"strings"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/logincode"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/oauthstate"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcrp"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
-// SetPlatformProvider registers a discovery-based OIDC provider (Google,
-// Microsoft, …) at platform level (config from env).
-func (s *Service) SetPlatformProvider(name, clientID, clientSecret, discoveryURL string) {
-	s.setPlatform(name, providerConfig{clientID: clientID, clientSecret: clientSecret, discoveryURL: discoveryURL, kind: "oidc"})
+// PlatformProvider is one of the console's organization-less social
+// sign-ins, configured from the environment.
+type PlatformProvider struct {
+	name   string
+	config providerConfig
 }
 
-// SetPlatformGitHub registers GitHub, which isn't OIDC (no discovery doc), so it
-// uses the dedicated adapter in github.go instead of the generic OIDC ceremony.
-func (s *Service) SetPlatformGitHub(clientID, clientSecret string) {
-	s.setPlatform("github", providerConfig{clientID: clientID, clientSecret: clientSecret, kind: "github"})
+// PlatformOIDC is a discovery-based OpenID Connect provider (Google,
+// Microsoft, …) named name.
+func PlatformOIDC(name, clientID, clientSecret, discoveryURL string) PlatformProvider {
+	return PlatformProvider{name, providerConfig{clientID: clientID, clientSecret: clientSecret, discoveryURL: discoveryURL, kind: kindOIDC}}
 }
 
-// SetPlatformApple registers Sign in with Apple. servicesID is the Services ID;
-// the client secret is signed per request from teamID, keyID and privateKey (a
+// PlatformGitHub is GitHub, which isn't OIDC (no discovery doc), so it uses
+// the dedicated adapter in github.go instead of the generic OIDC ceremony.
+func PlatformGitHub(clientID, clientSecret string) PlatformProvider {
+	return PlatformProvider{kindGitHub, providerConfig{clientID: clientID, clientSecret: clientSecret, kind: kindGitHub}}
+}
+
+// PlatformApple is Sign in with Apple. servicesID is the Services ID; the
+// client secret is signed per request from teamID, keyID and privateKey (a
 // .p8 key). See apple.go.
-func (s *Service) SetPlatformApple(servicesID, teamID, keyID, privateKey string) {
-	s.setPlatform("apple", providerConfig{
-		clientID: servicesID, kind: "apple", teamID: teamID, keyID: keyID, privateKey: privateKey,
-	})
-}
-
-func (s *Service) setPlatform(name string, pc providerConfig) {
-	if s.platform == nil {
-		s.platform = map[string]providerConfig{}
-	}
-	s.platform[name] = pc
+func PlatformApple(servicesID, teamID, keyID, privateKey string) PlatformProvider {
+	return PlatformProvider{kindApple, providerConfig{
+		clientID: servicesID, kind: kindApple, teamID: teamID, keyID: keyID, privateKey: privateKey,
+	}}
 }
 
 // PlatformProviderEnabled reports whether a platform provider is configured.
@@ -64,17 +68,8 @@ func (s *Service) PlatformProviderNames() []string {
 	return out
 }
 
-// linkArg maps a link user id to a nullable bind: uuid.Nil (an ordinary
-// login/signup ceremony) becomes SQL NULL.
-func linkArg(id uuid.UUID) *uuid.UUID {
-	if id == uuid.Nil {
-		return nil
-	}
-	return &id
-}
-
 // BeginPlatformLogin persists PKCE state and returns the provider authorization
-// URL for a tenant-less console sign-in / sign-up. allowCreate=true (sign-up)
+// URL for an organization-less console sign-in / sign-up. allowCreate=true (sign-up)
 // lets the callback provision a new account just-in-time; false (sign-in) makes
 // it require an existing account instead of silently creating one.
 func (s *Service) BeginPlatformLogin(ctx context.Context, provider, redirectURI string, allowCreate bool) (string, error) {
@@ -88,106 +83,37 @@ func (s *Service) BeginPlatformLink(ctx context.Context, provider, redirectURI s
 	return s.beginPlatform(ctx, provider, redirectURI, userID, false)
 }
 
+// beginPlatform persists the state of a console sign-in, sign-up or link
+// with a platform provider and returns its authorization URL.
 func (s *Service) beginPlatform(ctx context.Context, provider, redirectURI string, linkUserID uuid.UUID, allowCreate bool) (string, error) {
 	pc, ok := s.platform[provider]
 	if !ok {
-		return "", errs.ErrSocialProviderNotConfigured
+		return "", ErrProviderNotConfigured
 	}
-	if pc.kind == "github" {
-		return s.beginGitHubLogin(ctx, provider, pc, redirectURI, linkUserID, allowCreate)
+	var doc oidcrp.Discovery
+	if pc.kind == kindOIDC {
+		var err error
+		if doc, err = s.oidc.Discover(ctx, pc.discoveryURL); err != nil {
+			return "", ErrDiscoveryFailed.Wrap(err)
+		}
 	}
-	if pc.kind == "apple" {
-		return s.beginAppleLogin(ctx, provider, pc, redirectURI, linkUserID, allowCreate)
-	}
-	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
-	if err != nil {
-		return "", errs.ErrSocialDiscoveryFailed.Wrap(err)
-	}
-	verifier, challenge, err := codes.URLToken()
+	verifier, challenge, nonce, nonceHash, err := ceremonySecrets(pc.kind)
 	if err != nil {
 		return "", err
 	}
-	state, stateHash, err := codes.URLToken()
+	state, err := oauthstate.Save(ctx, s.pool, oauthstate.State{
+		Kind:         oauthstate.KindPlatformSocial,
+		Provider:     provider,
+		CodeVerifier: verifier,
+		NonceHash:    nonceHash,
+		RedirectURI:  redirectURI,
+		LinkUserID:   linkUserID,
+		AllowCreate:  allowCreate,
+	}, socialStateTTL)
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		stateHash, provider, verifier, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID), allowCreate,
-	); err != nil {
-		return "", err
-	}
-	q := url.Values{
-		"response_type":         {"code"},
-		"client_id":             {pc.clientID},
-		"redirect_uri":          {redirectURI},
-		"scope":                 {socialScopes},
-		"state":                 {state},
-		"code_challenge":        {challenge},
-		"code_challenge_method": {"S256"},
-	}
-	sep := "?"
-	if strings.Contains(doc.AuthorizationEndpoint, "?") {
-		sep = "&"
-	}
-	return doc.AuthorizationEndpoint + sep + q.Encode(), nil
-}
-
-// beginGitHubLogin starts GitHub's OAuth authorize flow — no OIDC discovery and
-// no PKCE (GitHub OAuth Apps don't support it), so state is stored with an empty
-// verifier.
-func (s *Service) beginGitHubLogin(ctx context.Context, provider string, pc providerConfig, redirectURI string, linkUserID uuid.UUID, allowCreate bool) (string, error) {
-	state, stateHash, err := codes.URLToken()
-	if err != nil {
-		return "", err
-	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create)
-		VALUES ($1, $2, '', $3, $4, $5, $6)`,
-		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID), allowCreate,
-	); err != nil {
-		return "", err
-	}
-	q := url.Values{
-		"client_id":    {pc.clientID},
-		"redirect_uri": {redirectURI},
-		"scope":        {githubScopes},
-		"state":        {state},
-		"allow_signup": {"true"},
-	}
-	return githubAuthorizeURL + "?" + q.Encode(), nil
-}
-
-// beginAppleLogin starts Sign in with Apple. Requesting name/email forces
-// response_mode=form_post, so Apple returns to the callback via POST.
-func (s *Service) beginAppleLogin(ctx context.Context, provider string, pc providerConfig, redirectURI string, linkUserID uuid.UUID, allowCreate bool) (string, error) {
-	state, stateHash, err := codes.URLToken()
-	if err != nil {
-		return "", err
-	}
-	nonce, nonceHash, err := codes.URLToken()
-	if err != nil {
-		return "", err
-	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states
-		    (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create, nonce_hash)
-		VALUES ($1, $2, '', $3, $4, $5, $6, $7)`,
-		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID), allowCreate, nonceHash,
-	); err != nil {
-		return "", err
-	}
-	q := url.Values{
-		"response_type": {"code"},
-		"response_mode": {"form_post"},
-		"client_id":     {pc.clientID},
-		"redirect_uri":  {redirectURI},
-		"scope":         {appleScopes},
-		"state":         {state},
-		"nonce":         {nonce},
-	}
-	return appleAuthorizeURL + "?" + q.Encode(), nil
+	return s.authorizeURL(pc, doc, redirectURI, state, challenge, nonce), nil
 }
 
 // PlatformCallbackResult is the outcome of a platform OAuth callback: a login
@@ -200,96 +126,39 @@ type PlatformCallbackResult struct {
 	Provider  string
 }
 
-func emailPtr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
 // CompletePlatformCallback consumes the state and exchanges the code. A sign-in
 // yields a one-time LoginCode and needs startedHere (else ErrSocialBrowserMismatch);
 // a link yields a LinkCode for CompletePlatformLink. ErrSocialStateInvalid means
-// the state isn't a platform one, so the caller can try the tenant flow.
+// the state isn't a platform one, so the caller can try the organization flow.
 func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state, code string, startedHere bool) (*PlatformCallbackResult, error) {
 	if state == "" || code == "" {
-		return nil, errs.ErrSocialCallbackParamsMissing
+		return nil, ErrCallbackParamsMissing
 	}
 	pc, ok := s.platform[provider]
 	if !ok {
-		return nil, errs.ErrSocialProviderNotConfigured
+		return nil, ErrProviderNotConfigured
 	}
-	stateHash := codes.Hash(state)
-
-	// Single-use: delete the state row as we read it.
-	var (
-		gotProvider, verifier, redirectURI string
-		expiresAt                          time.Time
-		linkUserID                         *uuid.UUID
-		nonceHash                          *string
-		allowCreate                        bool
-	)
-	err := s.pool.QueryRow(ctx, `
-		DELETE FROM auth.platform_social_states WHERE state_hash = $1
-		RETURNING provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create, nonce_hash`, stateHash,
-	).Scan(&gotProvider, &verifier, &redirectURI, &expiresAt, &linkUserID, &allowCreate, &nonceHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrSocialStateInvalid
-	}
+	st, err := oauthstate.Take(ctx, s.pool, oauthstate.KindPlatformSocial, state, uuid.Nil, stateRefusals)
 	if err != nil {
 		return nil, err
 	}
-	if gotProvider != provider {
-		return nil, errs.ErrSocialProviderMismatch
-	}
-	if time.Now().After(expiresAt) {
-		return nil, errs.ErrSocialStateExpired
+	if st.Provider != provider {
+		return nil, ErrProviderMismatch
 	}
 	// A sign-in completes only in the browser that began it. A link is begun
 	// through the console's server, which sets no cookie in the browser; it is
 	// bound to its account instead, when the account completes it.
-	if linkUserID == nil && !startedHere {
-		return nil, errs.ErrSocialBrowserMismatch
+	if st.LinkUserID == uuid.Nil && !startedHere {
+		return nil, ErrBrowserMismatch
 	}
-
-	var ui userInfo
-	switch pc.kind {
-	case "github":
-		accessToken, err := s.oauth.githubExchange(ctx, pc.clientID, pc.clientSecret, code, redirectURI)
-		if err != nil {
-			return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
-		}
-		if ui, err = s.oauth.githubUserinfo(ctx, accessToken); err != nil {
-			return nil, errs.ErrSocialUserinfoFailed.Wrap(err)
-		}
-	case "apple":
-		if nonceHash == nil || *nonceHash == "" {
-			return nil, errs.ErrSocialStateInvalid
-		}
-		secret, err := appleClientSecret(pc.clientID, pc.teamID, pc.keyID, pc.privateKey)
-		if err != nil {
-			return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
-		}
-		if ui, err = s.oauth.appleExchange(ctx, secret, pc.clientID, code, redirectURI, *nonceHash); err != nil {
-			return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
-		}
-	default:
-		doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
-		if err != nil {
-			return nil, errs.ErrSocialDiscoveryFailed.Wrap(err)
-		}
-		accessToken, err := s.oauth.exchange(ctx, doc, pc.clientID, pc.clientSecret, code, redirectURI, verifier)
-		if err != nil {
-			return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
-		}
-		if ui, err = s.oauth.userinfo(ctx, doc, accessToken); err != nil {
-			return nil, errs.ErrSocialUserinfoFailed.Wrap(err)
-		}
+	ui, err := s.signedIn(ctx, pc, code, st.RedirectURI, st.CodeVerifier, st.NonceHash)
+	if err != nil {
+		return nil, err
 	}
 	// A link ceremony doesn't attach here: whoever arrived may not be the
 	// account that began it. What the provider returned waits under a one-time
 	// code that only that account can complete.
-	if linkUserID != nil {
+	if st.LinkUserID != uuid.Nil {
 		verifiedEmail := ""
 		if ui.EmailVerified {
 			verifiedEmail = ui.Email
@@ -298,11 +167,10 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		if err != nil {
 			return nil, err
 		}
-		if _, err := s.pool.Exec(ctx, `
-			INSERT INTO auth.platform_social_link_codes (code_hash, user_id, provider, subject, email, expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
-			codeHash, *linkUserID, provider, ui.Subject, emailPtr(verifiedEmail), time.Now().UTC().Add(socialCodeTTL),
-		); err != nil {
+		if err := s.q.InsertPlatformSocialLinkCode(ctx, dbgen.InsertPlatformSocialLinkCodeParams{
+			CodeHash: codeHash, UserID: st.LinkUserID, Provider: provider, Subject: ui.Subject,
+			Email: strutil.NilIfEmpty(verifiedEmail), ExpiresAt: time.Now().UTC().Add(socialCodeTTL),
+		}); err != nil {
 			return nil, err
 		}
 		return &PlatformCallbackResult{LinkCode: rawCode, Provider: provider}, nil
@@ -323,37 +191,37 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		userID = owner
 	} else {
 		if ui.Email == "" {
-			return nil, errs.ErrSocialEmailMissing
+			return nil, ErrEmailMissing
 		}
 		if !ui.EmailVerified {
-			return nil, errs.ErrSocialEmailUnverified
+			return nil, ErrEmailUnverified
 		}
 		// New login/signup binding: verified email may resolve an existing local
 		// account or provision a new one when this is a signup ceremony.
-		userID, err = s.findOrCreatePlatformUser(ctx, ui, allowCreate)
+		userID, err = s.findOrCreatePlatformUser(ctx, ui, st.AllowCreate)
 		if err != nil {
 			return nil, err
 		}
+		if err := s.refuseCapturedAccount(ctx, userID); err != nil {
+			return nil, err
+		}
 		if err := s.q.UpsertPlatformSocialIdentity(ctx, dbgen.UpsertPlatformSocialIdentityParams{
-			UserID: userID, Provider: provider, Subject: ui.Subject, Email: emailPtr(ui.Email),
+			UserID: userID, Provider: provider, Subject: ui.Subject, Email: strutil.NilIfEmpty(ui.Email),
 		}); err != nil {
 			return nil, err
 		}
 	}
 
+	// Nor does one whose organization requires single sign-on on its domain.
+	if err := s.refuseCapturedAccount(ctx, userID); err != nil {
+		return nil, err
+	}
 	// A suspended or deleted account gets no code to sign in with.
 	if err := s.auth.CheckSignInAccount(ctx, userID, uuid.Nil, "social", "", ""); err != nil {
 		return nil, err
 	}
-	rawCode, codeHash, err := codes.URLToken()
+	rawCode, err := logincode.Issue(ctx, s.pool, logincode.Code{Kind: logincode.KindPlatformSocial, UserID: userID}, socialCodeTTL)
 	if err != nil {
-		return nil, err
-	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_codes (code_hash, user_id, expires_at)
-		VALUES ($1, $2, $3)`,
-		codeHash, userID, time.Now().UTC().Add(socialCodeTTL),
-	); err != nil {
 		return nil, err
 	}
 	return &PlatformCallbackResult{LoginCode: rawCode, Provider: provider}, nil
@@ -365,29 +233,26 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 // account is the proof; an identity linked to someone else is refused.
 func (s *Service) CompletePlatformLink(ctx context.Context, rawCode string, userID uuid.UUID) (string, error) {
 	if rawCode == "" {
-		return "", errs.ErrSocialCodeRequired
+		return "", ErrCodeRequired
 	}
-	var (
-		linkUserID        uuid.UUID
-		provider, subject string
-		email             *string
-		expiresAt         time.Time
-	)
-	err := s.pool.QueryRow(ctx, `
-		DELETE FROM auth.platform_social_link_codes WHERE code_hash = $1
-		RETURNING user_id, provider, subject, email, expires_at`, codes.Hash(rawCode),
-	).Scan(&linkUserID, &provider, &subject, &email, &expiresAt)
+	held, err := s.q.TakePlatformSocialLinkCode(ctx, codes.Hash(rawCode))
+	linkUserID, provider, subject, email, expiresAt := held.UserID, held.Provider, held.Subject, held.Email, held.ExpiresAt
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrSocialLinkCodeInvalid
+		return "", ErrLinkCodeInvalid
 	}
 	if err != nil {
 		return "", err
 	}
 	if time.Now().After(expiresAt) {
-		return "", errs.ErrSocialLinkCodeInvalid
+		return "", ErrLinkCodeInvalid
 	}
 	if linkUserID != userID {
-		return "", errs.ErrSocialLinkAccountMismatch
+		return "", ErrLinkAccountMismatch
+	}
+	// An account whose organization requires single sign-on signs in only
+	// through it, so a provider linked now would never sign it in.
+	if err := s.refuseCapturedAccount(ctx, userID); err != nil {
+		return "", err
 	}
 	owner, err := s.q.GetPlatformSocialIdentityOwner(ctx, dbgen.GetPlatformSocialIdentityOwnerParams{
 		Provider: provider,
@@ -397,7 +262,7 @@ func (s *Service) CompletePlatformLink(ctx context.Context, rawCode string, user
 		return "", err
 	}
 	if err == nil && owner != userID {
-		return "", errs.ErrSocialAlreadyLinked
+		return "", ErrAlreadyLinked
 	}
 	if err := s.q.UpsertPlatformSocialIdentity(ctx, dbgen.UpsertPlatformSocialIdentityParams{
 		UserID:   userID,
@@ -411,26 +276,20 @@ func (s *Service) CompletePlatformLink(ctx context.Context, rawCode string, user
 }
 
 // findOrCreatePlatformUser returns the user with ui.Email. With none, it creates
-// a password-less tenant-less user when allowCreate (sign-up) and otherwise
+// a password-less organization-less user when allowCreate (sign-up) and otherwise
 // fails with ErrSocialNoAccount.
 func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, allowCreate bool) (uuid.UUID, error) {
-	var userID uuid.UUID
-	err := s.pool.QueryRow(ctx,
-		`SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, ui.Email,
-	).Scan(&userID)
+	userID, err := s.q.AccountByEmail(ctx, ui.Email)
 	if err == nil {
 		// Adopt the account only if it has proved owning the address, or a squatter
 		// who registered it unverified keeps a working password on it.
-		if err := requireVerifiedAddress(ctx, s.pool, userID); err != nil {
+		if err := requireVerifiedAddress(ctx, s.q, userID); err != nil {
 			return uuid.Nil, err
 		}
 		// Existing account: adopt the provider's avatar only if none is set yet,
 		// so we never clobber a picture the user chose themselves.
 		if ui.Picture != "" {
-			_, _ = s.pool.Exec(ctx,
-				`UPDATE "user".users SET avatar_url = $2
-				 WHERE id = $1 AND (avatar_url IS NULL OR avatar_url = '')`,
-				userID, ui.Picture)
+			_ = s.q.AdoptAccountAvatar(ctx, dbgen.AdoptAccountAvatarParams{ID: userID, AvatarUrl: &ui.Picture})
 		}
 		return userID, nil
 	}
@@ -440,7 +299,11 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, all
 	// No account for this email. Only a sign-up ceremony may provision one — a
 	// sign-in must not silently create an account.
 	if !allowCreate {
-		return uuid.Nil, errs.ErrSocialNoAccount
+		return uuid.Nil, ErrNoAccount
+	}
+	// Nor on a domain an organization manages: it creates its people's accounts.
+	if err := domainverify.CheckNewAccount(ctx, s.pool, uuid.Nil, ui.Email); err != nil {
+		return uuid.Nil, err
 	}
 	var displayName, avatar *string
 	if ui.Name != "" {
@@ -449,38 +312,47 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, all
 	if ui.Picture != "" {
 		avatar = &ui.Picture
 	}
-	if err := s.pool.QueryRow(ctx,
-		`INSERT INTO "user".users (email, display_name, avatar_url) VALUES ($1, $2, $3) RETURNING id`,
-		ui.Email, displayName, avatar,
-	).Scan(&userID); err != nil {
-		return uuid.Nil, err
-	}
-	return userID, nil
+	// The platform provider verified the address: the callback takes no other.
+	return s.q.InsertPlatformAccount(ctx, dbgen.InsertPlatformAccountParams{Email: ui.Email, DisplayName: displayName, AvatarUrl: avatar})
 }
 
-// ExchangePlatformLogin trades a one-time platform login code for a tenant-less
-// token pair, or the second-factor challenge to meet first. A code that isn't a
-// platform one fails with ErrSocialLoginCodeInvalid, so the caller can try the
-// tenant exchange.
-func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua string) (*auth.LoginResult, error) {
-	if rawCode == "" {
-		return nil, errs.ErrSocialCodeRequired
-	}
-	codeHash := codes.Hash(rawCode)
-	// Atomically claim an unused, unexpired code.
-	var userID uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		UPDATE auth.platform_social_codes
-		SET used_at = NOW()
-		WHERE code_hash = $1 AND used_at IS NULL AND expires_at > NOW()
-		RETURNING user_id`, codeHash,
-	).Scan(&userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrSocialLoginCodeInvalid
-	}
+// platformCodeRefusals are the errors a platform login code is refused with.
+// A used or expired one reads as invalid, as any code that isn't a platform
+// one does, so the caller tries the organization exchange.
+var platformCodeRefusals = logincode.Refusals{
+	Required: ErrCodeRequired,
+	Invalid:  ErrLoginCodeInvalid,
+	Used:     ErrLoginCodeInvalid,
+	Expired:  ErrLoginCodeInvalid,
+}
+
+// ExchangePlatformLogin trades a one-time platform login code for an
+// organization-less token pair, or the second-factor challenge to meet first.
+// A code that isn't a platform one fails with ErrSocialLoginCodeInvalid, so
+// the caller can try the organization exchange.
+func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua string) (*authentication.LoginResult, error) {
+	code, err := logincode.Consume(ctx, s.pool, logincode.KindPlatformSocial, rawCode, platformCodeRefusals)
 	if err != nil {
 		return nil, err
 	}
-	// Tenant-less, exactly like signup.
-	return s.auth.BeginSocialSignIn(ctx, userID, uuid.Nil, ip, ua)
+	// Organization-less, exactly like signup.
+	return s.auth.BeginSocialSignIn(ctx, code.UserID, uuid.Nil, ip, ua)
+}
+
+// platformProviders reports the configured platform-level social providers.
+func (h *Handler) platformProviders(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"providers": h.Service.PlatformProviderNames()})
+}
+
+// requireVerifiedAddress refuses, with ErrSocialAccountUnverified, adopting an
+// account whose address nobody has proved owning.
+func requireVerifiedAddress(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) error {
+	verified, err := q.AccountAddressVerified(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !verified {
+		return ErrAccountUnverified
+	}
+	return nil
 }

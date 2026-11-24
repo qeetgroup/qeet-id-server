@@ -9,14 +9,13 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const directoryHealth = `-- name: DirectoryHealth :one
-SELECT (SELECT count(*) FROM tenant.ldap_connections l WHERE l.tenant_id = $1 AND l.status = 'active')::int AS ldap_connections,
-       (SELECT count(*) FROM tenant.scim_tokens s WHERE s.tenant_id = $1 AND s.revoked_at IS NULL
+SELECT (SELECT count(*) FROM organization.ldap_connections l WHERE l.organization_id = $1 AND l.status = 'active')::int AS ldap_connections,
+       (SELECT count(*) FROM organization.scim_tokens s WHERE s.organization_id = $1 AND s.revoked_at IS NULL
           AND (s.expires_at IS NULL OR s.expires_at > NOW()))::int AS scim_tokens,
-       (SELECT count(*) FROM tenant.directory_events e WHERE e.tenant_id = $1 AND e.status = 'failed'
+       (SELECT count(*) FROM organization.directory_events e WHERE e.organization_id = $1 AND e.status = 'failed'
           AND e.resolution = 'open' AND e.started_at > NOW() - INTERVAL '24 hours')::int AS open_failures
 `
 
@@ -26,10 +25,10 @@ type DirectoryHealthRow struct {
 	OpenFailures    int32
 }
 
-// DirectoryHealth counts the organisation's active LDAP connections and live
+// DirectoryHealth counts the organization's active LDAP connections and live
 // SCIM tokens, and its failed directory operations of the last day still open.
-func (q *Queries) DirectoryHealth(ctx context.Context, tenantID uuid.UUID) (DirectoryHealthRow, error) {
-	row := q.db.QueryRow(ctx, directoryHealth, tenantID)
+func (q *Queries) DirectoryHealth(ctx context.Context, organizationID uuid.UUID) (DirectoryHealthRow, error) {
+	row := q.db.QueryRow(ctx, directoryHealth, organizationID)
 	var i DirectoryHealthRow
 	err := row.Scan(&i.LdapConnections, &i.ScimTokens, &i.OpenFailures)
 	return i, err
@@ -40,7 +39,7 @@ const emailHealth = `-- name: EmailHealth :one
 SELECT count(*) FILTER (WHERE status <> 'suppressed')::int AS attempted,
        count(*) FILTER (WHERE status = 'failed')::int AS failed
 FROM platform.email_messages
-WHERE tenant_id = $1 AND sent_at > NOW() - INTERVAL '1 hour'
+WHERE organization_id = $1 AND sent_at > NOW() - INTERVAL '1 hour'
 `
 
 type EmailHealthRow struct {
@@ -49,10 +48,10 @@ type EmailHealthRow struct {
 }
 
 // Queries for the service-health domain.
-// EmailHealth counts the organisation's emails of the last hour handed to the
+// EmailHealth counts the organization's emails of the last hour handed to the
 // provider, and those it failed to take.
-func (q *Queries) EmailHealth(ctx context.Context, tenantID pgtype.UUID) (EmailHealthRow, error) {
-	row := q.db.QueryRow(ctx, emailHealth, tenantID)
+func (q *Queries) EmailHealth(ctx context.Context, organizationID *uuid.UUID) (EmailHealthRow, error) {
+	row := q.db.QueryRow(ctx, emailHealth, organizationID)
 	var i EmailHealthRow
 	err := row.Scan(&i.Attempted, &i.Failed)
 	return i, err
@@ -137,8 +136,8 @@ const webhookHealth = `-- name: WebhookHealth :one
 SELECT count(*) FILTER (WHERE disabled_at IS NULL)::int AS active,
        count(*) FILTER (WHERE disabled_at IS NULL AND failing_since IS NOT NULL)::int AS failing,
        count(*) FILTER (WHERE disabled_at IS NOT NULL AND disabled_reason = 'failing')::int AS disabled_failing
-FROM tenant.webhook_subscriptions
-WHERE tenant_id = $1
+FROM organization.webhook_subscriptions
+WHERE organization_id = $1
 `
 
 type WebhookHealthRow struct {
@@ -147,10 +146,10 @@ type WebhookHealthRow struct {
 	DisabledFailing int32
 }
 
-// WebhookHealth counts the organisation's enabled subscriptions, those whose
+// WebhookHealth counts the organization's enabled subscriptions, those whose
 // deliveries are failing, and those disabled for failing.
-func (q *Queries) WebhookHealth(ctx context.Context, tenantID uuid.UUID) (WebhookHealthRow, error) {
-	row := q.db.QueryRow(ctx, webhookHealth, tenantID)
+func (q *Queries) WebhookHealth(ctx context.Context, organizationID uuid.UUID) (WebhookHealthRow, error) {
+	row := q.db.QueryRow(ctx, webhookHealth, organizationID)
 	var i WebhookHealthRow
 	err := row.Scan(&i.Active, &i.Failing, &i.DisabledFailing)
 	return i, err

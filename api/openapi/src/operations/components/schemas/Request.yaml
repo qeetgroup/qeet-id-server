@@ -1,0 +1,60 @@
+type: object
+required:
+  - completed_at
+  - created_at
+  - grace_until
+  - id
+  - reason
+  - requested_by
+  - status
+  - organization_id
+  - user_id
+properties:
+  completed_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  created_at:
+    type: string
+    format: date-time
+  grace_until:
+    type: string
+    format: date-time
+  id:
+    type: string
+    format: uuid
+  reason:
+    type:
+      - string
+      - "null"
+  requested_by:
+    type:
+      - string
+      - "null"
+    format: uuid
+  status:
+    type: string
+  organization_id:
+    type: string
+    format: uuid
+  user_id:
+    type: string
+    format: uuid
+    description: The account to erase; kept after the account itself is deleted.
+  subject_email:
+    type:
+      - string
+      - "null"
+    description: The person's email as the request was filed; null once they are erased.
+  subject_name:
+    type:
+      - string
+      - "null"
+    description: Their display name as the request was filed; null once they are erased.
+  subject_redacted:
+    type: boolean
+    description: The erasure ran, so who it was filed for is no longer kept.
+  grace_period_days:
+    type: integer
+    description: How many days a request waits before the erasure runs.

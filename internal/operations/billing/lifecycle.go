@@ -11,10 +11,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -31,12 +31,10 @@ type PeriodEndRun struct {
 	Ended, Renewed, PastDue, Failed int
 }
 
-// RunPeriodEnds acts on every subscription whose trial or period has ended. A
-// trial, or a plan marked to cancel, ends and the organisation moves to free.
-// A free plan starts its next period. A paid plan is billed for its next
-// period with an open renewal invoice and is past due until it is paid; still
-// unpaid after the payment grace, it ends. Each change is audited on the
-// organisation's chain, and running again changes nothing more.
+// RunPeriodEnds acts on every subscription whose trial or period has ended: a trial or a plan marked
+// to cancel moves to free; a free plan starts its next period; a paid plan gets an open renewal invoice
+// and is past due until paid, ending once the payment grace runs out. Each change is audited on the
+// organization's chain, and running again changes nothing more.
 func (s *Service) RunPeriodEnds(ctx context.Context) (PeriodEndRun, error) {
 	var run PeriodEndRun
 	now := time.Now().UTC()
@@ -44,11 +42,11 @@ func (s *Service) RunPeriodEnds(ctx context.Context) (PeriodEndRun, error) {
 	if err != nil {
 		return run, err
 	}
-	for _, tenantID := range due {
-		step, err := s.endPeriod(ctx, tenantID, now)
+	for _, organizationID := range due {
+		step, err := s.endPeriod(ctx, organizationID, now)
 		if err != nil {
 			run.Failed++
-			slog.Warn("billing: period end failed", "tenant_id", tenantID, "err", err)
+			slog.Warn("billing: period end failed", "organization_id", organizationID, "err", err)
 			continue
 		}
 		switch step {
@@ -63,17 +61,17 @@ func (s *Service) RunPeriodEnds(ctx context.Context) (PeriodEndRun, error) {
 	return run, nil
 }
 
-// endPeriod takes the tenant's subscription one step past the end of its trial
+// endPeriod takes the organization's subscription one step past the end of its trial
 // or period at now, and names the step: "ended", "renewed", "past_due", or ""
 // when it was no longer due.
-func (s *Service) endPeriod(ctx context.Context, tenantID uuid.UUID, now time.Time) (string, error) {
+func (s *Service) endPeriod(ctx context.Context, organizationID uuid.UUID, now time.Time) (string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
-	sub, err := q.LockSubscription(ctx, tenantID)
+	sub, err := q.LockSubscription(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -83,10 +81,10 @@ func (s *Service) endPeriod(ctx context.Context, tenantID uuid.UUID, now time.Ti
 	end := sub.CurrentPeriodEnd
 	var step string
 	switch {
-	case sub.Status == "trialing" && sub.TrialEnd.Valid && !now.Before(sub.TrialEnd.Time):
-		step, err = "ended", s.endSubscription(ctx, tx, tenantID, sub.Code, "trial_ended")
+	case sub.Status == "trialing" && sub.TrialEnd != nil && !now.Before(*sub.TrialEnd):
+		step, err = "ended", s.endSubscription(ctx, tx, organizationID, sub.Code, "trial_ended")
 	case sub.Status == "active" && !now.Before(end) && sub.CancelAtPeriodEnd:
-		step, err = "ended", s.endSubscription(ctx, tx, tenantID, sub.Code, "canceled")
+		step, err = "ended", s.endSubscription(ctx, tx, organizationID, sub.Code, "canceled")
 	case sub.Status == "active" && !now.Before(end) && sub.AmountMinor == 0:
 		// A free plan has nothing to bill. After a long gap it starts afresh
 		// from now rather than catching up one period at a time.
@@ -95,18 +93,18 @@ func (s *Service) endPeriod(ctx context.Context, tenantID uuid.UUID, now time.Ti
 			start = now
 		}
 		next := periodEnd(start, sub.Interval)
-		if err = q.RenewSubscription(ctx, dbgen.RenewSubscriptionParams{TenantID: tenantID, PeriodStart: start, PeriodEnd: next}); err == nil {
-			step, err = "renewed", recordBillingEvent(ctx, tx, tenantID, "billing.subscription_renewed",
+		if err = q.RenewSubscription(ctx, dbgen.RenewSubscriptionParams{OrganizationID: organizationID, PeriodStart: start, PeriodEnd: next}); err == nil {
+			step, err = "renewed", recordBillingEvent(ctx, tx, organizationID, "billing.subscription_renewed",
 				map[string]any{"plan_code": sub.Code, "current_period_end": next})
 		}
 	case sub.Status == "active" && !now.Before(end):
-		step, err = "past_due", s.billRenewal(ctx, tx, tenantID, sub)
+		step, err = "past_due", s.billRenewal(ctx, tx, organizationID, sub)
 	case sub.Status == "past_due" && (sub.CancelAtPeriodEnd || !now.Before(end.Add(s.paymentGrace))):
 		reason := "unpaid"
 		if sub.CancelAtPeriodEnd {
 			reason = "canceled"
 		}
-		step, err = "ended", s.endSubscription(ctx, tx, tenantID, sub.Code, reason)
+		step, err = "ended", s.endSubscription(ctx, tx, organizationID, sub.Code, reason)
 	default:
 		return "", nil
 	}
@@ -118,71 +116,69 @@ func (s *Service) endPeriod(ctx context.Context, tenantID uuid.UUID, now time.Ti
 
 // billRenewal issues the open invoice for the period after sub's, taxed by the
 // billing profile, and makes the subscription past due until it is paid.
-func (s *Service) billRenewal(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, sub dbgen.LockSubscriptionRow) error {
+func (s *Service) billRenewal(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, sub dbgen.LockSubscriptionRow) error {
 	q := s.q.WithTx(tx)
 	start := sub.CurrentPeriodEnd
 	next := periodEnd(start, sub.Interval)
-	tr := s.taxFor(ctx, q, tenantID, sub.AmountMinor, "")
-	invoiceID, err := s.issueInvoice(ctx, q, tenantID, sub.Code, sub.Currency, invoiceKindRenewal, start, next, tr, false)
+	tr := s.taxFor(ctx, q, organizationID, sub.AmountMinor, "")
+	invoiceID, err := s.issueInvoice(ctx, q, organizationID, sub.Code, sub.Currency, invoiceKindRenewal, start, next, tr, false)
 	if err != nil {
 		return err
 	}
-	if err := q.SetSubscriptionPastDue(ctx, tenantID); err != nil {
+	if err := q.SetSubscriptionPastDue(ctx, organizationID); err != nil {
 		return err
 	}
-	return recordBillingEvent(ctx, tx, tenantID, "billing.subscription_past_due", map[string]any{
+	return recordBillingEvent(ctx, tx, organizationID, "billing.subscription_past_due", map[string]any{
 		"plan_code": sub.Code, "invoice_id": invoiceID, "amount_minor": tr.TotalMinor, "currency": sub.Currency,
 		"due_at": start.Add(s.paymentGrace),
 	})
 }
 
-// endSubscription ends the tenant's subscription to plan for reason
-// ("trial_ended", "canceled" or "unpaid"): the organisation moves to free and
+// endSubscription ends the organization's subscription to plan for reason
+// ("trial_ended", "canceled" or "unpaid"): the organization moves to free and
 // a renewal still open is no longer owed.
-func (s *Service) endSubscription(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, plan, reason string) error {
+func (s *Service) endSubscription(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, plan, reason string) error {
 	q := s.q.WithTx(tx)
-	if err := q.EndSubscription(ctx, tenantID); err != nil {
+	if err := q.EndSubscription(ctx, organizationID); err != nil {
 		return err
 	}
-	voided, err := q.VoidOpenRenewals(ctx, tenantID)
+	voided, err := q.VoidOpenRenewals(ctx, organizationID)
 	if err != nil {
 		return err
 	}
-	if err := q.SetTenantPlan(ctx, dbgen.SetTenantPlanParams{Plan: "free", TenantID: tenantID}); err != nil {
+	if err := q.SetOrganizationPlan(ctx, dbgen.SetOrganizationPlanParams{Plan: "free", OrganizationID: organizationID}); err != nil {
 		return err
 	}
-	return recordBillingEvent(ctx, tx, tenantID, "billing.subscription_ended", map[string]any{
+	return recordBillingEvent(ctx, tx, organizationID, "billing.subscription_ended", map[string]any{
 		"plan_code": plan, "reason": reason, "renewals_voided": voided,
 	})
 }
 
 // recordBillingEvent audits a change the billing system made itself on the
-// tenant's chain.
-func recordBillingEvent(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, action string, metadata map[string]any) error {
-	return audit.Record(ctx, tx, audit.Event{
-		TenantID: &tenantID, ActorType: "system", Action: action, ResourceType: "subscription", Metadata: metadata,
-	})
+// organization's chain.
+func recordBillingEvent(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, action string, metadata map[string]any) error {
+	return audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(organizationID, action, "subscription", uuid.Nil, metadata))
 }
 
-// settleInvoice marks the tenant's open invoice paid within tx, by via (a
+// settleInvoice marks the organization's open invoice paid within tx, by via (a
 // provider's name, or "operator") with the payment's reference. A paid renewal
 // of a past-due subscription starts the period it billed.
-func (s *Service) settleInvoice(ctx context.Context, tx pgx.Tx, tenantID, invoiceID uuid.UUID, reference, via string) error {
+func (s *Service) settleInvoice(ctx context.Context, tx pgx.Tx, organizationID, invoiceID uuid.UUID, reference, via string) error {
 	q := s.q.WithTx(tx)
-	inv, err := q.LockInvoice(ctx, dbgen.LockInvoiceParams{ID: invoiceID, TenantID: tenantID})
+	inv, err := q.LockInvoice(ctx, dbgen.LockInvoiceParams{ID: invoiceID, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrBillingInvoiceNotFound
+		return ErrInvoiceNotFound
 	}
 	if err != nil {
 		return err
 	}
 	if inv.Status != "open" {
-		return errs.ErrBillingInvoiceNotOpen
+		return ErrInvoiceNotOpen
 	}
-	if err := q.SettleInvoice(ctx, dbgen.SettleInvoiceParams{ID: invoiceID, TenantID: tenantID, PaymentReference: reference}); err != nil {
+	if err := q.SettleInvoice(ctx, dbgen.SettleInvoiceParams{ID: invoiceID, OrganizationID: organizationID, PaymentReference: reference}); err != nil {
 		return err
 	}
-	if err := recordBillingEvent(ctx, tx, tenantID, "billing.invoice_paid", map[string]any{
+	if err := recordBillingEvent(ctx, tx, organizationID, "billing.invoice_paid", map[string]any{
 		"invoice_id": invoiceID, "invoice_number": inv.InvoiceNumber, "amount_minor": inv.AmountMinor,
 		"currency": inv.Currency, "via": via, "reference": reference,
 	}); err != nil {
@@ -191,7 +187,7 @@ func (s *Service) settleInvoice(ctx context.Context, tx pgx.Tx, tenantID, invoic
 	if inv.Kind != invoiceKindRenewal {
 		return nil
 	}
-	sub, err := q.LockSubscription(ctx, tenantID)
+	sub, err := q.LockSubscription(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -202,26 +198,26 @@ func (s *Service) settleInvoice(ctx context.Context, tx pgx.Tx, tenantID, invoic
 		return nil
 	}
 	if err := q.RenewSubscription(ctx, dbgen.RenewSubscriptionParams{
-		TenantID: tenantID, PeriodStart: inv.PeriodStart, PeriodEnd: inv.PeriodEnd,
+		OrganizationID: organizationID, PeriodStart: inv.PeriodStart, PeriodEnd: inv.PeriodEnd,
 	}); err != nil {
 		return err
 	}
-	return recordBillingEvent(ctx, tx, tenantID, "billing.subscription_renewed", map[string]any{
+	return recordBillingEvent(ctx, tx, organizationID, "billing.subscription_renewed", map[string]any{
 		"plan_code": sub.Code, "invoice_id": invoiceID, "current_period_end": inv.PeriodEnd,
 	})
 }
 
 // MarkInvoicePaid records, for a platform operator, that an open invoice was
 // paid outside a checkout, such as by bank transfer, with the payment's
-// reference. It is audited on the organisation's chain.
+// reference. It is audited on the organization's chain.
 func (s *Service) MarkInvoicePaid(ctx context.Context, invoiceID uuid.UUID, reference string) error {
 	reference = strings.TrimSpace(reference)
 	if reference == "" {
 		return errs.ErrBadRequest.WithDetail("a payment reference is required")
 	}
-	tenantID, err := s.q.InvoiceTenant(ctx, invoiceID)
+	organizationID, err := s.q.InvoiceOrganization(ctx, invoiceID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrBillingInvoiceNotFound
+		return ErrInvoiceNotFound
 	}
 	if err != nil {
 		return err
@@ -231,33 +227,31 @@ func (s *Service) MarkInvoicePaid(ctx context.Context, invoiceID uuid.UUID, refe
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err := s.settleInvoice(ctx, tx, tenantID, invoiceID, reference, "operator"); err != nil {
+	if err := s.settleInvoice(ctx, tx, organizationID, invoiceID, reference, "operator"); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// PayInvoice opens a hosted checkout for the tenant's open invoice, through
+// PayInvoice opens a hosted checkout for the organization's open invoice, through
 // the provider for its billing country or else its currency. Completing it
 // settles the invoice; with no provider, it is refused.
-func (s *Service) PayInvoice(ctx context.Context, tenantID, invoiceID uuid.UUID, successURL, cancelURL string) (*CheckoutResult, error) {
-	inv, err := s.q.LockInvoice(ctx, dbgen.LockInvoiceParams{ID: invoiceID, TenantID: tenantID})
+func (s *Service) PayInvoice(ctx context.Context, organizationID, invoiceID uuid.UUID, successURL, cancelURL string) (*CheckoutResult, error) {
+	inv, err := s.q.LockInvoice(ctx, dbgen.LockInvoiceParams{ID: invoiceID, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrBillingInvoiceNotFound
+		return nil, ErrInvoiceNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
 	if inv.Status != "open" {
-		return nil, errs.ErrBillingInvoiceNotOpen
+		return nil, ErrInvoiceNotOpen
 	}
 	var provider PaymentProvider
-	if s.payments != nil {
-		if p, err := billingProfile(ctx, s.q, tenantID); err == nil && p != nil && p.Country != "" {
-			provider = s.payments.forCountry(p.Country)
-		} else {
-			provider = s.payments.forCurrency(inv.Currency)
-		}
+	if p, err := billingProfile(ctx, s.q, organizationID); err == nil && p != nil && p.Country != "" {
+		provider = s.payments.forCountry(p.Country)
+	} else {
+		provider = s.payments.forCurrency(inv.Currency)
 	}
 	if provider == nil {
 		return nil, errs.ErrUnprocessable.
@@ -269,7 +263,7 @@ func (s *Service) PayInvoice(ctx context.Context, tenantID, invoiceID uuid.UUID,
 		name += " " + *inv.InvoiceNumber
 	}
 	return s.openCheckout(ctx, provider, dbgen.InsertBillingCheckoutParams{
-		TenantID:           tenantID,
+		OrganizationID:     organizationID,
 		Provider:           provider.Name(),
 		PlanCode:           inv.PlanCode,
 		Currency:           inv.Currency,
@@ -279,18 +273,32 @@ func (s *Service) PayInvoice(ctx context.Context, tenantID, invoiceID uuid.UUID,
 		TaxRateBps:         inv.TaxRateBps,
 		TaxType:            inv.TaxType,
 		PlaceOfSupply:      inv.PlaceOfSupply,
-		InvoiceID:          pgtype.UUID{Bytes: invoiceID, Valid: true},
+		InvoiceID:          &invoiceID,
 	}, name, successURL, cancelURL)
 }
 
-// SendInvoiceEmails emails each invoice issued in the last day, and not yet
-// emailed, to the billing address it was billed to, and returns how many it
-// sent. Zero invoices aren't sent. An invoice whose send fails is tried again
-// on the next run.
-func (s *Service) SendInvoiceEmails(ctx context.Context) (int, error) {
-	if s.mailer == nil {
-		return 0, nil
+// InvoiceEmails emails each newly issued invoice to the address it was billed
+// to, linking to the console at consoleURL.
+type InvoiceEmails struct {
+	q          *dbgen.Queries
+	mailer     notifier.Sender
+	consoleURL string
+}
+
+// NewInvoiceEmails returns the invoice emails of svc's invoices, sent through
+// mailer. It refuses a nil svc or mailer.
+func NewInvoiceEmails(svc *Service, mailer notifier.Sender, consoleURL string) (*InvoiceEmails, error) {
+	if svc == nil || mailer == nil {
+		return nil, errors.New("billing: invoice emails need the billing service and a mailer")
 	}
+	return &InvoiceEmails{q: svc.q, mailer: mailer, consoleURL: strings.TrimRight(consoleURL, "/")}, nil
+}
+
+// Send emails each invoice issued in the last day, and not yet emailed, to
+// the billing address it was billed to, and returns how many it sent. Zero
+// invoices aren't sent. An invoice whose send fails is tried again on the
+// next run.
+func (s *InvoiceEmails) Send(ctx context.Context) (int, error) {
 	rows, err := s.q.ClaimInvoiceEmails(ctx)
 	if err != nil {
 		return 0, err
@@ -304,7 +312,7 @@ func (s *Service) SendInvoiceEmails(ctx context.Context) (int, error) {
 		msg := s.invoiceEmail(row, to.BillingEmail)
 		if err := s.mailer.Send(ctx, msg); err != nil {
 			slog.Warn("billing: invoice email not sent", "invoice_id", row.ID, "err", err)
-			if rerr := s.q.ReleaseInvoiceEmail(ctx, dbgen.ReleaseInvoiceEmailParams{ID: row.ID, TenantID: row.TenantID}); rerr != nil {
+			if rerr := s.q.ReleaseInvoiceEmail(ctx, dbgen.ReleaseInvoiceEmailParams{ID: row.ID, OrganizationID: row.OrganizationID}); rerr != nil {
 				return sent, rerr
 			}
 			continue
@@ -315,7 +323,7 @@ func (s *Service) SendInvoiceEmails(ctx context.Context) (int, error) {
 }
 
 // invoiceEmail is the message telling to that an invoice was issued.
-func (s *Service) invoiceEmail(row dbgen.ClaimInvoiceEmailsRow, to string) notifier.Message {
+func (s *InvoiceEmails) invoiceEmail(row dbgen.ClaimInvoiceEmailsRow, to string) notifier.Message {
 	number := ""
 	if row.InvoiceNumber != nil {
 		number = " " + *row.InvoiceNumber
@@ -325,20 +333,20 @@ func (s *Service) invoiceEmail(row dbgen.ClaimInvoiceEmailsRow, to string) notif
 		row.PeriodStart.Format("2 Jan 2006"), row.PeriodEnd.Format("2 Jan 2006"), row.Currency, formatMinor(row.AmountMinor))
 	if row.Status == "paid" {
 		intro += " It's paid. Thank you."
-	} else if row.DueAt.Valid {
-		intro += " It's due by " + row.DueAt.Time.Format("2 Jan 2006") + "."
+	} else if row.DueAt != nil {
+		intro += " It's due by " + row.DueAt.Format("2 Jan 2006") + "."
 	}
 	note := "The invoice, with the details it was billed to, is under Settings › Billing in the Qeet ID console."
 	if s.consoleURL != "" {
 		note += " " + s.consoleURL + "/settings/billing"
 	}
 	return notifier.Message{
-		Channel:  "email",
-		To:       to,
-		TenantID: row.TenantID.String(),
-		Subject:  subject,
-		Body:     intro + " " + note,
-		HTML:     emailtmpl.Notice(subject, intro, note),
+		Channel:        "email",
+		To:             to,
+		OrganizationID: row.OrganizationID.String(),
+		Subject:        subject,
+		Body:           intro + " " + note,
+		HTML:           emailtmpl.Notice(subject, intro, note),
 	}
 }
 
@@ -362,7 +370,7 @@ type PaymentMethod struct {
 	ExpYear  int    `json:"exp_year,omitempty"`
 }
 
-// SavedPaymentMethod is the payment method of the organisation's most recent
+// SavedPaymentMethod is the payment method of the organization's most recent
 // completed checkout. Nothing is kept with the provider: each checkout
 // collects its own.
 type SavedPaymentMethod struct {
@@ -371,17 +379,17 @@ type SavedPaymentMethod struct {
 	LastUsedAt time.Time `json:"last_used_at"`
 }
 
-// LastPaymentMethod returns what the tenant's latest completed checkout was
+// LastPaymentMethod returns what the organization's latest completed checkout was
 // paid with, or nil when no provider has said.
-func (s *Service) LastPaymentMethod(ctx context.Context, tenantID uuid.UUID) (*SavedPaymentMethod, error) {
-	row, err := s.q.LatestPaymentMethod(ctx, tenantID)
+func (s *Service) LastPaymentMethod(ctx context.Context, organizationID uuid.UUID) (*SavedPaymentMethod, error) {
+	row, err := s.q.LatestPaymentMethod(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	out := &SavedPaymentMethod{Provider: row.Provider, LastUsedAt: row.CompletedAt.Time}
+	out := &SavedPaymentMethod{Provider: row.Provider, LastUsedAt: postgres.ZeroIfNull(row.CompletedAt)}
 	if err := json.Unmarshal(row.PaymentMethod, &out.PaymentMethod); err != nil {
 		return nil, err
 	}

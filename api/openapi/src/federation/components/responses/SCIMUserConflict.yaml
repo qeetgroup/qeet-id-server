@@ -1,0 +1,10 @@
+description: >-
+  RFC 7644 error: the userName is taken (scimType uniqueness), or is on a domain
+  another organization manages.
+headers:
+  X-Request-Id:
+    $ref: ../../../shared/headers/RequestId.yaml
+content:
+  application/scim+json:
+    schema:
+      $ref: ../schemas/SCIMError.yaml

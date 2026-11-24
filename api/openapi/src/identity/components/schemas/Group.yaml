@@ -1,0 +1,46 @@
+type: object
+required:
+  - created_at
+  - description
+  - id
+  - member_count
+  - name
+  - parent_id
+  - organization_id
+properties:
+  created_at:
+    type: string
+    format: date-time
+  description:
+    type: string
+  id:
+    type: string
+    format: uuid
+  member_count:
+    type: integer
+  name:
+    type: string
+  parent_id:
+    type:
+      - string
+      - "null"
+    format: uuid
+  organization_id:
+    type: string
+    format: uuid
+  roles:
+    type: array
+    description: >-
+      The roles granted to the group itself, in the list only and only for a
+      caller with role.read.
+    items:
+      type: object
+      required:
+        - role_id
+        - name
+      properties:
+        role_id:
+          type: string
+          format: uuid
+        name:
+          type: string

@@ -1,0 +1,6 @@
+type: object
+properties:
+  active:
+    type: boolean
+additionalProperties: true
+description: RFC 7662 response; `active` plus claims when active.

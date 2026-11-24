@@ -1,0 +1,84 @@
+post:
+  operationId: startSignUpCheckout
+  description: >-
+    Begins a hosted payment for a plan chosen during signup, before any
+    organization exists. The organization is created only once payment
+    completes, so an abandoned checkout never leaves a dangling organization. Scoped
+    to the authenticated user; the organization name and slug are required and
+    the return URLs must be valid absolute URLs. Returns the details needed to
+    redirect the browser to the payment provider. When invoice tax is
+    configured, the provider charges the total tax included, taxed by the
+    billing country given, and the new organization's paid invoice shows that
+    charge.
+  summary: Start paid-plan checkout before organization creation
+  tags:
+    - Billing
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - org_name
+            - org_slug
+            - plan_code
+            - currency
+            - success_url
+            - cancel_url
+          properties:
+            org_name:
+              type: string
+              minLength: 1
+            org_slug:
+              type: string
+              minLength: 1
+            plan_code:
+              type: string
+              minLength: 1
+            region:
+              type:
+                - string
+                - "null"
+            currency:
+              type: string
+              pattern: '^\s*[A-Za-z]{3}\s*$'
+              description: An ISO 4217 code, such as INR or USD.
+            country:
+              type:
+                - string
+                - "null"
+              pattern: "^[A-Za-z]{2}$"
+              description: An ISO 3166-1 alpha-2 code, such as IN.
+            success_url:
+              type: string
+              minLength: 1
+              format: uri
+              description: An absolute http or https URL, where the browser returns after paying.
+            cancel_url:
+              type: string
+              minLength: 1
+              format: uri
+              description: An absolute http or https URL, where the browser returns if the payment is abandoned.
+  responses:
+    "200":
+      description: Hosted checkout information
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/CheckoutResult.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,52 @@
+type: object
+description: One item returned by the universal search endpoint.
+required:
+  - type
+  - id
+  - title
+  - subtitle
+  - url
+  - status
+  - updated_at
+  - score
+  - metadata
+properties:
+  type:
+    type: string
+    description: Resource type.
+    enum:
+      - user
+      - organization
+      - group
+      - role
+      - oidc_client
+      - audit_event
+  id:
+    type: string
+    format: uuid
+  title:
+    type: string
+    description: Human-readable primary label (e.g. display name or resource name).
+  subtitle:
+    type: string
+    description: Secondary label (e.g. email or slug).
+  url:
+    type: string
+    description: Console deep-link for this resource.
+  status:
+    type: string
+    description: Resource lifecycle status (e.g. "active", "suspended", "recorded").
+  updated_at:
+    type: string
+    format: date-time
+    description: Last-updated timestamp (uses created_at for immutable resources).
+  score:
+    type: number
+    format: float
+    description: >-
+      Relevance score in [0.5, 1.0]: 1.0 = exact match, 0.75 = prefix match, 0.5
+      = substring match. Results are sorted desc by score.
+  metadata:
+    type: object
+    description: Type-specific supplementary fields (non-normative).
+    additionalProperties: true

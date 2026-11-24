@@ -1,12 +1,14 @@
 package bootstrap
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/branding"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization/branding"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
@@ -21,6 +23,26 @@ type mailer struct {
 	routed      bool
 	testEnabled bool // a test email can be sent: an email transport is configured
 	deliveries  *delivery.Store
+}
+
+// newMailChain builds the outbound message chain, which dresses every message
+// in the organization's branding, as its plan allows, and email templates;
+// identity and operations serve the two.
+func (w *wiring) newMailChain() error {
+	brandingRepo, err := newBrandingRepository(w.pool, w.entitlementSvc, w.cfg.PublicBaseURL)
+	if err != nil {
+		return fmt.Errorf("branding repository: %w", err)
+	}
+	w.brandingRepo, w.emailTemplateService = brandingRepo, email.NewService(w.pool)
+	w.mail = newMailer(w.cfg, w.pool, w.brandingRepo, w.emailTemplateService)
+	w.sender = w.mail.sender
+	return nil
+}
+
+// newBrandingRepository returns the branding repository, its custom branding
+// gated by gate and its assets served from publicBaseURL.
+func newBrandingRepository(pool *pgxpool.Pool, gate entitlements.PlanGate, publicBaseURL string) (*branding.Repository, error) {
+	return branding.NewRepository(pool, gate, publicBaseURL)
 }
 
 // newMailer builds the message chain from cfg.

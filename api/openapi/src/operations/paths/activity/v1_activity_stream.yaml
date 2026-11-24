@@ -1,0 +1,99 @@
+get:
+  operationId: streamActivity
+  summary: Live activity stream (SSE)
+  description: >-
+    Opens a Server-Sent Events stream of ActivityEvent frames for the caller's
+    organization: the audit records themselves, every kind (sign-ins and MFA
+    included), each with its own audit id, so a live event can be opened and
+    related like one from the history. The server follows the audit log every
+    two seconds, or at once when the organization acts. Each frame is `id:
+    <cursor>\nevent: activity\ndata: <json>\n\n`; periodic `: keep-alive`
+    comments prevent proxy timeouts.
+
+
+    When `Last-Event-ID` is supplied (the `id` of the last frame received, an
+    opaque cursor, not the event's UUID) the server replays every audit event
+    newer than it, in chronological order, before switching to the live stream.
+    One connection replays at most 1,000 audit rows: further behind, it sends
+    the cursor of the last row read and a `retry:` frame and ends, and the
+    client's reconnect carries on from there. A frame may carry only an `id` (no
+    event): the cursor of rows the filters passed over, kept as the client's
+    Last-Event-ID. A live frame's id sits ten seconds before its event, to cover
+    records whose transaction committed late; the stream sends each record once,
+    and a reconnect may repeat one, recognisable by its id. Delivery is at least
+    once: a reconnect may repeat an event but doesn't skip one, and a client too
+    slow for the live stream is sent a `retry:` frame and disconnected, to catch
+    up from the audit log on reconnect.
+
+
+    The stream lasts only as long as the access it was opened with. It ends when
+    the access token or API key expires, and within 30 seconds of the reader
+    losing access: their session ended, audit.read no longer theirs (or no
+    longer the key's), the API key revoked, the service principal or agent
+    disabled. It also ends if that check can't be made. A new request is then
+    refused as any other would be.
+
+
+    Server-side filters (`?types`, `?severity`, `?category`) are applied to both
+    the replay and the live stream. The connection organization is derived from the
+    JWT principal only — never from the URL or body.
+
+
+    The write deadline is extended to 1 hour. Set `X-Accel-Buffering: no` is
+    already set by the server (Nginx/Caddy proxy buffering disabled).
+  tags:
+    - Activity
+  parameters:
+    - name: types
+      in: query
+      required: false
+      description: >-
+        Comma-separated event type prefixes to match (e.g. "user,auth"). An
+        event matches if its type equals or starts with any listed value.
+      schema:
+        type: string
+    - name: severity
+      in: query
+      required: false
+      description: Minimum severity level to stream.
+      schema:
+        type: string
+        enum:
+          - info
+          - success
+          - warning
+          - error
+          - critical
+    - name: category
+      in: query
+      required: false
+      description: Exact category to stream; omit for all.
+      schema:
+        type: string
+        enum:
+          - authentication
+          - authorization
+          - security
+          - directory
+          - developer
+          - system
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: >-
+        SSE stream of ActivityEvent frames. Event name: "activity". Periodic "`:
+        keep-alive`" comments maintain the connection.
+      content:
+        text/event-stream:
+          schema:
+            type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

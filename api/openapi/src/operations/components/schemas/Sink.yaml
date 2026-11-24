@@ -1,0 +1,25 @@
+type: object
+required:
+  - created_at
+  - enabled
+  - endpoint
+  - id
+  - type
+properties:
+  created_at:
+    type: string
+    format: date-time
+  enabled:
+    type: boolean
+  endpoint:
+    type: string
+  id:
+    type: string
+    format: uuid
+  last_error:
+    type: string
+  last_forwarded_at:
+    type: string
+    format: date-time
+  type:
+    type: string

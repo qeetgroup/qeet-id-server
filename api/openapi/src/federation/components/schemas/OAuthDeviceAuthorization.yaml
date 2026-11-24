@@ -1,0 +1,62 @@
+type: object
+description: >-
+  Admin view of an RFC 8628 device-authorization row. Never includes the
+  device_code or its hash.
+required:
+  - id
+  - client_id
+  - client_name
+  - user_code
+  - status
+  - user_id
+  - user_email
+  - scopes
+  - created_at
+  - expires_at
+  - last_polled_at
+  - consumed_at
+properties:
+  id:
+    type: string
+    format: uuid
+  client_id:
+    type: string
+  client_name:
+    type: string
+    description: The application's name; empty once the application is deleted.
+  user_code:
+    type: string
+  status:
+    type: string
+    enum:
+      - pending
+      - authorized
+      - denied
+  user_id:
+    type:
+      - string
+      - "null"
+    format: uuid
+  user_email:
+    type: string
+  scopes:
+    type: array
+    items:
+      type: string
+  created_at:
+    type: string
+    format: date-time
+  expires_at:
+    type: string
+    format: date-time
+  last_polled_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  consumed_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+    description: When the device redeemed the approval for tokens; null until then.

@@ -1,53 +1,52 @@
 package bootstrap
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 )
 
-// setPlatformSocialProviders enables the platform-level (tenant-less) social
-// sign-ins whose credentials cfg sets.
-func setPlatformSocialProviders(socialService *social.Service, cfg *config.Config) {
-	// Platform-level (tenant-less) social login for the console's own accounts.
-	// Off until credentials are set; Google only for now.
+// platformSocialProviders are the platform-level (organization-less) social
+// sign-ins for the console's own accounts whose credentials cfg sets; each is
+// off until they are.
+func platformSocialProviders(cfg *config.Config) []social.PlatformProvider {
+	var providers []social.PlatformProvider
 	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {
-		socialService.SetPlatformProvider("google", cfg.GoogleClientID, cfg.GoogleClientSecret,
-			"https://accounts.google.com/.well-known/openid-configuration")
+		providers = append(providers, social.PlatformOIDC("google", cfg.GoogleClientID, cfg.GoogleClientSecret,
+			"https://accounts.google.com/.well-known/openid-configuration"))
 	}
 	if cfg.MicrosoftClientID != "" && cfg.MicrosoftClientSecret != "" {
 		// /common allows both work/school and personal Microsoft accounts.
-		socialService.SetPlatformProvider("microsoft", cfg.MicrosoftClientID, cfg.MicrosoftClientSecret,
-			"https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration")
+		providers = append(providers, social.PlatformOIDC("microsoft", cfg.MicrosoftClientID, cfg.MicrosoftClientSecret,
+			"https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration"))
 	}
 	if cfg.GithubClientID != "" && cfg.GithubClientSecret != "" {
-		socialService.SetPlatformGitHub(cfg.GithubClientID, cfg.GithubClientSecret) // GitHub isn't OIDC — dedicated adapter
+		providers = append(providers, social.PlatformGitHub(cfg.GithubClientID, cfg.GithubClientSecret)) // GitHub isn't OIDC — dedicated adapter
 	}
 	if cfg.AppleClientID != "" && cfg.AppleTeamID != "" && cfg.AppleKeyID != "" && cfg.ApplePrivateKey != "" {
-		socialService.SetPlatformApple(cfg.AppleClientID, cfg.AppleTeamID, cfg.AppleKeyID, cfg.ApplePrivateKey)
+		providers = append(providers, social.PlatformApple(cfg.AppleClientID, cfg.AppleTeamID, cfg.AppleKeyID, cfg.ApplePrivateKey))
 	}
+	return providers
 }
 
-// samlIdPIdentity returns the SAML IdP's signing key and certificate, PEM.
-func samlIdPIdentity(cfg *config.Config) (keyPEM, certPEM string) {
-	// SAML IdP signing identity: configured RSA key+cert in prod, or an
-	// ephemeral self-signed cert in dev when unset.
-	samlIdPKeyPEM, samlIdPCertPEM := cfg.SAMLIdPKey, cfg.SAMLIdPCert
-	if samlIdPKeyPEM == "" || samlIdPCertPEM == "" {
-		if !cfg.IsDev() {
-			slog.Error("SAML_IDP_KEY and SAML_IDP_CERT are required outside dev (RSA private key + X.509 cert, PEM)")
-			os.Exit(1)
-		}
-		k, c, gerr := saml.GenerateIdPKeyPEM("Qeet ID SAML IdP")
-		if gerr != nil {
-			slog.Error("generate ephemeral SAML IdP signing cert", "err", gerr)
-			os.Exit(1)
-		}
-		samlIdPKeyPEM, samlIdPCertPEM = k, c
-		slog.Warn("SAML_IDP_KEY/SAML_IDP_CERT unset — generated an ephemeral SAML IdP signing cert; SPs must re-import IdP metadata after a restart (dev only)")
+// samlIdPIdentity returns the SAML IdP's signing key and certificate, PEM:
+// the configured RSA key and certificate, or in dev, when unset, an ephemeral
+// self-signed pair.
+func samlIdPIdentity(cfg *config.Config) (keyPEM, certPEM string, err error) {
+	if cfg.SAMLIdPKey != "" && cfg.SAMLIdPCert != "" {
+		return cfg.SAMLIdPKey, cfg.SAMLIdPCert, nil
 	}
-	return samlIdPKeyPEM, samlIdPCertPEM
+	if !cfg.IsDev() {
+		return "", "", errors.New("SAML_IDP_KEY and SAML_IDP_CERT are required outside dev (RSA private key + X.509 cert, PEM)")
+	}
+	keyPEM, certPEM, err = saml.GenerateIdPKeyPEM("Qeet ID SAML IdP")
+	if err != nil {
+		return "", "", fmt.Errorf("generate an ephemeral signing certificate: %w", err)
+	}
+	slog.Warn("SAML_IDP_KEY/SAML_IDP_CERT unset — generated an ephemeral SAML IdP signing cert; SPs must re-import IdP metadata after a restart (dev only)")
+	return keyPEM, certPEM, nil
 }

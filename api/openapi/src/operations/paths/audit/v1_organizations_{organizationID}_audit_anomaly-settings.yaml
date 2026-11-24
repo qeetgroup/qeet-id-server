@@ -1,0 +1,71 @@
+get:
+  operationId: getAuditAnomalySettings
+  description: >-
+    Returns the organization's anomaly-detection configuration, including whether
+    scoring is enabled, the score threshold above which an event is flagged, and
+    the minimum number of baseline events required before scoring begins.
+    Platform defaults are reported when the organization has not customized the
+    settings.
+  summary: Get anomaly-detection settings
+  tags:
+    - Audit
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Settings
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/AuditAnomalySettings.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+put:
+  operationId: setAuditAnomalySettings
+  description: >-
+    Replaces the organization's anomaly-detection configuration. The score threshold
+    must be between 0 and 1 and the minimum baseline count must be non-negative,
+    otherwise the request is rejected as unprocessable. Changes take effect on
+    the next background scoring pass, and the stored settings are returned.
+  summary: Update anomaly-detection settings
+  tags:
+    - Audit
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/AuditAnomalySettingsUpdate.yaml
+  responses:
+    "200":
+      description: Updated
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/AuditAnomalySettings.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

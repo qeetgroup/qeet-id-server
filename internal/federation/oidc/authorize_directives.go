@@ -10,7 +10,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -137,6 +137,6 @@ func (h *Handler) reauth(w http.ResponseWriter, r *http.Request, now time.Time) 
 		httpx.WriteError(w, r, err)
 		return
 	}
-	auth.SetSignInClientCookie(w, r.URL.Query().Get("client_id"), h.CookieSecure)
+	authentication.SetSignInClientCookie(w, r.URL.Query().Get("client_id"), h.CookieSecure)
 	http.Redirect(w, r, h.LoginBaseURL+"/sign-in?prompt=login&return_to="+url.QueryEscape(back), http.StatusFound)
 }

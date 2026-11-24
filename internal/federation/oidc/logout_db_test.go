@@ -9,13 +9,15 @@ import (
 	"net/url"
 	"slices"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
@@ -39,26 +41,100 @@ func signInThrough(t *testing.T, p *provider, client *Client, secret string, use
 	return issued
 }
 
+// TestIntrospectionReportsInactiveAfterSignOut checks that an application's
+// access token names the hosted-login session it was issued in and introspects
+// inactive once that session is signed out; that a session which only expired
+// leaves a token renewed from its grant active; and that a device grant's
+// token, from no session, names none and stays active.
+func TestIntrospectionReportsInactiveAfterSignOut(t *testing.T) {
+	ctx := dbtest.Context(t)
+	p := newProvider(t, func(d *Deps, sessions *authentication.Service) { d.SessionLive = sessions.SessionLive })
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, secret := registerClientWith(t, p.svc, CreateClientInput{
+		OrganizationID: organization, GrantTypes: []string{"authorization_code", "refresh_token", grantTypeDeviceCode},
+	})
+	active := func(token string) bool {
+		t.Helper()
+		out, err := p.svc.Introspect(ctx, client.ClientID, secret, token, "")
+		if err != nil {
+			t.Fatalf("introspect: %v", err)
+		}
+		return out["active"] == true
+	}
+	sid := func(token string) uuid.UUID {
+		t.Helper()
+		claims, err := p.svc.issuer.VerifyAccessAnyAudience(token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return claims.SessionID
+	}
+
+	cookie, sessionID := p.signIn(t, person.ID)
+	issued := signInThrough(t, p, client, secret, person.ID, sessionID)
+	if got := sid(issued.AccessToken); got != sessionID {
+		t.Errorf("access token sid %v, want the hosted-login session %v", got, sessionID)
+	}
+	if !active(issued.AccessToken) {
+		t.Fatal("a signed-in application's access token introspects inactive")
+	}
+	if err := p.sessions.RevokeLoginSession(ctx, cookie.Value); err != nil {
+		t.Fatal(err)
+	}
+	if active(issued.AccessToken) {
+		t.Error("the application's access token still introspects active after its sign-in was signed out")
+	}
+
+	// The clean-up of expired sessions deletes the row but leaves the grant.
+	_, sessionID = p.signIn(t, person.ID)
+	issued = signInThrough(t, p, client, secret, person.ID, sessionID)
+	if _, err := dbtest.Pool(t).Exec(ctx, `DELETE FROM auth.login_sessions WHERE id = $1`, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := p.svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, "")
+	if err != nil {
+		t.Fatalf("refresh after the session expired: %v", err)
+	}
+	if got := sid(renewed.AccessToken); got != sessionID || !active(renewed.AccessToken) {
+		t.Errorf("a token renewed after its session expired: sid %v (want %v), active %t; want active", got, sessionID, active(renewed.AccessToken))
+	}
+
+	raw, userCode, _, err := p.svc.DeviceAuthorize(ctx, client.ClientID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.svc.DecideDevice(ctx, person.ID, userCode, true, deviceIP); err != nil {
+		t.Fatal(err)
+	}
+	device, err := p.svc.DeviceToken(ctx, client.ClientID, secret, raw, deviceIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sid(device.AccessToken); got != uuid.Nil || !active(device.AccessToken) {
+		t.Errorf("a device grant's token: sid %v, active %t; want no sid, active", got, active(device.AccessToken))
+	}
+}
+
 // TestRPInitiatedLogout checks that without an ID token hint the person confirms
 // a sign-out for their own session, that a hint naming someone else is refused,
 // and that a sign-out ends the session and its grants, clears the cookie, sends
 // a signed back-channel notice and continues only to a registered address.
 func TestRPInitiatedLogout(t *testing.T) {
 	ctx := dbtest.Context(t)
-	p := newProvider(t)
-	p.svc.SetLogoutHTTPClient(egress.DevelopmentPolicy())
+	p := newProvider(t, func(d *Deps, _ *authentication.Service) { d.Egress = egress.DevelopmentPolicy() })
 	notices := make(chan url.Values, 4)
 	rp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		notices <- r.PostForm
 	}))
 	t.Cleanup(rp.Close)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	someone := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	someone := dbtest.User(t, organization, organization)
 	const signedOut = "https://app.example.test/signed-out"
 	client, secret := registerClientWith(t, p.svc, CreateClientInput{
-		TenantID: tenant, PostLogoutURIs: []string{signedOut},
+		OrganizationID: organization, PostLogoutURIs: []string{signedOut},
 		BackchannelLogoutURI: rp.URL + "/backchannel", FrontchannelLogoutURI: "https://app.example.test/frontchannel",
 	})
 	cookie, sessionID := p.signIn(t, person.ID)
@@ -92,14 +168,14 @@ func TestRPInitiatedLogout(t *testing.T) {
 	if to != loginBase+"/sign-out/done" || !slices.Equal(q["frontchannel_logout"], []string{frontchannel}) || q.Get("continue") == "" {
 		t.Fatalf("confirmed sign-out: sent to %s %v, want the signed-out page with the front-channel page and a continuation", to, q)
 	}
-	if !slices.ContainsFunc(rec.Result().Cookies(), func(c *http.Cookie) bool { return c.Name == auth.LoginSessionCookie && c.MaxAge < 0 }) {
+	if !slices.ContainsFunc(rec.Result().Cookies(), func(c *http.Cookie) bool { return c.Name == authentication.LoginSessionCookie && c.MaxAge < 0 }) {
 		t.Error("the sign-out didn't clear the session cookie")
 	}
 	if live(cookie) {
 		t.Error("the session outlived the sign-out")
 	}
-	if _, err := p.svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, ""); !errors.Is(err, errs.ErrOIDCRefreshTokenRevoked) {
-		t.Errorf("refresh a grant of the ended session: %v, want %v", err, errs.ErrOIDCRefreshTokenRevoked)
+	if _, err := p.svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, ""); !errors.Is(err, ErrRefreshTokenRevoked) {
+		t.Errorf("refresh a grant of the ended session: %v, want %v", err, ErrRefreshTokenRevoked)
 	}
 	to, q = redirected(t, browse(t, p.public, http.MethodGet, "/oauth/logout/continue?ticket="+url.QueryEscape(q.Get("continue")), nil, nil))
 	if to != signedOut || q.Get("state") != "s-1" {
@@ -134,39 +210,112 @@ func TestRPInitiatedLogout(t *testing.T) {
 		}
 		delete(signedOutOf, sid)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_logout_deliveries WHERE tenant_id = $1 AND delivered_at IS NOT NULL`, tenant); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_logout_deliveries WHERE organization_id = $1 AND delivered_at IS NOT NULL`, organization); n != 2 {
 		t.Errorf("%d notices marked delivered, want 2", n)
 	}
 }
 
-// TestSignOutNoticesStayInTheirOrganisation checks that when one hosted-login
-// session signed in to two organisations' applications, the record of telling
-// them of the sign-out is kept by each organisation and names only its own.
-func TestSignOutNoticesStayInTheirOrganisation(t *testing.T) {
+// TestLogoutHintMustBeAnIDToken checks that a sign-out skips its confirmation
+// only for an ID token this server issued to a registered application for the
+// session's person: every other token it signs, naming the session or not, is
+// refused with invalid_request and the session stays.
+func TestLogoutHintMustBeAnIDToken(t *testing.T) {
 	ctx := dbtest.Context(t)
 	p := newProvider(t)
-	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
-	person := dbtest.User(t, tenantA, tenantA, tenantB)
-	appA, secretA := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenantA, BackchannelLogoutURI: "http://127.0.0.1:9/a"})
-	appB, secretB := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenantB, BackchannelLogoutURI: "http://127.0.0.1:9/b"})
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, secret := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organization})
+	must := func(raw string, err error) string {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	sign := func(claims jwt.MapClaims) string {
+		t.Helper()
+		claims["iss"] = p.svc.issuer.JWTIssuer()
+		return must(p.svc.issuer.Sign(claims))
+	}
+	issued := func(raw string, _ time.Time, err error) string { return must(raw, err) }
+	live := func(c *http.Cookie) bool {
+		_, err := p.sessions.ResolveLoginSession(ctx, c.Value)
+		return err == nil
+	}
+	for name, hint := range map[string]func(session uuid.UUID) string{
+		"a forced sign-in's login_after marker": func(uuid.UUID) string { return must(p.svc.loginAfterMarker(time.Now())) },
+		"a sign-out continuation ticket": func(uuid.UUID) string {
+			return must(p.svc.logoutContinuation("https://app.example.test/"))
+		},
+		"the session's own sign-out confirmation": func(sid uuid.UUID) string { return must(p.svc.logoutConfirmation(sid)) },
+		"the person's access token": func(sid uuid.UUID) string {
+			return issued(p.svc.issuer.IssueAccess(person.ID, organization, sid, ""))
+		},
+		"an application's access token": func(sid uuid.UUID) string {
+			return issued(p.svc.issuer.IssueClientAccess(tokens.ClientAccess{UserID: person.ID, OrganizationID: organization, SessionID: sid, ClientID: client.ClientID}))
+		},
+		"a back-channel logout token": func(sid uuid.UUID) string { return must(p.notices.logoutToken(client.ClientID, person.ID, sid)) },
+		"a token with no subject": func(sid uuid.UUID) string {
+			return sign(jwt.MapClaims{"aud": client.ClientID, "sid": sid.String()})
+		},
+		"a token with no audience": func(sid uuid.UUID) string {
+			return sign(jwt.MapClaims{"sub": person.ID.String(), "sid": sid.String()})
+		},
+		"a token for an unregistered application": func(sid uuid.UUID) string {
+			return sign(jwt.MapClaims{"sub": person.ID.String(), "aud": "no-such-client", "sid": sid.String()})
+		},
+		"a token of another type": func(sid uuid.UUID) string {
+			return sign(jwt.MapClaims{"sub": person.ID.String(), "aud": client.ClientID, "sid": sid.String(), "typ": "other"})
+		},
+	} {
+		cookie, sessionID := p.signIn(t, person.ID)
+		rec := browse(t, p.public, http.MethodGet, "/oauth/logout?id_token_hint="+url.QueryEscape(hint(sessionID)), cookie, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d, want 400 invalid_request", name, rec.Code)
+		} else if got, _ := decodeTokenError(t, rec); got != "invalid_request" {
+			t.Errorf("%s: %s, want invalid_request", name, got)
+		}
+		if !live(cookie) {
+			t.Errorf("%s ended the session", name)
+		}
+	}
+
+	// The person's own ID token still signs out at once.
+	cookie, sessionID := p.signIn(t, person.ID)
+	idToken := signInThrough(t, p, client, secret, person.ID, sessionID).IDToken
+	if to, _ := redirected(t, browse(t, p.public, http.MethodGet, "/oauth/logout?id_token_hint="+url.QueryEscape(idToken), cookie, nil)); to != loginBase+"/sign-out/done" || live(cookie) {
+		t.Errorf("the person's ID token: sent to %s, want signed out to the signed-out page", to)
+	}
+}
+
+// TestSignOutNoticesStayInTheirOrganization checks that when one hosted-login
+// session signed in to two organizations' applications, the record of telling
+// them of the sign-out is kept by each organization and names only its own.
+func TestSignOutNoticesStayInTheirOrganization(t *testing.T) {
+	ctx := dbtest.Context(t)
+	p := newProvider(t)
+	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
+	person := dbtest.User(t, organizationA, organizationA, organizationB)
+	appA, secretA := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organizationA, BackchannelLogoutURI: "http://127.0.0.1:9/a"})
+	appB, secretB := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organizationB, BackchannelLogoutURI: "http://127.0.0.1:9/b"})
 	cookie, sessionID := p.signIn(t, person.ID)
 	signInThrough(t, p, appA, secretA, person.ID, sessionID)
 	signInThrough(t, p, appB, secretB, person.ID, sessionID)
-	if _, err := p.sessions.EndLoginSession(ctx, auth.EndLoginSessionInput{Cookie: cookie.Value, InitiatedBy: auth.SignOutByHostedLogin}); err != nil {
+	if _, err := p.sessions.EndLoginSession(ctx, authentication.EndLoginSessionInput{Cookie: cookie.Value, InitiatedBy: authentication.SignOutByHostedLogin}); err != nil {
 		t.Fatalf("sign out: %v", err)
 	}
 
 	for _, tc := range []struct {
-		tenant       uuid.UUID
+		organization uuid.UUID
 		own, foreign string
-	}{{tenantA, appA.ClientID, appB.ClientID}, {tenantB, appB.ClientID, appA.ClientID}} {
-		const naming = `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oidc.sign_out_notified'
+	}{{organizationA, appA.ClientID, appB.ClientID}, {organizationB, appB.ClientID, appA.ClientID}} {
+		const naming = `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'oidc.sign_out_notified'
 			AND metadata::text LIKE '%' || $2 || '%'`
-		if n := dbtest.Count(t, naming, tc.tenant, tc.foreign); n != 0 {
-			t.Errorf("organisation %s's audit names another organisation's application %d times", tc.tenant, n)
+		if n := dbtest.Count(t, naming, tc.organization, tc.foreign); n != 0 {
+			t.Errorf("organization %s's audit names another organization's application %d times", tc.organization, n)
 		}
-		if n := dbtest.Count(t, naming, tc.tenant, tc.own); n != 1 {
-			t.Errorf("organisation %s's audit records the notice to its application %d times, want once", tc.tenant, n)
+		if n := dbtest.Count(t, naming, tc.organization, tc.own); n != 1 {
+			t.Errorf("organization %s's audit records the notice to its application %d times, want once", tc.organization, n)
 		}
 	}
 }

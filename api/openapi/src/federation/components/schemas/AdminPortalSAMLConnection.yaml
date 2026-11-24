@@ -1,0 +1,24 @@
+description: >-
+  A SAML connection as the admin portal shows it, with the service-provider
+  addresses the IT admin enters at their IdP.
+allOf:
+  - $ref: ./SAMLConnection.yaml
+  - type: object
+    required:
+      - acs_url
+      - sp_entity_id
+      - sp_metadata_url
+    properties:
+      sp_entity_id:
+        type: string
+        description: The service provider's entity ID (audience) for this connection.
+      acs_url:
+        type: string
+        format: uri
+        description: The assertion consumer service URL the IdP posts its answers to.
+      sp_metadata_url:
+        type: string
+        format: uri
+        description: >-
+          Where the service provider's SAML metadata for this connection is
+          served.

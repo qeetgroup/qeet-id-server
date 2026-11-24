@@ -1,0 +1,51 @@
+type: object
+required:
+  - error
+description: Canonical error envelope (internal/platform/httpx.WriteError).
+properties:
+  error:
+    type: object
+    required:
+      - code
+      - message
+    properties:
+      code:
+        type: string
+        description: Stable machine code
+        example: unauthorized
+      message:
+        type: string
+        example: authentication required
+      detail:
+        type: string
+        description: Optional human detail
+      translation_key:
+        type: string
+        description: Optional i18n key the client can use to localize the message.
+      retryable:
+        type: boolean
+        description: >-
+          Whether the person can try again, often by starting over (signing in
+          again, asking for a new code, waiting). It is not a promise that
+          resending the same request will succeed: auth.session_revoked is
+          retryable and the session never comes back. Decide whether to resend a
+          request from its status (429, 503 with Retry-After).
+      fields:
+        type: array
+        description: Per-field validation errors (typically on 422 responses).
+        items:
+          type: object
+          properties:
+            field:
+              type: string
+            code:
+              type: string
+            message:
+              type: string
+      metadata:
+        type: object
+        additionalProperties: true
+        description: Optional structured, error-specific context.
+      request_id:
+        type: string
+        description: Correlates with the X-Request-Id header

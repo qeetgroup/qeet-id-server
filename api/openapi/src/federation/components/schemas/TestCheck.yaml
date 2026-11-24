@@ -1,0 +1,11 @@
+type: object
+required:
+  - name
+  - ok
+properties:
+  detail:
+    type: string
+  name:
+    type: string
+  ok:
+    type: boolean

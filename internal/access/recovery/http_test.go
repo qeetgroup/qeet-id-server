@@ -3,8 +3,23 @@ package recovery
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+// TestMagicResendRefusesAnEmptyToken checks that resending with no token is refused as an invalid
+// link before anything is looked up (the handler has no service here), not given the neutral answer.
+func TestMagicResendRefusesAnEmptyToken(t *testing.T) {
+	for _, body := range []string{`{}`, `{"token": ""}`, `{"token": "  "}`} {
+		r := httptest.NewRequest(http.MethodPost, "/v1/auth/magic-link/resend", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		(&Handler{}).magicResend(w, r)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "recovery.magic_link_invalid") {
+			t.Errorf("%s: %d %s, want 400 recovery.magic_link_invalid", body, w.Code, w.Body.String())
+		}
+	}
+}
 
 func TestAuthorizeReturnTo(t *testing.T) {
 	h := &Handler{PublicBaseURL: "https://api.id.qeet.in"}

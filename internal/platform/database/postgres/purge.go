@@ -3,8 +3,6 @@ package postgres
 import (
 	"context"
 	"slices"
-
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -31,14 +29,9 @@ func DeleteInBatches(ctx context.Context, del func(ctx context.Context, limit in
 	return total, nil
 }
 
-// Execer runs a statement: a pool, a connection or a transaction.
-type Execer interface {
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
-}
-
 // PurgeInBatches runs query, a statement that deletes at most as many rows as
 // its last parameter, with args before that limit, through DeleteInBatches.
-func PurgeInBatches(ctx context.Context, db Execer, query string, args ...any) (int64, error) {
+func PurgeInBatches(ctx context.Context, db Querier, query string, args ...any) (int64, error) {
 	args = append(slices.Clip(args), nil)
 	return DeleteInBatches(ctx, func(ctx context.Context, limit int32) (int64, error) {
 		args[len(args)-1] = limit

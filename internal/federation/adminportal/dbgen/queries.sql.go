@@ -10,31 +10,41 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getAdminPortalLinkByHash = `-- name: GetAdminPortalLinkByHash :one
-SELECT id, tenant_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
-FROM tenant.admin_portal_links WHERE token_hash = $1
+const getAdminPortalSessionByHash = `-- name: GetAdminPortalSessionByHash :one
+SELECT s.id AS session_id, s.expires_at AS session_expires_at, s.revoked_at AS session_revoked_at,
+       l.id, l.organization_id, l.capabilities, l.created_by, l.expires_at,
+       l.revoked_at, l.last_used_at, l.created_at
+FROM auth.admin_portal_sessions s
+JOIN organization.admin_portal_links l ON l.id = s.link_id
+WHERE s.token_hash = $1
 `
 
-type GetAdminPortalLinkByHashRow struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	Capabilities []string
-	CreatedBy    pgtype.UUID
-	ExpiresAt    time.Time
-	RevokedAt    pgtype.Timestamptz
-	LastUsedAt   pgtype.Timestamptz
-	CreatedAt    time.Time
+type GetAdminPortalSessionByHashRow struct {
+	SessionID        uuid.UUID
+	SessionExpiresAt time.Time
+	SessionRevokedAt *time.Time
+	ID               uuid.UUID
+	OrganizationID   uuid.UUID
+	Capabilities     []string
+	CreatedBy        *uuid.UUID
+	ExpiresAt        time.Time
+	RevokedAt        *time.Time
+	LastUsedAt       *time.Time
+	CreatedAt        time.Time
 }
 
-func (q *Queries) GetAdminPortalLinkByHash(ctx context.Context, tokenHash string) (GetAdminPortalLinkByHashRow, error) {
-	row := q.db.QueryRow(ctx, getAdminPortalLinkByHash, tokenHash)
-	var i GetAdminPortalLinkByHashRow
+// A portal session with its link, by the session cookie's hash.
+func (q *Queries) GetAdminPortalSessionByHash(ctx context.Context, tokenHash string) (GetAdminPortalSessionByHashRow, error) {
+	row := q.db.QueryRow(ctx, getAdminPortalSessionByHash, tokenHash)
+	var i GetAdminPortalSessionByHashRow
 	err := row.Scan(
+		&i.SessionID,
+		&i.SessionExpiresAt,
+		&i.SessionRevokedAt,
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Capabilities,
 		&i.CreatedBy,
 		&i.ExpiresAt,
@@ -45,12 +55,12 @@ func (q *Queries) GetAdminPortalLinkByHash(ctx context.Context, tokenHash string
 	return i, err
 }
 
-const getTenantNameByID = `-- name: GetTenantNameByID :one
-SELECT name FROM tenant.tenants WHERE id = $1
+const getOrganizationNameByID = `-- name: GetOrganizationNameByID :one
+SELECT name FROM organization.organizations WHERE id = $1
 `
 
-func (q *Queries) GetTenantNameByID(ctx context.Context, id uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, getTenantNameByID, id)
+func (q *Queries) GetOrganizationNameByID(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getOrganizationNameByID, id)
 	var name string
 	err := row.Scan(&name)
 	return name, err
@@ -58,36 +68,34 @@ func (q *Queries) GetTenantNameByID(ctx context.Context, id uuid.UUID) (string, 
 
 const insertAdminPortalLink = `-- name: InsertAdminPortalLink :one
 
-INSERT INTO tenant.admin_portal_links (tenant_id, token_hash, capabilities, created_by, expires_at)
+INSERT INTO organization.admin_portal_links (organization_id, token_hash, capabilities, created_by, expires_at)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, tenant_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
+RETURNING id, organization_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
 `
 
 type InsertAdminPortalLinkParams struct {
-	TenantID     uuid.UUID
-	TokenHash    string
-	Capabilities []string
-	CreatedBy    pgtype.UUID
-	ExpiresAt    time.Time
+	OrganizationID uuid.UUID
+	TokenHash      string
+	Capabilities   []string
+	CreatedBy      *uuid.UUID
+	ExpiresAt      time.Time
 }
 
 type InsertAdminPortalLinkRow struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	Capabilities []string
-	CreatedBy    pgtype.UUID
-	ExpiresAt    time.Time
-	RevokedAt    pgtype.Timestamptz
-	LastUsedAt   pgtype.Timestamptz
-	CreatedAt    time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Capabilities   []string
+	CreatedBy      *uuid.UUID
+	ExpiresAt      time.Time
+	RevokedAt      *time.Time
+	LastUsedAt     *time.Time
+	CreatedAt      time.Time
 }
 
-// Queries for the adminportal domain.
-// Static queries against tenant.admin_portal_links and tenant.tenants are compiled
-// by sqlc into ./dbgen. Dynamic/complex logic stays hand-written in adminportal.go.
+// Queries for the adminportal domain, compiled by sqlc into ./dbgen.
 func (q *Queries) InsertAdminPortalLink(ctx context.Context, arg InsertAdminPortalLinkParams) (InsertAdminPortalLinkRow, error) {
 	row := q.db.QueryRow(ctx, insertAdminPortalLink,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.TokenHash,
 		arg.Capabilities,
 		arg.CreatedBy,
@@ -96,7 +104,7 @@ func (q *Queries) InsertAdminPortalLink(ctx context.Context, arg InsertAdminPort
 	var i InsertAdminPortalLinkRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Capabilities,
 		&i.CreatedBy,
 		&i.ExpiresAt,
@@ -107,37 +115,53 @@ func (q *Queries) InsertAdminPortalLink(ctx context.Context, arg InsertAdminPort
 	return i, err
 }
 
-const listAdminPortalLinksByTenant = `-- name: ListAdminPortalLinksByTenant :many
-SELECT id, tenant_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
-FROM tenant.admin_portal_links
-WHERE tenant_id = $1 ORDER BY created_at DESC
+const insertAdminPortalSession = `-- name: InsertAdminPortalSession :exec
+INSERT INTO auth.admin_portal_sessions (link_id, token_hash, expires_at)
+VALUES ($1, $2, $3)
+`
+
+type InsertAdminPortalSessionParams struct {
+	LinkID    uuid.UUID
+	TokenHash string
+	ExpiresAt time.Time
+}
+
+func (q *Queries) InsertAdminPortalSession(ctx context.Context, arg InsertAdminPortalSessionParams) error {
+	_, err := q.db.Exec(ctx, insertAdminPortalSession, arg.LinkID, arg.TokenHash, arg.ExpiresAt)
+	return err
+}
+
+const listAdminPortalLinksByOrganization = `-- name: ListAdminPortalLinksByOrganization :many
+SELECT id, organization_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
+FROM organization.admin_portal_links
+WHERE organization_id = $1 ORDER BY created_at DESC
 LIMIT 1001
 `
 
-type ListAdminPortalLinksByTenantRow struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	Capabilities []string
-	CreatedBy    pgtype.UUID
-	ExpiresAt    time.Time
-	RevokedAt    pgtype.Timestamptz
-	LastUsedAt   pgtype.Timestamptz
-	CreatedAt    time.Time
+type ListAdminPortalLinksByOrganizationRow struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Capabilities   []string
+	CreatedBy      *uuid.UUID
+	ExpiresAt      time.Time
+	RevokedAt      *time.Time
+	LastUsedAt     *time.Time
+	CreatedAt      time.Time
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListAdminPortalLinksByTenant(ctx context.Context, tenantID uuid.UUID) ([]ListAdminPortalLinksByTenantRow, error) {
-	rows, err := q.db.Query(ctx, listAdminPortalLinksByTenant, tenantID)
+func (q *Queries) ListAdminPortalLinksByOrganization(ctx context.Context, organizationID uuid.UUID) ([]ListAdminPortalLinksByOrganizationRow, error) {
+	rows, err := q.db.Query(ctx, listAdminPortalLinksByOrganization, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListAdminPortalLinksByTenantRow{}
+	items := []ListAdminPortalLinksByOrganizationRow{}
 	for rows.Next() {
-		var i ListAdminPortalLinksByTenantRow
+		var i ListAdminPortalLinksByOrganizationRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Capabilities,
 			&i.CreatedBy,
 			&i.ExpiresAt,
@@ -155,29 +179,94 @@ func (q *Queries) ListAdminPortalLinksByTenant(ctx context.Context, tenantID uui
 	return items, nil
 }
 
+const lockAdminPortalLinkByHash = `-- name: LockAdminPortalLinkByHash :one
+SELECT id, organization_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at, redeemed_at
+FROM organization.admin_portal_links WHERE token_hash = $1
+FOR UPDATE
+`
+
+type LockAdminPortalLinkByHashRow struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Capabilities   []string
+	CreatedBy      *uuid.UUID
+	ExpiresAt      time.Time
+	RevokedAt      *time.Time
+	LastUsedAt     *time.Time
+	CreatedAt      time.Time
+	RedeemedAt     *time.Time
+}
+
+// The link a one-time token names, locked so concurrent redemption has one
+// winner.
+func (q *Queries) LockAdminPortalLinkByHash(ctx context.Context, tokenHash string) (LockAdminPortalLinkByHashRow, error) {
+	row := q.db.QueryRow(ctx, lockAdminPortalLinkByHash, tokenHash)
+	var i LockAdminPortalLinkByHashRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Capabilities,
+		&i.CreatedBy,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+		&i.RedeemedAt,
+	)
+	return i, err
+}
+
+const markAdminPortalLinkRedeemed = `-- name: MarkAdminPortalLinkRedeemed :exec
+UPDATE organization.admin_portal_links SET redeemed_at = NOW(), last_used_at = NOW()
+WHERE id = $1 AND organization_id = $2
+`
+
+type MarkAdminPortalLinkRedeemedParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) MarkAdminPortalLinkRedeemed(ctx context.Context, arg MarkAdminPortalLinkRedeemedParams) error {
+	_, err := q.db.Exec(ctx, markAdminPortalLinkRedeemed, arg.ID, arg.OrganizationID)
+	return err
+}
+
 const revokeAdminPortalLink = `-- name: RevokeAdminPortalLink :execrows
-UPDATE tenant.admin_portal_links SET revoked_at = NOW()
-WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+UPDATE organization.admin_portal_links SET revoked_at = NOW()
+WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL
 `
 
 type RevokeAdminPortalLinkParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) RevokeAdminPortalLink(ctx context.Context, arg RevokeAdminPortalLinkParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeAdminPortalLink, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, revokeAdminPortalLink, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
 }
 
-const touchAdminPortalLinkUsed = `-- name: TouchAdminPortalLinkUsed :exec
-UPDATE tenant.admin_portal_links SET last_used_at = NOW() WHERE id = $1
+const revokeAdminPortalSession = `-- name: RevokeAdminPortalSession :execrows
+UPDATE auth.admin_portal_sessions SET revoked_at = NOW()
+WHERE token_hash = $1 AND revoked_at IS NULL
 `
 
-func (q *Queries) TouchAdminPortalLinkUsed(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, touchAdminPortalLinkUsed, id)
+func (q *Queries) RevokeAdminPortalSession(ctx context.Context, tokenHash string) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeAdminPortalSession, tokenHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const touchAdminPortalSession = `-- name: TouchAdminPortalSession :exec
+UPDATE auth.admin_portal_sessions SET last_used_at = NOW() WHERE id = $1
+`
+
+func (q *Queries) TouchAdminPortalSession(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, touchAdminPortalSession, id)
 	return err
 }

@@ -1,0 +1,33 @@
+type: object
+required:
+  - address_line1
+  - address_line2
+  - billing_email
+  - city
+  - country
+  - legal_name
+  - postal_code
+  - state
+  - tax_id
+  - tax_id_type
+properties:
+  address_line1:
+    type: string
+  address_line2:
+    type: string
+  billing_email:
+    type: string
+  city:
+    type: string
+  country:
+    type: string
+  legal_name:
+    type: string
+  postal_code:
+    type: string
+  state:
+    type: string
+  tax_id:
+    type: string
+  tax_id_type:
+    type: string

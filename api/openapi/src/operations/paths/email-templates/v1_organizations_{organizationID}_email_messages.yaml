@@ -1,0 +1,81 @@
+get:
+  operationId: listEmailMessages
+  summary: Email delivery to an address
+  description: >-
+    Lists the organization's most recent emails to one address with what
+    happened to each (sent, delivered, bounced, complained, suppressed or
+    failed, with the provider's reason), and whether the address is suppressed.
+    Addresses are stored hashed, so the lookup is by exact address. A
+    suppression caused by this organization's mail (own true) carries its id,
+    reason, provider detail and date, since only that organization may clear it;
+    one caused by other mail carries only own false. Records are kept 90 days.
+  tags:
+    - Email Templates
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: to
+      in: query
+      required: true
+      schema:
+        type: string
+        format: email
+    - name: limit
+      description: Page size, 1 to 100 (default 50). A larger value is lowered to 100; a smaller or malformed one gets the default.
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 50
+    - $ref: ../../../shared/parameters/Cursor.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: >-
+        The messages, newest first, and the address's suppression (null when
+        none)
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              next_cursor:
+                $ref: ../../../shared/schemas/NextCursor.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/EmailMessage.yaml
+              suppression:
+                type:
+                  - object
+                  - "null"
+                properties:
+                  own:
+                    type: boolean
+                    description: >-
+                      This organization's mail caused the suppression; the other
+                      fields are present only then.
+                  id:
+                    type: string
+                    format: uuid
+                  reason:
+                    type: string
+                    enum:
+                      - bounce
+                      - complaint
+                  detail:
+                    type: string
+                  created_at:
+                    type: string
+                    format: date-time
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -12,17 +12,17 @@ import (
 )
 
 type observerFixture struct {
-	tenant    uuid.UUID
-	status    int
-	resource  string
-	operation string
-	reason    string
-	calls     int
-	err       error
+	organization uuid.UUID
+	status       int
+	resource     string
+	operation    string
+	reason       string
+	calls        int
+	err          error
 }
 
 func (observer *observerFixture) RecordSCIMOperation(_ context.Context, op Operation) error {
-	observer.tenant, observer.status, observer.resource, observer.operation = op.TenantID, op.Status, op.Resource, op.Operation
+	observer.organization, observer.status, observer.resource, observer.operation = op.OrganizationID, op.Status, op.Resource, op.Operation
 	observer.reason = op.Reason
 	observer.calls++
 	return observer.err
@@ -31,9 +31,9 @@ func (observer *observerFixture) RecordSCIMOperation(_ context.Context, op Opera
 func TestObserverPreservesProtocolResponseWhenTelemetryFails(test *testing.T) {
 	observer := &observerFixture{err: errors.New("telemetry unavailable")}
 	handler := &Handler{Service: &Service{observer: observer}}
-	tenantID := uuid.New()
+	organizationID := uuid.New()
 	request := httptest.NewRequest(http.MethodPost, "/scim/v2/Users", strings.NewReader(`{"password":"never-observed"}`))
-	request = request.WithContext(context.WithValue(request.Context(), tenantCtxKey, tenantID))
+	request = request.WithContext(context.WithValue(request.Context(), organizationCtxKey, organizationID))
 	response := httptest.NewRecorder()
 	handler.observeMutations(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/scim+json")
@@ -43,7 +43,7 @@ func TestObserverPreservesProtocolResponseWhenTelemetryFails(test *testing.T) {
 	if response.Code != http.StatusCreated || response.Body.String() != `{"id":"created"}` {
 		test.Fatal("observer changed the SCIM response")
 	}
-	if observer.calls != 1 || observer.tenant != tenantID || observer.status != 201 || observer.resource != "user" || observer.operation != "post" {
+	if observer.calls != 1 || observer.organization != organizationID || observer.status != 201 || observer.resource != "user" || observer.operation != "post" {
 		test.Fatalf("unexpected observation: %+v", observer)
 	}
 }
@@ -55,7 +55,7 @@ func TestObserverDoesNotRecordReadsOrUnauthenticatedRequests(test *testing.T) {
 			handler := &Handler{Service: &Service{observer: observer}}
 			request := httptest.NewRequest(method, "/scim/v2/Groups", nil)
 			if authenticated {
-				request = request.WithContext(context.WithValue(request.Context(), tenantCtxKey, uuid.New()))
+				request = request.WithContext(context.WithValue(request.Context(), organizationCtxKey, uuid.New()))
 			}
 			handler.observeMutations(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusConflict) })).ServeHTTP(httptest.NewRecorder(), request)
 			want := 0
@@ -75,7 +75,7 @@ func TestObserverKeepsTheSCIMErrorType(test *testing.T) {
 	observer := &observerFixture{}
 	handler := &Handler{Service: &Service{observer: observer}}
 	request := httptest.NewRequest(http.MethodPost, "/scim/v2/Users", nil)
-	request = request.WithContext(context.WithValue(request.Context(), tenantCtxKey, uuid.New()))
+	request = request.WithContext(context.WithValue(request.Context(), organizationCtxKey, uuid.New()))
 	handler.observeMutations(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		writeSCIMTypedErr(response, http.StatusConflict, "uniqueness", "a user with that userName exists")
 	})).ServeHTTP(httptest.NewRecorder(), request)

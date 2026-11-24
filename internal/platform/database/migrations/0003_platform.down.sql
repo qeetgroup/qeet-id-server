@@ -1,0 +1,17 @@
+DROP TABLE IF EXISTS platform.organization_purges CASCADE;
+DROP TABLE IF EXISTS platform.scheduled_job_runs CASCADE;
+DROP TABLE IF EXISTS platform.sales_leads CASCADE;
+DROP TABLE IF EXISTS platform.rate_limit_overrides CASCADE;
+DROP TABLE IF EXISTS platform.outbox_dead_letter CASCADE;
+DROP TABLE IF EXISTS platform.outbox CASCADE;
+DROP TABLE IF EXISTS platform.jwt_signing_keys CASCADE;
+DROP TABLE IF EXISTS platform.invoice_number_series CASCADE;
+DROP TABLE IF EXISTS platform.incidents CASCADE;
+DROP TABLE IF EXISTS platform.idempotency_keys CASCADE;
+DROP TABLE IF EXISTS platform.email_suppressions CASCADE;
+DROP TABLE IF EXISTS platform.email_messages CASCADE;
+DROP TABLE IF EXISTS platform.billing_plan_prices CASCADE;
+DROP TABLE IF EXISTS platform.billing_plans CASCADE;
+DROP TABLE IF EXISTS platform.audit_verification_runs CASCADE;
+DROP TABLE IF EXISTS platform.audit_purge_checkpoints CASCADE;
+DROP TABLE IF EXISTS platform.audit_chain_checkpoints CASCADE;

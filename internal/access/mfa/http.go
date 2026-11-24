@@ -3,6 +3,7 @@ package mfa
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -10,9 +11,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // WebAuthnVerifier asserts a signed-in user's passkeys as a second factor;
@@ -26,18 +27,15 @@ type WebAuthnVerifier interface {
 }
 
 // Handler serves the MFA routes. WebAuthn, when set, offers the user's passkeys
-// as a second factor (POST /mfa/webauthn/...). PairingThrottle, when set, wraps
-// the public pairing-code claim route, where a wrong code is a guess.
+// as a second factor (POST /mfa/webauthn/...). PairingThrottle wraps the public
+// pairing-code claim route, where a wrong code is a guess.
 type Handler struct {
 	Service         *Service
 	WebAuthn        WebAuthnVerifier
 	PairingThrottle func(http.Handler) http.Handler
-}
-
-// PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service.
-type PlanGate interface {
-	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+	// ActOnCheck refuses an administrator changing the sign-in methods of a
+	// member who outranks them (rbac CheckActOn); nil refuses every change.
+	ActOnCheck func(ctx context.Context, caller *httpx.Principal, organizationID, targetID uuid.UUID) error
 }
 
 // Mount registers the second-factor routes on r.
@@ -100,11 +98,10 @@ func (h *Handler) startEnroll(w http.ResponseWriter, r *http.Request) {
 	if in.Account == "" {
 		in.Account = p.Subject
 	}
-	ctx := r.Context()
 	// Setting up a new app replaces the confirmed one once confirmed, so while
 	// one is held this needs the same step-up as switching it off. A first
 	// setup needs none: there is no factor to step up with yet.
-	enrolled, err := h.Service.IsEnrolled(ctx, *p.UserID)
+	enrolled, err := h.Service.IsEnrolled(r.Context(), *p.UserID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -112,36 +109,8 @@ func (h *Handler) startEnroll(w http.ResponseWriter, r *http.Request) {
 	if enrolled && !h.Service.passStepUp(w, r) {
 		return
 	}
-	tx, err := h.Service.Pool().Begin(ctx)
+	out, err := h.Service.StartEnroll(r.Context(), *p.UserID, in.Account, CallerOf(r))
 	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	out, err := h.Service.StartEnroll(ctx, tx, *p.UserID, in.Account)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	actorID, actorType := audit.ActorOf(r).Identity()
-	target := *p.UserID
-	tenantID := p.TenantID
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     tenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.totp_enroll_started",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"replacing": out.Replacing},
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -163,57 +132,12 @@ func (h *Handler) confirmEnroll(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ctx := r.Context()
-	attempt, err := h.Service.ReserveAttempt(ctx, *p.UserID, PurposeTOTPEnroll)
+	codes, err := h.Service.ConfirmEnroll(r.Context(), *p.UserID, in.Code, CallerOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// Registered before the transaction below so the refund only takes a
-	// connection once that transaction has released its own — see Attempt.
-	var opErr error
-	defer func() { h.refund(ctx, attempt, opErr) }()
-	tx, opErr := h.Service.Pool().Begin(ctx)
-	if opErr != nil {
-		httpx.WriteError(w, r, opErr)
-		return
-	}
-	defer tx.Rollback(ctx)
-	var codes []string
-	codes, opErr = h.Service.ConfirmEnroll(ctx, tx, attempt, in.Code)
-	if opErr != nil {
-		httpx.WriteError(w, r, opErr)
-		return
-	}
-	// Confirming the app proves possession of it, so the session that did it
-	// is stepped up: the next sensitive action (regenerate recovery codes,
-	// disable the app) needs no second code.
-	if opErr = h.recordStepUp(ctx, tx, r, "totp"); opErr != nil {
-		httpx.WriteError(w, r, opErr)
-		return
-	}
-	actorID, actorType := audit.ActorOf(r).Identity()
-	target := *p.UserID
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.totp_enrolled",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"recovery_codes_minted": len(codes)},
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	h.Service.tellAccountChange(ctx, *p.UserID, "Two-step verification was turned on",
+	h.Service.tellAccountChange(r.Context(), *p.UserID, "Two-step verification was turned on",
 		"An authenticator app was set up for two-step verification on your Qeet ID account; its codes are now asked for when you sign in.")
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"recovery_codes": codes,
@@ -236,61 +160,7 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ctx := r.Context()
-	attempt, err := h.Service.ReserveAttempt(ctx, *p.UserID, PurposeFactorVerify)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var opErr error
-	defer func() { h.refund(ctx, attempt, opErr) }()
-	tx, opErr := h.Service.Pool().Begin(ctx)
-	if opErr != nil {
-		httpx.WriteError(w, r, opErr)
-		return
-	}
-	defer tx.Rollback(ctx)
-	var result *VerifyResult
-	result, opErr = h.Service.Verify(ctx, tx, attempt, in.Code)
-	if opErr != nil {
-		httpx.WriteError(w, r, opErr)
-		return
-	}
-	// The calling session is stepped up by the factor it just met.
-	method := "totp"
-	if result.UsedRecoveryCode {
-		method = "recovery_code"
-	}
-	if opErr = h.recordStepUp(ctx, tx, r, method); opErr != nil {
-		httpx.WriteError(w, r, opErr)
-		return
-	}
-	// Only audit when a recovery code was consumed — every successful
-	// TOTP verify is high-frequency and not interesting for the chain.
-	if result.UsedRecoveryCode {
-		actorID, actorType := audit.ActorOf(r).Identity()
-		target := *p.UserID
-		meta := map[string]any{}
-		if result.RecoveryCodeID != nil {
-			meta["recovery_code_id"] = *result.RecoveryCodeID
-		}
-		if err := audit.Record(ctx, tx, audit.Event{
-			TenantID:     p.TenantID,
-			ActorUserID:  actorID,
-			ActorType:    actorType,
-			Action:       "mfa.recovery_code_used",
-			ResourceType: "user",
-			ResourceID:   &target,
-			IP:           httpx.ClientIP(r),
-			UserAgent:    r.UserAgent(),
-			RequestID:    httpx.RequestID(r),
-			Metadata:     meta,
-		}); err != nil {
-			httpx.WriteError(w, r, err)
-			return
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if _, err := h.Service.Verify(r.Context(), *p.UserID, in.Code, CallerOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -303,38 +173,11 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
-	if err != nil {
+	if err := h.Service.Disable(r.Context(), *p.UserID, CallerOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	defer tx.Rollback(ctx)
-	if err := h.Service.Disable(ctx, tx, *p.UserID); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	actorID, actorType := audit.ActorOf(r).Identity()
-	target := *p.UserID
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.totp_disabled",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	h.Service.tellAccountChange(ctx, *p.UserID, "Two-step verification was turned off",
+	h.Service.tellAccountChange(r.Context(), *p.UserID, "Two-step verification was turned off",
 		"The authenticator app was removed from your Qeet ID account, with its recovery codes, so its codes are no longer asked for when you sign in.")
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -373,40 +216,12 @@ func (h *Handler) regenerateRecovery(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
+	out, err := h.Service.Regenerate(r.Context(), *p.UserID, CallerOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	defer tx.Rollback(ctx)
-	out, err := h.Service.Regenerate(ctx, tx, *p.UserID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	actorID, actorType := audit.ActorOf(r).Identity()
-	target := *p.UserID
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.recovery_codes_regenerated",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"count": len(out)},
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	h.Service.tellAccountChange(ctx, *p.UserID, "New recovery codes were made for your account",
+	h.Service.tellAccountChange(r.Context(), *p.UserID, "New recovery codes were made for your account",
 		"New two-step verification recovery codes were made for your Qeet ID account. The ones you had before no longer work.")
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"recovery_codes": out,
@@ -430,7 +245,7 @@ func (h *Handler) listOTPFactors(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 func (h *Handler) enrollOTPStart(w http.ResponseWriter, r *http.Request) {
@@ -445,8 +260,8 @@ func (h *Handler) enrollOTPStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// SMS is a paid factor: the service refuses it unless the caller's
-	// organisation's plan includes it (see SetPlan).
-	factorID, err := h.Service.EnrollOTPStart(r.Context(), *p.UserID, p.TenantID, in.Channel, in.Destination)
+	// organization's plan includes it (see SetPlan).
+	factorID, err := h.Service.EnrollOTPStart(r.Context(), *p.UserID, p.OrganizationID, in.Channel, in.Destination)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -460,9 +275,9 @@ func (h *Handler) enrollOTPConfirm(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	factorID, err := uuid.Parse(chi.URLParam(r, "id"))
+	factorID, err := httpx.PathUUID(r, "id", errs.ErrBadRequest.WithDetail("invalid id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	var in verifyInput
@@ -470,45 +285,11 @@ func (h *Handler) enrollOTPConfirm(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ctx := r.Context()
-	attempt, err := h.Service.ReserveAttempt(ctx, *p.UserID, PurposeOTPEnroll(factorID))
-	if err != nil {
+	if err := h.Service.EnrollOTPConfirm(r.Context(), *p.UserID, factorID, in.Code, CallerOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	var opErr error
-	defer func() { h.refund(ctx, attempt, opErr) }()
-	tx, opErr := h.Service.Pool().Begin(ctx)
-	if opErr != nil {
-		httpx.WriteError(w, r, opErr)
-		return
-	}
-	defer tx.Rollback(ctx)
-	if opErr = h.Service.EnrollOTPConfirm(ctx, tx, attempt, factorID, in.Code); opErr != nil {
-		httpx.WriteError(w, r, opErr)
-		return
-	}
-	actorID, actorType := audit.ActorOf(r).Identity()
-	target := *p.UserID
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.otp_factor_added",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	h.Service.tellAccountChange(ctx, *p.UserID, "A way to get sign-in codes was added to your account",
+	h.Service.tellAccountChange(r.Context(), *p.UserID, "A way to get sign-in codes was added to your account",
 		"A phone number or email address that receives two-step verification codes was added to your Qeet ID account.")
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"verified": true})
 }
@@ -519,12 +300,12 @@ func (h *Handler) challengeOTP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	factorID, err := uuid.Parse(chi.URLParam(r, "id"))
+	factorID, err := httpx.PathUUID(r, "id", errs.ErrBadRequest.WithDetail("invalid id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.ChallengeOTP(r.Context(), *p.UserID, p.TenantID, factorID); err != nil {
+	if err := h.Service.ChallengeOTP(r.Context(), *p.UserID, p.OrganizationID, factorID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -537,43 +318,16 @@ func (h *Handler) deleteOTPFactor(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	factorID, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
-		return
-	}
-	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
+	factorID, err := httpx.PathUUID(r, "id", errs.ErrBadRequest.WithDetail("invalid id"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	defer tx.Rollback(ctx)
-	if err := h.Service.DeleteOTPFactor(ctx, tx, *p.UserID, factorID); err != nil {
+	if err := h.Service.DeleteOTPFactor(r.Context(), *p.UserID, factorID, CallerOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := audit.ActorOf(r).Identity()
-	target := *p.UserID
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.otp_factor_removed",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	h.Service.tellAccountChange(ctx, *p.UserID, "A way to get sign-in codes was removed from your account",
+	h.Service.tellAccountChange(r.Context(), *p.UserID, "A way to get sign-in codes was removed from your account",
 		"A phone number or email address that received two-step verification codes was removed from your Qeet ID account.")
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -589,37 +343,42 @@ func (h *Handler) verifyOTP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ctx := r.Context()
-	attempt, err := h.Service.ReserveAttempt(ctx, *p.UserID, PurposeOTPVerify)
-	if err != nil {
+	if err := h.Service.VerifyOTP(r.Context(), *p.UserID, in.Code, CallerOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	var opErr error
-	defer func() { h.refund(ctx, attempt, opErr) }()
-	tx, opErr := h.Service.Pool().Begin(ctx)
-	if opErr != nil {
-		httpx.WriteError(w, r, opErr)
-		return
-	}
-	defer tx.Rollback(ctx)
-	var ok bool
-	ok, opErr = h.Service.VerifyOTP(ctx, tx, attempt, in.Code)
-	if opErr != nil {
-		httpx.WriteError(w, r, opErr)
-		return
-	}
-	if !ok {
-		httpx.WriteError(w, r, errs.ErrMFACodeInvalid)
-		return
-	}
-	if opErr = h.recordStepUp(ctx, tx, r, "otp"); opErr != nil {
-		httpx.WriteError(w, r, opErr)
-		return
-	}
-	if opErr = tx.Commit(ctx); opErr != nil {
-		httpx.WriteError(w, r, opErr)
-		return
-	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"verified": true})
+}
+
+// MountPublic mounts the unauthenticated challenge endpoints (polled by the
+// browser waiting for approval, and called by the mobile app responding to a
+// push).
+func (h *Handler) MountPublic(r chi.Router) {
+	r.Get("/mfa/push/challenges/{id}", h.getPushChallenge)
+	r.Post("/mfa/push/challenges/{id}/respond", h.respondToPushChallenge)
+	// A linked phone removes itself with its own device credential: the app
+	// holds no signed-in session to call the authenticated route with.
+	r.Post("/mfa/push/devices/{id}/unlink", h.unlinkPushDevice)
+	// A linked phone tells the server its new push token when the platform rotates it.
+	r.Post("/mfa/push/devices/{id}/push-token", h.updatePushToken)
+	// A linked phone asks for requests waiting on it, for when a push was late or lost.
+	r.Post("/mfa/push/devices/{id}/pending", h.listPendingPushChallenges)
+	// The mobile app links the phone with a pairing code, holding no session.
+	r.With(h.PairingThrottle).Post("/mfa/push/pairing/claim", h.claimPushPairing)
+}
+
+// MountAdmin mounts an administrator's view of a member's linked phones, in
+// the administrator's own organization (user.read / user.credentials).
+func (h *Handler) MountAdmin(r chi.Router) {
+	r.Get("/users/{id}/push-devices", h.listMemberPushDevices)
+	r.Delete("/users/{id}/push-devices/{deviceID}", h.revokeMemberPushDevice)
+}
+
+// Check refuses a handler without the pairing-code throttle, so bootstrap
+// stops at start rather than serve the claim route unthrottled.
+func (h *Handler) Check() error {
+	if h.PairingThrottle == nil {
+		return errors.New("mfa: the second-factor handler needs a pairing throttle")
+	}
+	return nil
 }

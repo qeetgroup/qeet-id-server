@@ -1,0 +1,57 @@
+post:
+  operationId: submitConsent
+  description: >-
+    Records the end user's allow or deny decision on the hosted consent screen
+    for the authorization request stored under request_id. The user is
+    identified by the hosted-login session cookie, and the request must belong
+    to that session, be undecided and unexpired; it can be decided once. Every
+    protocol value (redirect_uri, scope, state, nonce, PKCE) comes from the
+    stored request. Older consent screens may also echo those values: each one
+    sent must match the stored request, or the decision is refused (400
+    oidc.consent_request_invalid). The answer is JSON naming where the browser
+    goes next: the client's registered redirect_uri with a code, or with
+    error=access_denied and the original state.
+  summary: Authorize decision (consent)
+  tags:
+    - OIDC
+  security:
+    - ssoCookie: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - request_id
+            - approve
+          properties:
+            request_id:
+              type: string
+              format: uuid
+            approve:
+              type: boolean
+  responses:
+    "200":
+      description: Where the consent screen sends the browser next
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              redirect:
+                type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

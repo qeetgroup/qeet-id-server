@@ -1,0 +1,101 @@
+get:
+  operationId: listIpRules
+  summary: List rules + enforcement
+  tags:
+    - IP Rules
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Lists the organization's address rules and whether they are enforced.
+    Requires policy.read.
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - enabled
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              enabled:
+                type: boolean
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/Rule.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: createIpRule
+  summary: Add rule
+  tags:
+    - IP Rules
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - action
+            - cidr
+            - label
+          properties:
+            action:
+              type: string
+              enum:
+                - allow
+                - deny
+            cidr:
+              type: string
+              minLength: 1
+            label:
+              type: string
+              minLength: 1
+  description: >-
+    Adds an allow or deny rule for an address range (CIDR). Deny rules win over
+    allow rules. Requires policy.write.
+  responses:
+    "201":
+      description: Created
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Rule.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,89 @@
+get:
+  operationId: listLdapConnections
+  summary: List connections
+  tags:
+    - LDAP
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Lists the organization's LDAP connections, without their bind passwords.
+    Requires connection.read.
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/LdapConnection.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: createLdapConnection
+  summary: Create connection
+  tags:
+    - LDAP
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/LdapCreateInput.yaml
+  description: >-
+    Creates a directory connection. It must reach the directory over TLS,
+    ldaps:// or ldap:// with start_tls, because binds send passwords: one
+    without is refused with 422 ldap.tls_required ("Use ldaps:// or turn on
+    StartTLS."). A connection that turns off verification of the directory
+    server's certificate (skip_tls_verify) is refused with 422
+    ldap.tls_verify_required. Nothing is saved either way; only a development
+    server (SERVICE_ENV=dev) allows them. An active connection is synced with
+    its directory every sync_interval_minutes (15 unless set; 5 to 60, 422
+    ldap.sync_interval_invalid otherwise), so people the directory disables or
+    removes lose access between sign-ins. Requires connection.write.
+  responses:
+    "201":
+      description: Created
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/LdapConnection.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

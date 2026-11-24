@@ -1,0 +1,21 @@
+type: object
+additionalProperties: false
+description: Every field is optional; an omitted one keeps its value.
+properties:
+  description:
+    type:
+      - string
+      - "null"
+  name:
+    type:
+      - string
+      - "null"
+    minLength: 1
+  parent_id:
+    type:
+      - string
+      - "null"
+    format: uuid
+    description: >-
+      The new parent group's id, or null to make the group top-level. Omit it to
+      keep the parent.

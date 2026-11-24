@@ -1,0 +1,44 @@
+post:
+  operationId: verifyWebauthnFactor
+  summary: WebAuthn 2FA verify
+  tags:
+    - MFA
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/webauthnVerifyInput.yaml
+  description: >-
+    Verifies a WebAuthn assertion against the user's registered credentials and
+    records a step-up verification on success.
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - verified
+            properties:
+              verified:
+                type: boolean
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+    "501":
+      description: WebAuthn second factor not enabled

@@ -10,49 +10,48 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createServicePrincipal = `-- name: CreateServicePrincipal :one
 
-INSERT INTO auth.service_principals (tenant_id, name, description, secret_hash, scopes)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, tenant_id, name, scopes, disabled_at, created_at, description
+INSERT INTO auth.service_principals (organization_id, name, description, secret_hash, scopes, created_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, organization_id, name, scopes, disabled_at, created_at, description
 `
 
 type CreateServicePrincipalParams struct {
-	TenantID    uuid.UUID
-	Name        string
-	Description string
-	SecretHash  string
-	Scopes      []string
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	SecretHash     string
+	Scopes         []string
+	CreatedBy      *uuid.UUID
 }
 
 type CreateServicePrincipalRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	Name        string
-	Scopes      []string
-	DisabledAt  pgtype.Timestamptz
-	CreatedAt   time.Time
-	Description string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	Scopes         []string
+	DisabledAt     *time.Time
+	CreatedAt      time.Time
+	Description    string
 }
 
 // Queries for the service-accounts (principal) domain.
-// Create and Disable accept a pgx.Tx from the handler so audit can share the
-// transaction; the sqlc queries are called via q.WithTx(tx).
 func (q *Queries) CreateServicePrincipal(ctx context.Context, arg CreateServicePrincipalParams) (CreateServicePrincipalRow, error) {
 	row := q.db.QueryRow(ctx, createServicePrincipal,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Name,
 		arg.Description,
 		arg.SecretHash,
 		arg.Scopes,
+		arg.CreatedBy,
 	)
 	var i CreateServicePrincipalRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Scopes,
 		&i.DisabledAt,
@@ -64,68 +63,68 @@ func (q *Queries) CreateServicePrincipal(ctx context.Context, arg CreateServiceP
 
 const disableServicePrincipal = `-- name: DisableServicePrincipal :one
 UPDATE auth.service_principals SET disabled_at = NOW()
-WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL
-RETURNING tenant_id, name
+WHERE id = $1 AND organization_id = $2 AND disabled_at IS NULL
+RETURNING name
 `
 
 type DisableServicePrincipalParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-type DisableServicePrincipalRow struct {
-	TenantID uuid.UUID
-	Name     string
-}
-
-// DisableServicePrincipal marks the principal disabled. RETURNING tenant_id
-// and name so the caller can write the audit row without a second query.
-func (q *Queries) DisableServicePrincipal(ctx context.Context, arg DisableServicePrincipalParams) (DisableServicePrincipalRow, error) {
-	row := q.db.QueryRow(ctx, disableServicePrincipal, arg.ID, arg.TenantID)
-	var i DisableServicePrincipalRow
-	err := row.Scan(&i.TenantID, &i.Name)
-	return i, err
+// DisableServicePrincipal marks the principal disabled, returning its name for
+// the audit row.
+func (q *Queries) DisableServicePrincipal(ctx context.Context, arg DisableServicePrincipalParams) (string, error) {
+	row := q.db.QueryRow(ctx, disableServicePrincipal, arg.ID, arg.OrganizationID)
+	var name string
+	err := row.Scan(&name)
+	return name, err
 }
 
 const enableServicePrincipal = `-- name: EnableServicePrincipal :one
 UPDATE auth.service_principals SET disabled_at = NULL
-WHERE id = $1 AND tenant_id = $2
+WHERE id = $1 AND organization_id = $2
 RETURNING name
 `
 
 type EnableServicePrincipalParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) EnableServicePrincipal(ctx context.Context, arg EnableServicePrincipalParams) (string, error) {
-	row := q.db.QueryRow(ctx, enableServicePrincipal, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, enableServicePrincipal, arg.ID, arg.OrganizationID)
 	var name string
 	err := row.Scan(&name)
 	return name, err
 }
 
 const getServicePrincipalForAuth = `-- name: GetServicePrincipalForAuth :one
-SELECT id, tenant_id, secret_hash, scopes, disabled_at, previous_secret_hash, previous_secret_expires_at
-FROM auth.service_principals WHERE id = $1
+SELECT p.id, p.organization_id, p.secret_hash, p.scopes, p.disabled_at, p.previous_secret_hash, p.previous_secret_expires_at
+FROM auth.service_principals p
+JOIN organization.organizations t ON t.id = p.organization_id AND t.status = 'active' AND t.deleted_at IS NULL
+WHERE p.id = $1
 `
 
 type GetServicePrincipalForAuthRow struct {
 	ID                      uuid.UUID
-	TenantID                uuid.UUID
+	OrganizationID          uuid.UUID
 	SecretHash              string
 	Scopes                  []string
-	DisabledAt              pgtype.Timestamptz
+	DisabledAt              *time.Time
 	PreviousSecretHash      *string
-	PreviousSecretExpiresAt pgtype.Timestamptz
+	PreviousSecretExpiresAt *time.Time
 }
 
+// GetServicePrincipalForAuth is the credential row the client_credentials
+// grant (ClientCredentials) verifies a secret against, never returned to the
+// caller. It finds no principal of a suspended or deleted organization.
 func (q *Queries) GetServicePrincipalForAuth(ctx context.Context, id uuid.UUID) (GetServicePrincipalForAuthRow, error) {
 	row := q.db.QueryRow(ctx, getServicePrincipalForAuth, id)
 	var i GetServicePrincipalForAuthRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.SecretHash,
 		&i.Scopes,
 		&i.DisabledAt,
@@ -136,24 +135,26 @@ func (q *Queries) GetServicePrincipalForAuth(ctx context.Context, id uuid.UUID) 
 }
 
 const listServicePrincipals = `-- name: ListServicePrincipals :many
-SELECT id, tenant_id, name, scopes, disabled_at, created_at, description, last_used_at, previous_secret_expires_at
-FROM auth.service_principals WHERE tenant_id = $1 ORDER BY created_at DESC
+SELECT id, organization_id, name, scopes, disabled_at, created_at, description, last_used_at, previous_secret_expires_at
+FROM auth.service_principals WHERE organization_id = $1 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListServicePrincipalsRow struct {
 	ID                      uuid.UUID
-	TenantID                uuid.UUID
+	OrganizationID          uuid.UUID
 	Name                    string
 	Scopes                  []string
-	DisabledAt              pgtype.Timestamptz
+	DisabledAt              *time.Time
 	CreatedAt               time.Time
 	Description             string
-	LastUsedAt              pgtype.Timestamptz
-	PreviousSecretExpiresAt pgtype.Timestamptz
+	LastUsedAt              *time.Time
+	PreviousSecretExpiresAt *time.Time
 }
 
-func (q *Queries) ListServicePrincipals(ctx context.Context, tenantID uuid.UUID) ([]ListServicePrincipalsRow, error) {
-	rows, err := q.db.Query(ctx, listServicePrincipals, tenantID)
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
+func (q *Queries) ListServicePrincipals(ctx context.Context, organizationID uuid.UUID) ([]ListServicePrincipalsRow, error) {
+	rows, err := q.db.Query(ctx, listServicePrincipals, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +164,7 @@ func (q *Queries) ListServicePrincipals(ctx context.Context, tenantID uuid.UUID)
 		var i ListServicePrincipalsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Name,
 			&i.Scopes,
 			&i.DisabledAt,
@@ -183,14 +184,13 @@ func (q *Queries) ListServicePrincipals(ctx context.Context, tenantID uuid.UUID)
 }
 
 const principalLive = `-- name: PrincipalLive :one
-SELECT (disabled_at IS NULL)::bool AS live FROM auth.service_principals WHERE id = $1
+SELECT (p.disabled_at IS NULL)::bool AS live FROM auth.service_principals p
+JOIN organization.organizations t ON t.id = p.organization_id AND t.status = 'active' AND t.deleted_at IS NULL
+WHERE p.id = $1
 `
 
-// GetServicePrincipalForAuth fetches the full credential row for the
-// client_credentials grant (IssueClientCredentials). Includes secret_hash
-// for argon2/bcrypt verification — never returned to the API caller.
-// PrincipalLive reports whether a service principal exists and isn't
-// disabled. No row: it doesn't exist.
+// PrincipalLive is whether a principal is enabled, in an active
+// organization: no row for one of a suspended or deleted organization.
 func (q *Queries) PrincipalLive(ctx context.Context, id uuid.UUID) (bool, error) {
 	row := q.db.QueryRow(ctx, principalLive, id)
 	var live bool
@@ -201,15 +201,15 @@ func (q *Queries) PrincipalLive(ctx context.Context, id uuid.UUID) (bool, error)
 const rotateServicePrincipalSecret = `-- name: RotateServicePrincipalSecret :one
 UPDATE auth.service_principals
 SET previous_secret_hash = secret_hash, previous_secret_expires_at = $1, secret_hash = $2
-WHERE id = $3 AND tenant_id = $4
+WHERE id = $3 AND organization_id = $4
 RETURNING name
 `
 
 type RotateServicePrincipalSecretParams struct {
-	PreviousExpiresAt pgtype.Timestamptz
+	PreviousExpiresAt *time.Time
 	SecretHash        string
 	ID                uuid.UUID
-	TenantID          uuid.UUID
+	OrganizationID    uuid.UUID
 }
 
 // RotateServicePrincipalSecret makes the new secret current and keeps the
@@ -219,50 +219,43 @@ func (q *Queries) RotateServicePrincipalSecret(ctx context.Context, arg RotateSe
 		arg.PreviousExpiresAt,
 		arg.SecretHash,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	var name string
 	err := row.Scan(&name)
 	return name, err
 }
 
+const servicePrincipalScopes = `-- name: ServicePrincipalScopes :one
+SELECT scopes FROM auth.service_principals WHERE id = $1 AND organization_id = $2
+`
+
+type ServicePrincipalScopesParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// ServicePrincipalScopes returns the scopes of one of the organization's service principals.
+func (q *Queries) ServicePrincipalScopes(ctx context.Context, arg ServicePrincipalScopesParams) ([]string, error) {
+	row := q.db.QueryRow(ctx, servicePrincipalScopes, arg.ID, arg.OrganizationID)
+	var scopes []string
+	err := row.Scan(&scopes)
+	return scopes, err
+}
+
 const touchServicePrincipal = `-- name: TouchServicePrincipal :exec
 UPDATE auth.service_principals SET last_used_at = NOW()
-WHERE id = $1 AND tenant_id = $2 AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')
+WHERE id = $1 AND organization_id = $2 AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')
 `
 
 type TouchServicePrincipalParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // TouchServicePrincipal notes a token issued to the principal, at most once
 // a minute.
 func (q *Queries) TouchServicePrincipal(ctx context.Context, arg TouchServicePrincipalParams) error {
-	_, err := q.db.Exec(ctx, touchServicePrincipal, arg.ID, arg.TenantID)
-	return err
-}
-
-const upgradeServicePrincipalSecretHash = `-- name: UpgradeServicePrincipalSecretHash :exec
-UPDATE auth.service_principals SET secret_hash = $1
-WHERE id = $2 AND tenant_id = $3 AND secret_hash = $4
-`
-
-type UpgradeServicePrincipalSecretHashParams struct {
-	NewHash  string
-	ID       uuid.UUID
-	TenantID uuid.UUID
-	OldHash  string
-}
-
-// UpgradeServicePrincipalSecretHash replaces an Argon2id secret hash from before
-// with its SHA-256 form, once the secret has verified.
-func (q *Queries) UpgradeServicePrincipalSecretHash(ctx context.Context, arg UpgradeServicePrincipalSecretHashParams) error {
-	_, err := q.db.Exec(ctx, upgradeServicePrincipalSecretHash,
-		arg.NewHash,
-		arg.ID,
-		arg.TenantID,
-		arg.OldHash,
-	)
+	_, err := q.db.Exec(ctx, touchServicePrincipal, arg.ID, arg.OrganizationID)
 	return err
 }

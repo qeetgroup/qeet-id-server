@@ -1,4 +1,4 @@
-package auth
+package authentication
 
 import (
 	"context"
@@ -10,21 +10,21 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// MFA enforcement at sign-in: an organisation's mfa_enforcement (optional,
+// MFA enforcement at sign-in: an organization's mfa_enforcement (optional,
 // required or admin_only) or an account's mfa_required decides who must meet a
 // second factor. An account that must but holds none sets one up first; existing
-// members may postpone setup during the organisation's grace period.
+// members may postpone setup during the organization's grace period.
 
 // Why a sign-in is challenged.
 const (
-	mfaReasonEnrolled       = "enrolled"
-	mfaReasonTenantRequired = "tenant_required"
-	mfaReasonAdminRequired  = "admin_required"
-	mfaReasonUserRequired   = "user_required"
+	mfaReasonEnrolled             = "enrolled"
+	mfaReasonOrganizationRequired = "organization_required"
+	mfaReasonAdminRequired        = "admin_required"
+	mfaReasonUserRequired         = "user_required"
 )
 
 // mfaRequirement is whether, and why, an account must use a second factor to
@@ -32,7 +32,7 @@ const (
 type mfaRequirement struct {
 	// reason is why the account must; "" when it need not.
 	reason string
-	// graceUntil is set while the organisation's grace period lets the
+	// graceUntil is set while the organization's grace period lets the
 	// account put the setup off.
 	graceUntil *time.Time
 }
@@ -45,14 +45,14 @@ func decideMFARequirement(row dbgen.MFARequirementRow, now time.Time) mfaRequire
 	var req mfaRequirement
 	switch {
 	case row.Enforcement == "required":
-		req.reason = mfaReasonTenantRequired
+		req.reason = mfaReasonOrganizationRequired
 	case row.Enforcement == "admin_only" && row.IsAdmin:
 		req.reason = mfaReasonAdminRequired
 	default:
 		return req
 	}
-	if row.GraceDays > 0 && row.MfaEnforcedSince.Valid && row.JoinedAt.Before(row.MfaEnforcedSince.Time) {
-		until := row.MfaEnforcedSince.Time.Add(time.Duration(row.GraceDays) * 24 * time.Hour)
+	if row.GraceDays > 0 && row.MfaEnforcedSince != nil && row.JoinedAt.Before(*row.MfaEnforcedSince) {
+		until := row.MfaEnforcedSince.Add(time.Duration(row.GraceDays) * 24 * time.Hour)
 		if now.Before(until) {
 			req.graceUntil = &until
 		}
@@ -61,9 +61,10 @@ func decideMFARequirement(row dbgen.MFARequirementRow, now time.Time) mfaRequire
 }
 
 // mfaRequirementFor reads, through q, whether the account must use a second
-// factor to sign in to tenantID (uuid.Nil: only the account's own flag applies).
-func mfaRequirementFor(ctx context.Context, q *dbgen.Queries, userID, tenantID uuid.UUID) (mfaRequirement, error) {
-	row, err := q.MFARequirement(ctx, dbgen.MFARequirementParams{UserID: userID, TenantID: tenantID})
+// factor to sign in to organizationID (uuid.Nil: only the account's own flag applies),
+// members being the permissions that don't make it an administrator there.
+func mfaRequirementFor(ctx context.Context, q *dbgen.Queries, userID, organizationID uuid.UUID, members []string) (mfaRequirement, error) {
+	row, err := q.MFARequirement(ctx, dbgen.MFARequirementParams{UserID: userID, OrganizationID: organizationID, MemberPermissions: members})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return mfaRequirement{}, nil
 	}
@@ -74,8 +75,8 @@ func mfaRequirementFor(ctx context.Context, q *dbgen.Queries, userID, tenantID u
 }
 
 // How a session's sign-in met a second factor. Every session records it, so
-// entering another organisation can be checked against that organisation's
-// requirement (see tenantFactorShortfall).
+// entering another organization can be checked against that organization's
+// requirement (see organizationFactorShortfall).
 const (
 	secondFactorMFA           = "mfa"
 	secondFactorPasskey       = "passkey"
@@ -96,7 +97,7 @@ func secondFactorOfMethod(method string) string {
 	return ""
 }
 
-// stricterRequirement is the requirement of two organisations an account
+// stricterRequirement is the requirement of two organizations an account
 // meets at once: either one's, and a grace period only while both allow one,
 // ending at the earlier.
 func stricterRequirement(a, b mfaRequirement) mfaRequirement {
@@ -116,15 +117,15 @@ func stricterRequirement(a, b mfaRequirement) mfaRequirement {
 	return out
 }
 
-// tenantFactorShortfall reports what stops a session or code being issued for
-// tenantID to userID, whose sign-in met secondFactor ("" for none): nil,
+// organizationFactorShortfall reports what stops a session or code being issued for
+// organizationID to userID, whose sign-in met secondFactor ("" for none): nil,
 // ErrMFAEnrollmentRequired when a factor must be set up first, or
 // ErrStepUpRequired when the account holds one this sign-in didn't use.
-func (s *Service) tenantFactorShortfall(ctx context.Context, userID, tenantID uuid.UUID, secondFactor string) error {
-	if s.mfa == nil || tenantID == uuid.Nil || secondFactor != "" {
+func (s *Service) organizationFactorShortfall(ctx context.Context, userID, organizationID uuid.UUID, secondFactor string) error {
+	if organizationID == uuid.Nil || secondFactor != "" {
 		return nil
 	}
-	req, err := mfaRequirementFor(ctx, s.q, userID, tenantID)
+	req, err := mfaRequirementFor(ctx, s.q, userID, organizationID, s.memberPermissions)
 	if err != nil || req.reason == "" {
 		return err
 	}
@@ -132,7 +133,7 @@ func (s *Service) tenantFactorShortfall(ctx context.Context, userID, tenantID uu
 	if err != nil {
 		return err
 	}
-	meta := map[string]any{"reason": req.reason, "tenant_id": tenantID}
+	meta := map[string]any{"reason": req.reason, "organization_id": organizationID}
 	if len(factors) == 0 {
 		if req.graceUntil != nil {
 			return nil
@@ -176,27 +177,24 @@ func (g mfaGate) reason() string {
 
 // mfaGate reads the account's factors and requirement. With no MFA service
 // wired nothing is challenged.
-func (s *Service) mfaGate(ctx context.Context, userID, tenantID uuid.UUID) (mfaGate, error) {
-	return s.mfaGateFor(ctx, userID, tenantID, uuid.Nil)
+func (s *Service) mfaGate(ctx context.Context, userID, organizationID uuid.UUID) (mfaGate, error) {
+	return s.mfaGateFor(ctx, userID, organizationID, uuid.Nil)
 }
 
-// mfaGateFor is mfaGate for a sign-in that also enters alsoTenant (uuid.Nil:
-// none) — the organisation of the application a hosted sign-in serves — whose
-// requirement applies as well as the home organisation's.
-func (s *Service) mfaGateFor(ctx context.Context, userID, tenantID, alsoTenant uuid.UUID) (mfaGate, error) {
-	if s.mfa == nil {
-		return mfaGate{}, nil
-	}
+// mfaGateFor is mfaGate for a sign-in that also enters alsoOrganization (uuid.Nil:
+// none) — the organization of the application a hosted sign-in serves — whose
+// requirement applies as well as the home organization's.
+func (s *Service) mfaGateFor(ctx context.Context, userID, organizationID, alsoOrganization uuid.UUID) (mfaGate, error) {
 	factors, err := s.mfa.LoginFactors(ctx, userID)
 	if err != nil {
 		return mfaGate{}, err
 	}
-	req, err := mfaRequirementFor(ctx, s.q, userID, tenantID)
+	req, err := mfaRequirementFor(ctx, s.q, userID, organizationID, s.memberPermissions)
 	if err != nil {
 		return mfaGate{}, err
 	}
-	if alsoTenant != uuid.Nil && alsoTenant != tenantID {
-		also, err := mfaRequirementFor(ctx, s.q, userID, alsoTenant)
+	if alsoOrganization != uuid.Nil && alsoOrganization != organizationID {
+		also, err := mfaRequirementFor(ctx, s.q, userID, alsoOrganization, s.memberPermissions)
 		if err != nil {
 			return mfaGate{}, err
 		}
@@ -232,20 +230,11 @@ func (s *Service) StartMFAEnrollment(ctx context.Context, mfaToken, ip, ua strin
 		if out.Secret, out.ProvisioningURL, err = s.mfa.StartLoginEnrollment(ctx, tx, c.userID, u.Email); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE auth.mfa_login_challenges SET enrollment_started = TRUE WHERE id = $1`, id); err != nil {
+		if err := s.q.WithTx(tx).StartMFAChallengeEnrollment(ctx, id); err != nil {
 			return err
 		}
-		return audit.Record(ctx, tx, audit.Event{
-			TenantID:     c.tenantID,
-			ActorUserID:  &c.userID,
-			ActorType:    "user",
-			Action:       "mfa.totp_enroll_started",
-			ResourceType: "user",
-			ResourceID:   &c.userID,
-			IP:           ip,
-			UserAgent:    ua,
-			Metadata:     map[string]any{"via": "sign_in"},
-		})
+		return audit.Record(ctx, tx, asUser(c.userID, ip, ua).EventIn(c.organizationID, "mfa.totp_enroll_started", "user", c.userID,
+			map[string]any{"via": "sign_in"}))
 	})
 	return out, err
 }
@@ -269,11 +258,11 @@ func (s *Service) stillWithoutFactor(ctx context.Context, tx pgx.Tx, userID uuid
 // enrolment challenge once the account must set up a factor now — the grace
 // period has ended, or never applied. If the requirement has been lifted
 // since, skipping is allowed. Read through the challenge transaction tx.
-func (s *Service) mayDeferEnrollment(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) (*time.Time, error) {
+func (s *Service) mayDeferEnrollment(ctx context.Context, tx pgx.Tx, userID, organizationID uuid.UUID) (*time.Time, error) {
 	if err := s.stillWithoutFactor(ctx, tx, userID); err != nil {
 		return nil, err
 	}
-	req, err := mfaRequirementFor(ctx, s.q.WithTx(tx), userID, tenantID)
+	req, err := mfaRequirementFor(ctx, s.q.WithTx(tx), userID, organizationID, s.memberPermissions)
 	if err != nil {
 		return nil, err
 	}

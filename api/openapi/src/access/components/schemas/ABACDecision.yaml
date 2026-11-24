@@ -1,0 +1,52 @@
+type: object
+description: Result of an ABAC evaluation.
+properties:
+  allow:
+    type: boolean
+    description: True when an allow policy matched and no deny policy matched.
+  effect:
+    type: string
+    enum:
+      - allow
+      - deny
+  matched_policy_id:
+    type:
+      - string
+      - "null"
+    format: uuid
+    description: ID of the policy that determined the outcome, if any.
+  reason:
+    type: string
+    description: >-
+      Human-readable explanation of the decision. Show reason_code's meaning
+      instead.
+  reason_code:
+    type: string
+    enum:
+      - authz.allowed_by_policy
+      - authz.denied_by_policy
+      - authz.attribute_absent
+      - authz.condition_error
+      - authz.no_matching_allow
+    description: >-
+      Why: an allow policy matched; a deny policy matched; a deny policy applied
+      as an attribute it compares is absent; a policy's condition failed to
+      evaluate, so it refused (the error is logged, not returned); or no allow
+      policy matched.
+  reason_params:
+    type: object
+    additionalProperties: true
+    description: >-
+      The policy that decided (policy_id, policy_name, priority); absent for
+      authz.no_matching_allow.
+  trace:
+    type: array
+    description: Grant-path trace (present only when ?explain=true).
+    items:
+      type: string
+  matched_draft:
+    type: boolean
+    description: >-
+      Present, true, when the request's draft policy determined the outcome. A
+      new draft has no matched_policy_id; one standing in for a stored policy
+      has that policy's.

@@ -1,0 +1,39 @@
+type: object
+required:
+  - id
+  - name
+  - connection_id
+  - threshold
+  - enabled
+  - user_id
+  - created_at
+  - last_notified_at
+properties:
+  id:
+    type: string
+    format: uuid
+  name:
+    type: string
+  connection_id:
+    type:
+      - string
+      - "null"
+    description: The connection it watches; null for every connection.
+  threshold:
+    type: integer
+    description: Failures within 15 minutes that notify.
+  enabled:
+    type: boolean
+    description: False while paused.
+  user_id:
+    type: string
+    format: uuid
+    description: The person it notifies (who made it).
+  created_at:
+    type: string
+    format: date-time
+  last_notified_at:
+    type:
+      - string
+      - "null"
+    format: date-time

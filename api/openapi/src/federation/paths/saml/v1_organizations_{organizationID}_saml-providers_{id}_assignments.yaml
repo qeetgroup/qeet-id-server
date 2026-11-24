@@ -1,0 +1,40 @@
+get:
+  operationId: listSamlAppAssignments
+  description: >-
+    Lists who is assigned to one of the organization's downstream Service Providers:
+    the people, and the groups whose members are. When the SP has
+    assignment_required, only they are signed in to it; otherwise every person
+    whose home is the organization is, and the list has no effect until it is turned
+    on. Assign or unassign with the users/{userID} and groups/{groupID} routes
+    below. An SP of another organization answers 404.
+  summary: List SAML SP assignments
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Assignments
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/SAMLServiceProviderAssignments.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

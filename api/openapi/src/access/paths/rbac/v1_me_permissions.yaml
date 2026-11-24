@@ -1,0 +1,45 @@
+get:
+  operationId: listMyEffectivePermissions
+  summary: My effective permissions
+  description: >-
+    The permission keys the signed-in person holds in the organization their
+    token is for, from the roles assigned to them and those their groups hold,
+    with every grant behind them, as GET
+    /v1/users/{userID}/organizations/{organizationID}/permissions answers for
+    anyone. It needs no permission, so someone holding none (the built-in
+    member role grants none) reads empty lists and an application can show
+    them what they may use. Another person's permissions still need
+    role.read. A token for no organization is refused with 401.
+  tags:
+    - RBAC
+  security:
+    - bearerAuth: []
+  responses:
+    "200":
+      description: The caller's effective permissions
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - permissions
+              - grants
+            properties:
+              permissions:
+                type: array
+                description: Each permission key once, in order.
+                items:
+                  type: string
+              grants:
+                type: array
+                description: >-
+                  Every grant behind them: one entry per permission, role and
+                  group (a permission granted twice appears twice).
+                items:
+                  $ref: ../../components/schemas/AuthzGrantStep.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

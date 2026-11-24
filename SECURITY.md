@@ -4,13 +4,13 @@ Qeet ID is identity infrastructure. We take security reports seriously and triag
 
 ## Supported versions
 
-| Version | Supported |
-|---|---|
-| `main` (development) | ✅ |
-| Released versions | ✅ latest minor only |
-| Pre-release / forks | ❌ |
+| Version              | Supported            |
+| -------------------- | -------------------- |
+| `main` (development) | ✅                   |
+| Released versions    | ✅ latest minor only |
+| Pre-release / forks  | ❌                   |
 
-The platform is pre-1.0; until v1.0 ships we support only the `main` branch.
+The platform has not had its first release; until `2027.1.0` ships we support only the `main` branch.
 
 ## Reporting a vulnerability
 
@@ -30,23 +30,25 @@ Please include:
 
 ## Response SLAs
 
-| Severity | Acknowledgement | Initial assessment | Fix target |
-|---|---|---|---|
-| **Critical** — remote auth bypass, full account takeover, key compromise, data exfil | < 24 hours | < 72 hours | 7 days |
-| **High** — privilege escalation, MFA bypass, tenant-isolation break | < 48 hours | < 5 business days | 14 days |
-| **Medium** — info disclosure (non-PII), CSRF, persistent XSS in admin | < 5 business days | < 10 business days | 30 days |
-| **Low** — best-practice deviations, hardening suggestions | < 10 business days | < 20 business days | next release |
+| Severity                                                                             | Acknowledgement    | Initial assessment | Fix target   |
+| ------------------------------------------------------------------------------------ | ------------------ | ------------------ | ------------ |
+| **Critical** — remote auth bypass, full account takeover, key compromise, data exfil | < 24 hours         | < 72 hours         | 7 days       |
+| **High** — privilege escalation, MFA bypass, organization-isolation break            | < 48 hours         | < 5 business days  | 14 days      |
+| **Medium** — info disclosure (non-PII), CSRF, persistent XSS in admin                | < 5 business days  | < 10 business days | 30 days      |
+| **Low** — best-practice deviations, hardening suggestions                            | < 10 business days | < 20 business days | next release |
 
 We will keep you informed throughout triage and remediation, and credit you (if you wish) in the released advisory.
 
 ## Scope
 
 **In scope:**
+
 - This repository (`qeet-id-server`) — the Go backend and its infrastructure code
 - Anything that ships from `main` to production
 - Authentication, authorization, session management, token issuance / validation, MFA, passkeys, SAML/OIDC handlers, SCIM, audit logging
 
 **Out of scope:**
+
 - Vulnerabilities requiring physical access to a user's device
 - Social engineering of Qeet ID staff or customers
 - Denial-of-service via volumetric traffic against production hosts
@@ -56,6 +58,7 @@ We will keep you informed throughout triage and remediation, and credit you (if 
 ## Safe harbor
 
 We will not pursue legal action against researchers who:
+
 - Make a good-faith effort to follow this policy
 - Avoid privacy violations, destruction of data, or service degradation
 - Do not exploit the issue beyond what is necessary to demonstrate it
@@ -67,11 +70,12 @@ Once a fix is released, we publish a security advisory on this repository descri
 
 ## Bug bounty
 
-A formal bug bounty program will launch alongside v1.0. Until then, we handle reports through this policy and offer thanks + advisory credit.
+A formal bug bounty program will launch alongside the first release, `2027.1.0`. Until then, we handle reports through this policy and offer thanks + advisory credit.
 
 ## Hardening expectations for deployments
 
 Every Qeet ID deployment also:
+
 - Run TLS 1.2+ on every public endpoint
 - Rotate the JWT signing key set every 90 days
 - Keep dependencies current — `go.mod` / `go.sum` are version-pinned for reproducibility, not because they should stay stale

@@ -1,0 +1,24 @@
+type: object
+required:
+  - id
+  - idp_group
+  - group_id
+  - group_name
+  - created_at
+properties:
+  id:
+    type: string
+    format: uuid
+  idp_group:
+    type: string
+    description: >-
+      The group as the identity provider asserts it (a name, an object id or an
+      LDAP DN), compared ignoring case.
+  group_id:
+    type: string
+    format: uuid
+  group_name:
+    type: string
+  created_at:
+    type: string
+    format: date-time

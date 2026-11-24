@@ -1,0 +1,27 @@
+type: object
+required:
+  - created_at
+  - display_name
+  - email
+  - external_id
+  - id
+  - status
+properties:
+  created_at:
+    type: string
+    format: date-time
+  display_name:
+    type:
+      - string
+      - "null"
+  email:
+    type: string
+  external_id:
+    type:
+      - string
+      - "null"
+  id:
+    type: string
+    format: uuid
+  status:
+    type: string

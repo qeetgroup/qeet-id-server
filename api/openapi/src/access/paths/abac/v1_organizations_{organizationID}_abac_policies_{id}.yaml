@@ -1,0 +1,122 @@
+get:
+  operationId: getAbacPolicy
+  description: >-
+    Returns a single ABAC policy by its identifier, including its conditions,
+    effect, and priority. Use it to inspect a policy before editing or removing
+    it. Modify it with the update-policy call or remove it with the
+    delete-policy call.
+  summary: Get ABAC policy
+  tags:
+    - ABAC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/ABACPolicy.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+patch:
+  operationId: updateAbacPolicy
+  summary: Update ABAC policy
+  description: >-
+    Replaces all mutable fields of a policy. Send the full desired state. A deny
+    that would refuse its author policy writes is refused with
+    abac.policy_locks_out, as on create.
+  tags:
+    - ABAC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/ABACPolicyCreate.yaml
+  responses:
+    "200":
+      description: Updated
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/ABACPolicy.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+delete:
+  operationId: deleteAbacPolicy
+  description: >-
+    Permanently removes an ABAC policy from the organization. Once deleted, the policy
+    no longer participates in the deny-wins evaluation, which can change access
+    decisions immediately, so confirm its impact first with the ABAC evaluate
+    call. Retrieve the policy beforehand with the get-policy call if a record is
+    needed.
+  summary: Delete ABAC policy
+  tags:
+    - ABAC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "204":
+      description: No Content
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

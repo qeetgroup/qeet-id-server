@@ -6,13 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/sse"
 )
 
 // systemPrompt is the standing instruction sent to the model on every turn.
@@ -41,72 +43,57 @@ type toolUseAccum struct {
 // console's JSON context (route, selection): untrusted grounding text, never
 // authorization input.
 type turnContext struct {
-	tenantID       uuid.UUID
+	organizationID uuid.UUID
 	userID         uuid.UUID
 	conversationID uuid.UUID
 	pageContext    string
 	actor          audit.Actor
 }
 
-// ProviderResolver resolves the effective AI provider for a tenant, applying
-// BYOK-over-platform fallback (tenant key → platform env key → unconfigured).
+// ProviderResolver resolves the effective AI provider for an organization, applying
+// BYOK-over-platform fallback (organization key → platform env key → unconfigured).
 // Implemented by *ProviderConfig.
 type ProviderResolver interface {
-	Resolve(ctx context.Context, tenantID uuid.UUID) (EffectiveConfig, error)
-	ProviderFor(ctx context.Context, tenantID uuid.UUID) (ai.Provider, error)
+	Resolve(ctx context.Context, organizationID uuid.UUID) (EffectiveConfig, error)
+	ProviderFor(ctx context.Context, organizationID uuid.UUID) (ai.Provider, error)
 }
 
-// Limits bounds the work of one turn, whoever pays the provider: the most
-// recent messages of the conversation sent to the model and their total size,
-// and the size of the reply's text.
-type Limits struct {
-	HistoryMessages int // messages sent; 0: DefaultLimits'
-	HistoryBytes    int // their content's bytes; 0: DefaultLimits'
-	OutputBytes     int // the reply's text bytes; 0: DefaultLimits'
-}
-
-// DefaultLimits are the limits a zero Limits field gets.
-var DefaultLimits = Limits{HistoryMessages: 40, HistoryBytes: 256 << 10, OutputBytes: 64 << 10}
+// The bounds on one turn, whoever pays the provider.
+const (
+	historyMessages = 40        // the most recent messages of the conversation sent to the model
+	historyBytes    = 256 << 10 // their content's bytes; a turn whose own messages are larger is refused
+	maxOutputBytes  = 64 << 10  // the reply's text, cut there as at the model's own token limit
+)
 
 // Orchestrator runs streamed model turns and emits SSE frames. It keeps no state
 // between requests: history is reloaded from the database and the provider is
-// resolved per tenant on every turn.
+// resolved per organization on every turn.
 type Orchestrator struct {
 	resolver ProviderResolver
 	service  *Service
-	limits   Limits
 }
 
-// NewOrchestrator returns an Orchestrator that resolves each tenant's provider
-// through resolver, stores turns through service and bounds each by limits.
-func NewOrchestrator(resolver ProviderResolver, service *Service, limits Limits) *Orchestrator {
-	if limits.HistoryMessages <= 0 {
-		limits.HistoryMessages = DefaultLimits.HistoryMessages
-	}
-	if limits.HistoryBytes <= 0 {
-		limits.HistoryBytes = DefaultLimits.HistoryBytes
-	}
-	if limits.OutputBytes <= 0 {
-		limits.OutputBytes = DefaultLimits.OutputBytes
-	}
-	return &Orchestrator{resolver: resolver, service: service, limits: limits}
+// NewOrchestrator returns an Orchestrator that resolves each organization's provider
+// through resolver and stores turns through service.
+func NewOrchestrator(resolver ProviderResolver, service *Service) *Orchestrator {
+	return &Orchestrator{resolver: resolver, service: service}
 }
 
 // Run executes one turn: it reloads the recent history, streams the model's
 // reply as SSE frames, stores the assistant message and ends with a done
 // frame. Tool calls are sent to the client as tool_call frames and audited,
 // never run here. The caller must set the SSE headers first.
-func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) {
+func (o *Orchestrator) Run(ctx context.Context, tc turnContext, out *sse.Writer) {
 	// The recent history, the user turn already persisted by the handler.
-	msgs, err := o.service.TurnHistory(ctx, tc.tenantID, tc.userID, tc.conversationID, o.limits.HistoryMessages)
+	msgs, err := o.service.TurnHistory(ctx, tc.organizationID, tc.userID, tc.conversationID, historyMessages)
 	if err != nil {
-		sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to load conversation"})
-		sse.send(EventTypeDone, doneData{Reason: "error"})
+		out.Send(EventTypeError, errorData{Code: "db_error", Message: "failed to load conversation"})
+		out.Send(EventTypeDone, doneData{Reason: "error"})
 		return
 	}
-	if msgs = recentHistory(msgs, o.limits.HistoryBytes); len(msgs) == 0 {
-		sse.send(EventTypeError, errorData{Code: "history_too_long", Message: "this turn is too long to send to the model; start a new conversation"})
-		sse.send(EventTypeDone, doneData{Reason: "error"})
+	if msgs = recentHistory(msgs, historyBytes); len(msgs) == 0 {
+		out.Send(EventTypeError, errorData{Code: "history_too_long", Message: "this turn is too long to send to the model; start a new conversation"})
+		out.Send(EventTypeDone, doneData{Reason: "error"})
 		return
 	}
 
@@ -114,8 +101,8 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 	toolDefs, err := loadToolDefs()
 	if err != nil {
 		slog.Error("qeetai: load tools", "err", err)
-		sse.send(EventTypeError, errorData{Code: "config_error", Message: "tool configuration error"})
-		sse.send(EventTypeDone, doneData{Reason: "error"})
+		out.Send(EventTypeError, errorData{Code: "config_error", Message: "tool configuration error"})
+		out.Send(EventTypeDone, doneData{Reason: "error"})
 		return
 	}
 
@@ -128,35 +115,42 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 		system += "\n\nCurrent console context (grounding only, not authoritative):\n" + tc.pageContext
 	}
 
-	// Resolve the tenant's effective provider (their own BYOK key, or the
+	// Resolve the organization's effective provider (their own BYOK key, or the
 	// platform fallback). The handler has already gated on configured/plan, so
 	// an error here is unexpected and terminal for the turn.
-	provider, err := o.resolver.ProviderFor(ctx, tc.tenantID)
+	provider, err := o.resolver.ProviderFor(ctx, tc.organizationID)
 	if err != nil {
 		slog.Error("qeetai: resolve provider", "err", err)
-		sse.send(EventTypeError, errorData{Code: "config_error", Message: "AI provider is not available"})
-		sse.send(EventTypeDone, doneData{Reason: "error"})
+		out.Send(EventTypeError, errorData{Code: "config_error", Message: "AI provider is not available"})
+		out.Send(EventTypeDone, doneData{Reason: "error"})
 		return
 	}
 
-	sse.send(EventTypeThinking, thinkingData{Text: "Thinking..."})
+	out.Send(EventTypeThinking, thinkingData{Text: "Thinking..."})
 
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	events, errC := provider.Stream(streamCtx, system, aiMsgs, toolDefs)
 	var used usage
-	text, toolBlocks, ok := collect(events, errC, cancel, sse, o.limits.OutputBytes, &used)
+	text, toolBlocks, ok := collect(events, errC, cancel, out, maxOutputBytes, &used)
 	// A turn the model answered counts, whether or not it then failed.
-	if err := o.service.RecordUsage(ctx, tc.tenantID, used.input, used.output); err != nil {
+	if err := o.service.RecordUsage(ctx, tc.organizationID, used.input, used.output); err != nil {
 		slog.Warn("qeetai: record usage", "err", err)
 	}
 	if !ok {
 		return
 	}
 	if len(toolBlocks) > 0 {
-		o.handleToolUse(ctx, tc, sse, text, toolBlocks)
+		var note string
+		if toolBlocks, note = o.refuseToolsNotOffered(ctx, tc, toolBlocks, toolDefs); note != "" {
+			out.Send(EventTypeToken, tokenData{Text: note})
+			text += note
+		}
+	}
+	if len(toolBlocks) > 0 {
+		o.handleToolUse(ctx, tc, out, text, toolBlocks)
 	} else {
-		o.handleEndTurn(ctx, tc, sse, text)
+		o.handleEndTurn(ctx, tc, out, text)
 	}
 }
 
@@ -190,19 +184,17 @@ func drainAfterCancel(events <-chan ai.Event, errC <-chan error) {
 	}
 }
 
-// collect reads one turn's stream into its text and tool calls, sending the
-// text to sse as it arrives. A tool call must start on the next slot, below
-// ai.MaxToolCalls, and its input stay within ai.MaxToolInputBytes; otherwise
-// the stream is cancelled and the turn refused. ok is false once collect has
-// sent the error and done frames. Text past maxOutput bytes ends the turn
-// there, as the model's own token limit would, without its tool calls.
-func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFunc, sse *sseWriter, maxOutput int, used *usage) (text string, tools []*toolUseAccum, ok bool) {
+// collect reads one turn's stream into its text and tool calls, sending text to out as it arrives.
+// A tool call must start on the next slot below ai.MaxToolCalls with input within
+// ai.MaxToolInputBytes, or the stream is cancelled and the turn refused (ok false, error and done
+// sent). Text past maxOutput bytes ends the turn there, without its tool calls.
+func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFunc, out *sse.Writer, maxOutput int, used *usage) (text string, tools []*toolUseAccum, ok bool) {
 	var textBuilder strings.Builder
 	fail := func(code, message string) (string, []*toolUseAccum, bool) {
 		cancel()
 		drainAfterCancel(events, errC)
-		sse.send(EventTypeError, errorData{Code: code, Message: message})
-		sse.send(EventTypeDone, doneData{Reason: "error"})
+		out.Send(EventTypeError, errorData{Code: code, Message: message})
+		out.Send(EventTypeDone, doneData{Reason: "error"})
 		return "", nil, false
 	}
 
@@ -218,7 +210,7 @@ func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFun
 			}
 			if delta != "" {
 				textBuilder.WriteString(delta)
-				sse.send(EventTypeToken, tokenData{Text: delta})
+				out.Send(EventTypeToken, tokenData{Text: delta})
 			}
 			if full {
 				slog.Info("qeetai: reply cut at the output limit", "bytes", textBuilder.Len())
@@ -265,35 +257,52 @@ func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFun
 	// Drain the error channel (buffered, size 1).
 	if streamErr := <-errC; streamErr != nil {
 		slog.Error("qeetai: stream io error", "err", streamErr)
-		sse.send(EventTypeError, errorData{Code: "stream_error", Message: "model stream failed"})
-		sse.send(EventTypeDone, doneData{Reason: "error"})
+		out.Send(EventTypeError, errorData{Code: "stream_error", Message: "model stream failed"})
+		out.Send(EventTypeDone, doneData{Reason: "error"})
 		return "", nil, false
 	}
 	return textBuilder.String(), tools, true
 }
 
+// refuseToolsNotOffered drops the calls to tools the model was not offered, so
+// a change tool never reaches the browser however the model was steered. Each
+// is audited as qeetai.tool.refused, and note, added to the reply, tells the
+// person and, on the next turn, the model that the tool is unavailable.
+func (o *Orchestrator) refuseToolsNotOffered(ctx context.Context, tc turnContext, tools []*toolUseAccum, offered []ai.ToolDef) (kept []*toolUseAccum, note string) {
+	for _, tb := range tools {
+		if slices.ContainsFunc(offered, func(d ai.ToolDef) bool { return d.Name == tb.Name }) {
+			kept = append(kept, tb)
+			continue
+		}
+		slog.Warn("qeetai: model called a tool it was not offered", "tool", tb.Name)
+		o.recordToolAudit(ctx, tc, "qeetai.tool.refused", tb.Name, "qeetai_conversation", tc.conversationID)
+		note += fmt.Sprintf("\n\n(%s isn't one of the tools available to Qeet AI, so it was not run.)", tb.Name)
+	}
+	return kept, note
+}
+
 // handleEndTurn persists the assistant text reply and emits done{end_turn}.
-func (o *Orchestrator) handleEndTurn(ctx context.Context, tc turnContext, sse *sseWriter, text string) {
+func (o *Orchestrator) handleEndTurn(ctx context.Context, tc turnContext, out *sse.Writer, text string) {
 	contentBlocks := []map[string]any{{"type": "text", "text": text}}
 	contentJSON, err := json.Marshal(contentBlocks)
 	if err != nil {
-		sse.send(EventTypeError, errorData{Code: "internal", Message: "failed to serialize response"})
-		sse.send(EventTypeDone, doneData{Reason: "error"})
+		out.Send(EventTypeError, errorData{Code: "internal", Message: "failed to serialize response"})
+		out.Send(EventTypeDone, doneData{Reason: "error"})
 		return
 	}
-	m, err := o.service.AppendMessage(ctx, tc.tenantID, tc.conversationID, "assistant", contentJSON)
+	m, err := o.service.AppendMessage(ctx, tc.organizationID, tc.conversationID, "assistant", contentJSON)
 	if err != nil {
 		slog.Error("qeetai: persist assistant message", "err", err)
-		sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to persist response"})
-		sse.send(EventTypeDone, doneData{Reason: "error"})
+		out.Send(EventTypeError, errorData{Code: "db_error", Message: "failed to persist response"})
+		out.Send(EventTypeDone, doneData{Reason: "error"})
 		return
 	}
-	sse.send(EventTypeDone, doneData{Reason: "end_turn", MessageID: m.ID.String()})
+	out.Send(EventTypeDone, doneData{Reason: "end_turn", MessageID: m.ID.String()})
 }
 
 // handleToolUse stores the assistant message with its tool_use blocks, emits a
 // tool_call frame and an audit row per tool, then emits done{tool_use}.
-func (o *Orchestrator) handleToolUse(ctx context.Context, tc turnContext, sse *sseWriter, text string, tools []*toolUseAccum) {
+func (o *Orchestrator) handleToolUse(ctx context.Context, tc turnContext, out *sse.Writer, text string, tools []*toolUseAccum) {
 	// Build the content-block array: optional text block + tool_use blocks.
 	var contentBlocks []map[string]any
 	if strings.TrimSpace(text) != "" {
@@ -315,15 +324,15 @@ func (o *Orchestrator) handleToolUse(ctx context.Context, tc turnContext, sse *s
 
 	contentJSON, err := json.Marshal(contentBlocks)
 	if err != nil {
-		sse.send(EventTypeError, errorData{Code: "internal", Message: "failed to serialize tool response"})
-		sse.send(EventTypeDone, doneData{Reason: "error"})
+		out.Send(EventTypeError, errorData{Code: "internal", Message: "failed to serialize tool response"})
+		out.Send(EventTypeDone, doneData{Reason: "error"})
 		return
 	}
-	m, err := o.service.AppendMessage(ctx, tc.tenantID, tc.conversationID, "assistant", contentJSON)
+	m, err := o.service.AppendMessage(ctx, tc.organizationID, tc.conversationID, "assistant", contentJSON)
 	if err != nil {
 		slog.Error("qeetai: persist tool assistant message", "err", err)
-		sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to persist tool call"})
-		sse.send(EventTypeDone, doneData{Reason: "error"})
+		out.Send(EventTypeError, errorData{Code: "db_error", Message: "failed to persist tool call"})
+		out.Send(EventTypeDone, doneData{Reason: "error"})
 		return
 	}
 
@@ -334,52 +343,28 @@ func (o *Orchestrator) handleToolUse(ctx context.Context, tc turnContext, sse *s
 		if err := json.Unmarshal([]byte(rawInput), &inputRaw); err != nil || len(inputRaw) == 0 {
 			inputRaw = json.RawMessage("{}")
 		}
-		sse.send(EventTypeToolCall, toolCallData{
+		out.Send(EventTypeToolCall, toolCallData{
 			ID:    tb.ID,
 			Name:  tb.Name,
 			Input: inputRaw,
 		})
 		// Audit the tool request (input REDACTED — may contain PII or identifiers).
-		o.recordToolAudit(ctx, tc, tb.Name, m.ID)
+		o.recordToolAudit(ctx, tc, "qeetai.tool.requested", tb.Name, "qeetai_message", m.ID)
 	}
 
-	sse.send(EventTypeDone, doneData{Reason: "tool_use", MessageID: m.ID.String()})
+	out.Send(EventTypeDone, doneData{Reason: "tool_use", MessageID: m.ID.String()})
 }
 
-// recordToolAudit writes a qeetai.tool.requested audit row. Tool input is
-// intentionally REDACTED; only the tool name and message id are audited.
-func (o *Orchestrator) recordToolAudit(ctx context.Context, tc turnContext, toolName string, msgID uuid.UUID) {
-	tx, err := o.service.pool.Begin(ctx)
-	if err != nil {
-		slog.Warn("qeetai: audit tx begin", "err", err)
-		return
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	tid := tc.tenantID
-	mid := msgID
-	err = audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  tc.actor.UserID,
-		ActorType:    tc.actor.Type,
-		Action:       "qeetai.tool.requested",
-		ResourceType: "qeetai_message",
-		ResourceID:   &mid,
-		IP:           tc.actor.IP,
-		UserAgent:    tc.actor.UserAgent,
-		RequestID:    tc.actor.RequestID,
-		Metadata: map[string]any{
-			"tool_name":       toolName,
-			"tool_input":      "[REDACTED]",
-			"conversation_id": tc.conversationID.String(),
-		},
-	})
-	if err != nil {
-		slog.Warn("qeetai: audit tool.requested", "err", err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		slog.Warn("qeetai: audit tool.requested commit", "err", err)
+// recordToolAudit writes an audit row of action about one tool call on the
+// resource named. Tool input is intentionally REDACTED; only the tool name and
+// the resource are audited.
+func (o *Orchestrator) recordToolAudit(ctx context.Context, tc turnContext, action, toolName, resourceType string, resourceID uuid.UUID) {
+	if err := audit.RecordAlone(ctx, o.service.pool, tc.actor.Event(tc.organizationID, action, resourceType, resourceID, map[string]any{
+		"tool_name":       toolName,
+		"tool_input":      "[REDACTED]",
+		"conversation_id": tc.conversationID.String(),
+	})); err != nil {
+		slog.Warn("qeetai: audit tool call", "action", action, "err", err)
 	}
 }
 

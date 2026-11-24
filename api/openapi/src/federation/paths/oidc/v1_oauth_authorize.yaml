@@ -1,0 +1,200 @@
+get:
+  operationId: authorize
+  description: >-
+    Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as
+    the provider. The end user is identified by the hosted-login SSO session
+    cookie: with no session the browser is redirected to the hosted login, with
+    the qe_sc cookie naming the application (an hour, HttpOnly, cleared once a
+    code is issued) so the sign-in that follows records it in its
+    auth.login_succeeded event (client_id, client_name), with missing consent to
+    the hosted consent screen, and otherwise back to the client's redirect_uri
+    carrying an authorization code and state. Exchange that code for tokens at
+    the token endpoint (authorization_code grant). The redirect_uri must be one the client
+    registered, character for character, except that a public (native)
+    client's http redirect to a loopback IP literal (such as
+    http://127.0.0.1/cb or http://[::1]/cb) may name any port (RFC 8252 §7.3),
+    as a native application listens on whatever port it is given; a
+    confidential client's matches exactly, and localhost is a name, not a
+    literal, and matches exactly.
+    Otherwise the error is shown here and nothing is sent to that address. The
+    code goes to the redirect_uri as requested, port included, and redeems only
+    with that same redirect_uri. When consent is needed, the request is stored
+    server-side and the hosted consent screen is given only its request_id.
+    While the client organization's address rules are on, a browser address they
+    refuse gets access_denied at the redirect_uri and no code, and the refusal
+    is audited (auth.address_refused). Every application, confidential ones
+    included, must send a PKCE code_challenge with code_challenge_method S256; a
+    request without one gets invalid_request at the redirect_uri
+    (oidc.code_challenge_required) before any consent is asked. A confidential
+    application whose pkce_exempt_until is still ahead is excused until then.
+    The challenge binds the code to the request, so a nonce is optional (OpenID
+    Connect Core 3.1.2.1); one that is sent comes back in the ID token.
+    response_type is required and only code is served (else invalid_request /
+    unsupported_response_type at the redirect_uri); request and request_uri are
+    refused (request_not_supported, request_uri_not_supported), as is a
+    response_mode other than query. prompt=none never shows a page: no sign-in
+    answers login_required, no consent consent_required. prompt=login, and a
+    sign-in older than max_age seconds, send the browser to sign in again and
+    then complete the request (the request it comes back with carries a
+    login_after marker the server signs, so one added by hand doesn't stand for
+    the sign-in); prompt=consent asks for consent again. The ID token carries
+    auth_time (when the person signed in) and sid (the hosted-login session).
+    When the client's organization requires a second factor the hosted sign-in
+    didn't meet, the browser is sent to sign in again for this request (where
+    the hosted login asks for it), once; prompt=none answers
+    interaction_required, and a fresh sign-in that still hasn't met one gets
+    access_denied at the redirect_uri.
+  summary: Authorize
+  tags:
+    - OIDC
+  parameters:
+    - in: query
+      name: client_id
+      required: true
+      schema:
+        type: string
+    - in: query
+      name: redirect_uri
+      required: true
+      description: >-
+        A registered redirect URI, matched exactly; for a public client, on an
+        http loopback IP literal any port matches.
+      schema:
+        type: string
+        format: uri
+    - in: query
+      name: response_type
+      required: true
+      schema:
+        type: string
+        enum:
+          - code
+    - in: query
+      name: scope
+      description: >-
+        Space-separated scopes, each registered for the application;
+        offline_access, which asks for a refresh token, is accepted from any
+        application registered for refresh_token and is consented to like any
+        other scope.
+      schema:
+        type: string
+    - in: query
+      name: state
+      schema:
+        type: string
+    - in: query
+      name: code_challenge
+      description: >-
+        Required (43 characters, base64url of the SHA-256 of the code_verifier),
+        unless the confidential application is exempt (pkce_exempt_until).
+      schema:
+        type: string
+    - in: query
+      name: code_challenge_method
+      description: Required with code_challenge; only S256.
+      schema:
+        type: string
+        enum:
+          - S256
+    - in: query
+      name: nonce
+      description: >-
+        Optional (at most 255 characters), as PKCE binds the code to the
+        request; echoed in the ID token when sent.
+      schema:
+        type: string
+        maxLength: 255
+    - in: query
+      name: prompt
+      description: Space-separated; none, login and consent are honoured.
+      schema:
+        type: string
+    - in: query
+      name: max_age
+      description: >-
+        Seconds; a sign-in older than this is made fresh before the code is
+        issued.
+      schema:
+        type: integer
+        minimum: 0
+    - in: query
+      name: resource
+      description: >-
+        An RFC 8707 resource the access token is for; it must be registered for
+        the organization (else invalid_target). The code carries it, and the
+        token names it alone as its audience.
+      schema:
+        type: string
+        format: uri
+  security:
+    - ssoCookie: []
+  responses:
+    "302":
+      description: Redirect to the hosted-login UI or back to the client with a code
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: authorizeWithPost
+  description: >-
+    The authorization request sent as a form, which OpenID Connect Core 3.1.2.1
+    requires an authorization endpoint to accept beside GET. It takes the same
+    parameters as GET, in the body, and answers 303 to the GET form of the same
+    request, where the request is checked and the hosted-login session cookie
+    is read (a cross-site POST doesn't carry it). No session is needed and
+    nothing is changed here.
+  summary: Authorize (form POST)
+  tags:
+    - OIDC
+  requestBody:
+    required: true
+    content:
+      application/x-www-form-urlencoded:
+        schema:
+          type: object
+          required:
+            - client_id
+            - redirect_uri
+            - response_type
+          properties:
+            client_id:
+              type: string
+            redirect_uri:
+              type: string
+              format: uri
+            response_type:
+              type: string
+              enum:
+                - code
+            scope:
+              type: string
+            state:
+              type: string
+            nonce:
+              type: string
+            code_challenge:
+              type: string
+            code_challenge_method:
+              type: string
+              enum:
+                - S256
+            prompt:
+              type: string
+            max_age:
+              type: integer
+            resource:
+              type: string
+              format: uri
+  security: []
+  responses:
+    "303":
+      description: Redirect to the GET form of the same authorization request
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

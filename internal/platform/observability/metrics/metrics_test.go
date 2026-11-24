@@ -45,3 +45,28 @@ func TestMiddlewareAndHandler(t *testing.T) {
 		}
 	}
 }
+
+// A client can send any word as the method, so made-up ones share one series: each adding its own
+// would let anyone grow the metrics without limit.
+func TestMadeUpMethodsShareOneSeries(t *testing.T) {
+	r := chi.NewRouter()
+	r.Use(Middleware)
+	r.Get("/v1/ping", func(http.ResponseWriter, *http.Request) {})
+	for _, method := range []string{"BREW", "WHEN", http.MethodGet} {
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(method, "/v1/ping", nil))
+	}
+
+	scrape := httptest.NewRecorder()
+	Handler().ServeHTTP(scrape, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	s := scrape.Body.String()
+	for _, made := range []string{`method="BREW"`, `method="WHEN"`} {
+		if strings.Contains(s, made) {
+			t.Errorf("/metrics has a series of its own for %s", made)
+		}
+	}
+	for _, want := range []string{`method="other"`, `method="GET"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("/metrics missing %s", want)
+		}
+	}
+}

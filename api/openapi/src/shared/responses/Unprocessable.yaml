@@ -1,0 +1,18 @@
+description: Validation failed
+headers:
+  X-Request-Id:
+    $ref: ../headers/RequestId.yaml
+content:
+  application/json:
+    example:
+      error:
+        code: validation_failed
+        message: One or more fields are invalid.
+        translation_key: validation_failed
+        fields:
+          - field: email
+            code: invalid_email
+            message: Must be a valid email address.
+        request_id: api-1/Kx9fQ2mW7a-000131
+    schema:
+      $ref: ../schemas/Error.yaml

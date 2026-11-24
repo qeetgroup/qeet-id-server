@@ -2,6 +2,7 @@ package rbac
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"slices"
 	"strconv"
@@ -12,9 +13,10 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // Handler serves the RBAC routes. Decider answers GET /v1/check across every
@@ -32,41 +34,43 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/permissions", h.listPermissions)
 
-	r.Get("/tenants/{tenantID}/roles", h.listRoles)
-	r.Get("/tenants/{tenantID}/roles/{roleID}/holders", h.holders)
-	r.Post("/tenants/{tenantID}/roles", h.createRole)
-	r.Patch("/tenants/{tenantID}/roles/{roleID}", h.updateRole)
-	r.Delete("/tenants/{tenantID}/roles/{roleID}", h.deleteRole)
-	r.Put("/tenants/{tenantID}/roles/{roleID}/permissions", h.setPermissions)
+	r.Get("/organizations/{organizationID}/roles", h.listRoles)
+	r.Get("/organizations/{organizationID}/roles/{roleID}/holders", h.holders)
+	r.Post("/organizations/{organizationID}/roles", h.createRole)
+	r.Patch("/organizations/{organizationID}/roles/{roleID}", h.updateRole)
+	r.Delete("/organizations/{organizationID}/roles/{roleID}", h.deleteRole)
+	r.Put("/organizations/{organizationID}/roles/{roleID}/permissions", h.setPermissions)
 
 	r.Get("/roles/{roleID}/permissions", h.listRolePermissions)
 	r.Post("/roles/{roleID}/permissions/{permID}", h.grant)
 	r.Delete("/roles/{roleID}/permissions/{permID}", h.revoke)
 
-	r.Post("/users/{userID}/tenants/{tenantID}/roles/{roleID}", h.assign)
-	r.Delete("/users/{userID}/tenants/{tenantID}/roles/{roleID}", h.unassign)
+	r.Post("/users/{userID}/organizations/{organizationID}/roles/{roleID}", h.assign)
+	r.Delete("/users/{userID}/organizations/{organizationID}/roles/{roleID}", h.unassign)
 
-	r.Get("/tenants/{tenantID}/groups/{groupID}/roles", h.listGroupRoles)
-	r.Post("/tenants/{tenantID}/groups/{groupID}/roles/{roleID}", h.assignGroupRole)
-	r.Delete("/tenants/{tenantID}/groups/{groupID}/roles/{roleID}", h.unassignGroupRole)
+	r.Get("/organizations/{organizationID}/groups/{groupID}/roles", h.listGroupRoles)
+	r.Post("/organizations/{organizationID}/groups/{groupID}/roles/{roleID}", h.assignGroupRole)
+	r.Delete("/organizations/{organizationID}/groups/{groupID}/roles/{roleID}", h.unassignGroupRole)
 
-	r.Get("/users/{userID}/tenants/{tenantID}/permissions", h.effective)
+	r.Get("/users/{userID}/organizations/{organizationID}/permissions", h.effective)
+	// A person's own, in the organization they're signed in to: no role.read.
+	r.Get("/me/permissions", h.myEffective)
 	r.Get("/check", h.check)
 }
 
 // scopedRole returns the path's {roleID} if the role belongs to the caller's
-// tenant. These routes carry no tenant, so another tenant's role is
+// organization. These routes carry no organization, so another organization's role is
 // ErrNotFound, the same as a missing one, and role IDs can't be probed.
 func (h *Handler) scopedRole(r *http.Request) (uuid.UUID, error) {
-	roleID, err := uuid.Parse(chi.URLParam(r, "roleID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid roleID")
-	}
-	scope, err := httpx.RequireTenant(r)
+	roleID, err := httpx.PathUUID(r, "roleID", errs.ErrBadRequest.WithDetail("invalid roleID"))
 	if err != nil {
 		return uuid.Nil, err
 	}
-	owner, err := h.Repo.RoleTenant(r.Context(), roleID)
+	scope, err := httpx.RequireOrganization(r)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	owner, err := h.Repo.RoleOrganization(r.Context(), roleID)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -85,31 +89,26 @@ func (h *Handler) listPermissions(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
-// holders serves GET /tenants/{tenantID}/roles/{roleID}/holders: a page of
+// holders serves GET /organizations/{organizationID}/roles/{roleID}/holders: a page of
 // the people holding the role (directly or through which groups) and every
-// group granted it. limit is 1–500 (default 100); cursor is the next page's.
+// group granted it. limit is at most 500 (default 100); cursor is the next
+// page's.
 func (h *Handler) holders(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	roleID, err := uuid.Parse(chi.URLParam(r, "roleID"))
+	roleID, err := httpx.PathUUID(r, "roleID", errs.ErrBadRequest.WithDetail("invalid roleID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
-	if owner, err := h.Repo.RoleTenant(r.Context(), roleID); err != nil || owner != tid {
+	if owner, err := h.Repo.RoleOrganization(r.Context(), roleID); err != nil || owner != tid {
 		httpx.WriteError(w, r, errs.ErrNotFound)
 		return
 	}
-	limit, offset := 100, 0
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if limit, err = strconv.Atoi(raw); err != nil || limit < 1 || limit > 500 {
-			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("limit must be 1 to 500"))
-			return
-		}
-	}
+	limit, offset := paging.Limit(r.URL.Query(), 100, 500), 0
 	if raw := r.URL.Query().Get("cursor"); raw != "" {
 		if offset, err = strconv.Atoi(raw); err != nil || offset < 0 || offset > 1_000_000 {
 			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid cursor"))
@@ -125,7 +124,7 @@ func (h *Handler) holders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -139,7 +138,7 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 type createRoleInput struct {
@@ -148,7 +147,7 @@ type createRoleInput struct {
 }
 
 func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -175,7 +174,7 @@ type updateRoleInput struct {
 	Description *string `json:"description" validate:"omitempty,max=500"`
 }
 
-// updateRole serves PATCH /tenants/{tenantID}/roles/{roleID}: rename a custom
+// updateRole serves PATCH /organizations/{organizationID}/roles/{roleID}: rename a custom
 // role or change its description.
 func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request) {
 	tid, roleID, err := pathRole(r)
@@ -200,7 +199,7 @@ func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, role)
 }
 
-// deleteRole serves DELETE /tenants/{tenantID}/roles/{roleID}.
+// deleteRole serves DELETE /organizations/{organizationID}/roles/{roleID}.
 func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request) {
 	tid, roleID, err := pathRole(r)
 	if err != nil {
@@ -214,22 +213,22 @@ func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// pathRole is the path's tenant and {roleID}.
-func pathRole(r *http.Request) (tenantID, roleID uuid.UUID, err error) {
-	if tenantID, err = httpx.PathTenant(r); err != nil {
+// pathRole is the path's organization and {roleID}.
+func pathRole(r *http.Request) (organizationID, roleID uuid.UUID, err error) {
+	if organizationID, err = httpx.PathOrganization(r); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	if roleID, err = uuid.Parse(chi.URLParam(r, "roleID")); err != nil {
-		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid roleID")
+	if roleID, err = httpx.PathUUID(r, "roleID", errs.ErrBadRequest.WithDetail("invalid roleID")); err != nil {
+		return uuid.Nil, uuid.Nil, err
 	}
-	return tenantID, roleID, nil
+	return organizationID, roleID, nil
 }
 
 type setPermissionsInput struct {
 	PermissionIDs []uuid.UUID `json:"permission_ids" validate:"max=500"`
 }
 
-// setPermissions serves PUT /tenants/{tenantID}/roles/{roleID}/permissions:
+// setPermissions serves PUT /organizations/{organizationID}/roles/{roleID}/permissions:
 // the role's whole set of permissions in one change.
 func (h *Handler) setPermissions(w http.ResponseWriter, r *http.Request) {
 	scope, roleID, err := pathRole(r)
@@ -276,58 +275,41 @@ func (h *Handler) listRolePermissions(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
+// grant gives a role a permission.
 func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
-	roleID, err := h.scopedRole(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	permID, err := uuid.Parse(chi.URLParam(r, "permID"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid permID"))
-		return
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := h.Repo.CheckRoleEditable(r.Context(), scope, roleID); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := h.Repo.CheckGrantPermission(r.Context(), httpx.PrincipalFromCtx(r.Context()), scope, permID); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := h.Service.GrantPermission(r.Context(), scope, roleID, permID, audit.ActorOf(r)); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	h.changePermission(w, r, h.Service.GrantPermission)
 }
 
+// revoke takes a permission from a role. Taking one away is held to the rule
+// for giving it: a built-in role keeps its permissions, and nobody removes one
+// they don't hold.
 func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
+	h.changePermission(w, r, h.Service.RevokePermission)
+}
+
+// changePermission runs change, giving the path's role its permission or
+// taking it away, once the role is the caller's organization's and editable
+// and the caller holds the permission.
+func (h *Handler) changePermission(w http.ResponseWriter, r *http.Request,
+	change func(ctx context.Context, organizationID, roleID, permID uuid.UUID, actor audit.Actor) error) {
 	roleID, err := h.scopedRole(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	permID, err := uuid.Parse(chi.URLParam(r, "permID"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid permID"))
-		return
-	}
-	scope, err := httpx.RequireTenant(r)
+	permID, err := httpx.PathUUID(r, "permID", errs.ErrBadRequest.WithDetail("invalid permID"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// Taking a permission away is held to the rule for giving it: a built-in
-	// role keeps its permissions, and nobody removes one they don't hold.
+	scope, err := httpx.RequireOrganization(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	if err := h.Repo.CheckRoleEditable(r.Context(), scope, roleID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -336,7 +318,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.RevokePermission(r.Context(), scope, roleID, permID, audit.ActorOf(r)); err != nil {
+	if err := change(r.Context(), scope, roleID, permID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -344,19 +326,19 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) assign(w http.ResponseWriter, r *http.Request) {
-	uid, err := uuid.Parse(chi.URLParam(r, "userID"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
-		return
-	}
-	tid, err := httpx.PathTenant(r)
+	uid, err := httpx.PathUUID(r, "userID", errs.ErrBadRequest.WithDetail("invalid userID"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	rid, err := uuid.Parse(chi.URLParam(r, "roleID"))
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		httpx.WriteError(w, r, err)
+		return
+	}
+	rid, err := httpx.PathUUID(r, "roleID", errs.ErrBadRequest.WithDetail("invalid roleID"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.Repo.CheckGrantRole(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, rid); err != nil {
@@ -372,19 +354,19 @@ func (h *Handler) assign(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) unassign(w http.ResponseWriter, r *http.Request) {
-	uid, err := uuid.Parse(chi.URLParam(r, "userID"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
-		return
-	}
-	tid, err := httpx.PathTenant(r)
+	uid, err := httpx.PathUUID(r, "userID", errs.ErrBadRequest.WithDetail("invalid userID"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	rid, err := uuid.Parse(chi.URLParam(r, "roleID"))
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		httpx.WriteError(w, r, err)
+		return
+	}
+	rid, err := httpx.PathUUID(r, "roleID", errs.ErrBadRequest.WithDetail("invalid roleID"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	// Removing a role is held to the rule for giving it, and to the person's
@@ -406,25 +388,52 @@ func (h *Handler) unassign(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) effective(w http.ResponseWriter, r *http.Request) {
-	uid, err := uuid.Parse(chi.URLParam(r, "userID"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
-		return
-	}
-	tid, err := httpx.PathTenant(r)
+	uid, err := httpx.PathUUID(r, "userID", errs.ErrBadRequest.WithDetail("invalid userID"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	keys, err := h.Repo.EffectivePermissions(r.Context(), uid, tid)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	grants, err := h.Repo.Grants(r.Context(), uid, tid)
+	h.writeEffective(w, r, uid, tid)
+}
+
+// myEffective serves GET /me/permissions: the caller's own effective
+// permissions in the organization their token is for, with every grant behind
+// them, so someone holding none can still learn what they may use. Another
+// person's need role.read (effective).
+func (h *Handler) myEffective(w http.ResponseWriter, r *http.Request) {
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	userID, err := httpx.RequireUser(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.writeEffective(w, r, userID, organizationID)
+}
+
+// writeEffective answers userID's effective permissions in organizationID and
+// the grants behind them, each an empty list when there are none.
+func (h *Handler) writeEffective(w http.ResponseWriter, r *http.Request, userID, organizationID uuid.UUID) {
+	keys, err := h.Repo.EffectivePermissions(r.Context(), userID, organizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	grants, err := h.Repo.Grants(r.Context(), userID, organizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if keys == nil {
+		keys = []string{}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"permissions": keys, "grants": grants})
 }
@@ -440,23 +449,23 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid user_id"))
 		return
 	}
-	tid, err := uuid.Parse(q.Get("tenant_id"))
+	tid, err := uuid.Parse(q.Get("organization_id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenant_id"))
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid organization_id"))
 		return
 	}
-	// tenant_id comes from the query, so it must be the caller's own tenant, or
-	// /check would be a cross-tenant permission oracle.
-	if scope, serr := httpx.RequireTenant(r); serr != nil {
+	// organization_id comes from the query, so it must be the caller's own organization, or
+	// /check would be a cross-organization permission oracle.
+	if scope, serr := httpx.RequireOrganization(r); serr != nil {
 		httpx.WriteError(w, r, serr)
 		return
 	} else if tid != scope {
-		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
+		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("organization mismatch"))
 		return
 	}
 	perm := q.Get("permission")
 	if perm == "" {
-		httpx.WriteError(w, r, errs.ErrRBACPermissionRequired)
+		httpx.WriteError(w, r, ErrPermissionRequired)
 		return
 	}
 	dec, err := h.Decider.Permission(r.Context(), tid, uid, perm)
@@ -464,7 +473,7 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.Decisions.Record(r.Context(), decisionlog.Entry{TenantID: tid, Source: decisionlog.SourceCheck, Subject: uid.String(),
+	h.Decisions.Record(r.Context(), decisionlog.Entry{OrganizationID: tid, Source: decisionlog.SourceCheck, Subject: uid.String(),
 		Resource: "permission", Action: perm, Allowed: dec.Allow, Model: dec.Model, Rule: dec.Rule, ReasonCode: dec.ReasonCode})
 	dec = h.Decider.ForViewer(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, dec)
 	out := map[string]any{"allowed": dec.Allow, "decided_by": dec.DecidedBy()}
@@ -490,14 +499,14 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listGroupRoles(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	gid, err := uuid.Parse(chi.URLParam(r, "groupID"))
+	gid, err := httpx.PathUUID(r, "groupID", errs.ErrBadRequest.WithDetail("invalid groupID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid groupID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	out, err := h.Repo.ListGroupRoles(r.Context(), gid, tid)
@@ -505,23 +514,23 @@ func (h *Handler) listGroupRoles(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	gid, err := uuid.Parse(chi.URLParam(r, "groupID"))
+	gid, err := httpx.PathUUID(r, "groupID", errs.ErrBadRequest.WithDetail("invalid groupID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid groupID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
-	rid, err := uuid.Parse(chi.URLParam(r, "roleID"))
+	rid, err := httpx.PathUUID(r, "roleID", errs.ErrBadRequest.WithDetail("invalid roleID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.Repo.CheckGrantRole(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, rid); err != nil {
@@ -537,19 +546,25 @@ func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) unassignGroupRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	gid, err := uuid.Parse(chi.URLParam(r, "groupID"))
+	gid, err := httpx.PathUUID(r, "groupID", errs.ErrBadRequest.WithDetail("invalid groupID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid groupID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
-	rid, err := uuid.Parse(chi.URLParam(r, "roleID"))
+	rid, err := httpx.PathUUID(r, "roleID", errs.ErrBadRequest.WithDetail("invalid roleID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Taking a role off a group takes it from everyone in it, so it is held to
+	// the rule for giving it, as taking it off a person is.
+	if err := h.Repo.CheckGrantRole(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, rid); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.Service.RemoveRoleFromGroup(r.Context(), gid, tid, rid, audit.ActorOf(r)); err != nil {

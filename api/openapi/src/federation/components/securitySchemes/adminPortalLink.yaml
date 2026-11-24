@@ -1,0 +1,5 @@
+type: http
+scheme: bearer
+description: >-
+  One-time admin-portal link credential. Accepted only by POST
+  /v1/admin-portal/session and invalid after exchange.

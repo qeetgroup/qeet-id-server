@@ -1,0 +1,56 @@
+type: object
+description: A SCIM bearer token, without the token itself.
+required:
+  - created_at
+  - expires_at
+  - id
+  - last_used_at
+  - name
+  - replaced_by
+  - revoked_at
+  - status
+  - token_prefix
+properties:
+  id:
+    type: string
+    format: uuid
+  name:
+    type: string
+  token_prefix:
+    type: string
+    description: The token's first characters, to recognise it by.
+  status:
+    type: string
+    enum:
+      - active
+      - rotated
+      - expired
+      - revoked
+    description: >-
+      active: works. rotated: replaced, and works until expires_at, when its
+      overlap ends. expired: past expires_at. revoked: revoked.
+  created_at:
+    type: string
+    format: date-time
+  expires_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  last_used_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+    description: Recorded at most once a minute.
+  revoked_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  replaced_by:
+    type:
+      - string
+      - "null"
+    format: uuid
+    description: The token that replaced this one when it was rotated.

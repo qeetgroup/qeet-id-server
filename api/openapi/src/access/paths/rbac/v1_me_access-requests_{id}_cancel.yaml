@@ -1,0 +1,30 @@
+post:
+  operationId: cancelMyAccessRequest
+  summary: Cancel my access request
+  description: >-
+    Withdraws the signed-in person's own request while it's waiting. One already
+    answered, cancelled or lapsed answers 409 access_request.closed.
+  tags:
+    - RBAC
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+  responses:
+    "204":
+      description: Cancelled
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      $ref: ../../../shared/responses/Conflict.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

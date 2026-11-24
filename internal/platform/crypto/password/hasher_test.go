@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -40,26 +39,19 @@ func TestHash_SaltedPerCall(t *testing.T) {
 	}
 }
 
-func TestVerify_AcceptsLegacyBcrypt(t *testing.T) {
-	// A pre-existing bcrypt hash must keep verifying after the switch.
-	b, err := bcrypt.GenerateFromPassword([]byte("legacy-secret"), 10)
-	if err != nil {
-		t.Fatalf("bcrypt: %v", err)
+// TestVerify_RefusesBcrypt checks that a bcrypt hash, which nothing writes,
+// matches nothing, even the password it was made from.
+func TestVerify_RefusesBcrypt(t *testing.T) {
+	const bcryptHash = "$2a$04$XgUCgXKQJcfyqJJLo/J7A.c1R3OBmkn5j06GbWhmiQP81qGwUJ.eO" // "correct horse battery staple"
+	if Verify(bcryptHash, "correct horse battery staple") {
+		t.Error("a bcrypt hash verified")
 	}
-	if !Verify(string(b), "legacy-secret") {
-		t.Error("Verify must accept a legacy bcrypt hash")
-	}
-	if Verify(string(b), "nope") {
-		t.Error("Verify must reject a wrong password against a bcrypt hash")
+	if !NeedsRehash(bcryptHash) {
+		t.Error("a bcrypt hash must be flagged for rehash")
 	}
 }
 
 func TestNeedsRehash(t *testing.T) {
-	// Legacy bcrypt → needs rehash.
-	b, _ := bcrypt.GenerateFromPassword([]byte("x"), 10)
-	if !NeedsRehash(string(b)) {
-		t.Error("bcrypt hash must be flagged for rehash")
-	}
 	// Fresh argon2id at current params → does not.
 	h, _ := Hash("x")
 	if NeedsRehash(h) {

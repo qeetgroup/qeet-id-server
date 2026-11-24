@@ -1,0 +1,39 @@
+post:
+  operationId: revokeMyOtherSessions
+  summary: Revoke all other sessions
+  description: >-
+    Ends every one of the caller's sessions except the one they are using, in a
+    single all-or-nothing step, and returns how many were ended. The session
+    that is kept is the one behind the presented access token; the request takes
+    no body and no session identifiers. The refresh and access tokens of the
+    ended sessions stop working on this API as soon as this returns; a service
+    that verifies access tokens offline, without introspection, accepts them
+    until they expire (minutes). Succeeds with `revoked: 0` when there is no
+    other session. If any session cannot be ended the call fails and none are
+    ended. Returns 401 `auth.session_revoked` when the caller's own session has
+    already ended. Sessions in hosted login and tokens held by applications are
+    not affected; the sign-out-everywhere call ends those too.
+  tags:
+    - Auth
+  security:
+    - bearerAuth: []
+  responses:
+    "200":
+      description: The other sessions were ended
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - revoked
+            properties:
+              revoked:
+                type: integer
+                minimum: 0
+                description: Number of sessions ended by this call; 0 when there were none.
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

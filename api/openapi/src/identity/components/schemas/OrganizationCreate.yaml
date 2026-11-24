@@ -1,0 +1,46 @@
+type: object
+additionalProperties: false
+required:
+  - slug
+  - name
+properties:
+  slug:
+    type: string
+    minLength: 2
+    maxLength: 64
+  name:
+    type: string
+    minLength: 1
+    maxLength: 200
+  plan:
+    type:
+      - string
+      - "null"
+    enum:
+      - free
+      - starter
+      - pro
+      - enterprise
+      - null
+  region:
+    type:
+      - string
+      - "null"
+    description: >-
+      Optional. Only the region this service is hosted in is accepted (422
+      organization.region_unavailable, with metadata.available, otherwise); the
+      organization is created there either way.
+    maxLength: 64
+  logo_url:
+    type:
+      - string
+      - "null"
+    maxLength: 3000000
+    description: >-
+      Optional logo, a hosted URL or a small inline data URL, up to 3,000,000
+      characters. Left out or empty, the console shows the name's initials.
+  metadata:
+    type:
+      - object
+      - "null"
+    additionalProperties: true

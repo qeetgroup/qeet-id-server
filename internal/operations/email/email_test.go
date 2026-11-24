@@ -105,23 +105,24 @@ func TestEditorRejectsInvalidContent(t *testing.T) {
 func TestEmailTestThrottle(t *testing.T) {
 	var limits testEmailLimits
 	now := time.Now()
-	if !limits.allow("tenant-a:user-a", now) || limits.allow("tenant-a:user-a", now) {
+	if !limits.allow("organization-a:user-a", now) || limits.allow("organization-a:user-a", now) {
 		t.Fatal("test email rate limit not enforced")
 	}
-	if !limits.allow("tenant-b:user-a", now) || !limits.allow("tenant-a:user-a", now.Add(time.Minute)) {
+	if !limits.allow("organization-b:user-a", now) || !limits.allow("organization-a:user-a", now.Add(time.Minute)) {
 		t.Fatal("rate limit not scoped or expiring")
 	}
 }
 
 type templateFixture struct {
-	tenant uuid.UUID
-	calls  int
+	organization uuid.UUID
+	key          string
+	calls        int
 }
 
-func (fixture *templateFixture) Get(_ context.Context, tenantID uuid.UUID, key string) (*Resolved, error) {
-	fixture.tenant = tenantID
+func (fixture *templateFixture) Get(_ context.Context, organizationID uuid.UUID, key string) (*Resolved, error) {
+	fixture.organization, fixture.key = organizationID, key
 	fixture.calls++
-	return &Resolved{Key: key, Subject: "Custom sign-in", Body: "Use {{magic_url}}", Options: EditorOptions{HTML: `<p><strong>Use</strong> <a href="{{magic_url}}">Sign in</a></p>`}, Custom: true}, nil
+	return &Resolved{Key: key, Subject: "Custom sign-in", Body: "Use this link:\n{{magic_url}}", Options: EditorOptions{HTML: `<p><strong>Use</strong> <a href="{{magic_url}}">Sign in</a></p>`}, Custom: true}, nil
 }
 
 func (fixture *templateFixture) RecipientLocale(context.Context, uuid.UUID, string) (string, error) {
@@ -136,9 +137,9 @@ type localizedTemplates struct {
 }
 
 func (templates localizedTemplates) Get(_ context.Context, _ uuid.UUID, key string) (*Resolved, error) {
-	return &Resolved{Key: key, Custom: true, Subject: "Sign in", Body: "Use {{magic_url}}", Options: EditorOptions{
+	return &Resolved{Key: key, Custom: true, Subject: "Sign in", Body: "Use this link:\n{{magic_url}}", Options: EditorOptions{
 		DefaultLocale: templates.defaultLocale,
-		Translations:  map[string]LocalizedContent{"fr": {Subject: "Connexion", Body: "Utilisez {{magic_url}}"}},
+		Translations:  map[string]LocalizedContent{"fr": {Subject: "Connexion", Body: "Utilisez ce lien :\n{{magic_url}}"}},
 	}}, nil
 }
 
@@ -156,13 +157,13 @@ func TestTemplateSenderUsesRecipientLocale(t *testing.T) {
 	}{
 		{"anne@example.test", "en", "Connexion"},   // French profile, French translation
 		{"dirk@example.test", "en", "Sign in"},     // German profile, no German translation
-		{"dirk@example.test", "fr", "Connexion"},   // ... so the organisation's default
+		{"dirk@example.test", "fr", "Connexion"},   // ... so the organization's default
 		{"emma@example.test", "fr", "Sign in"},     // English profile, the base content
-		{"nobody@example.test", "fr", "Connexion"}, // no account: the organisation's default
+		{"nobody@example.test", "fr", "Connexion"}, // no account: the organization's default
 	} {
 		sink := &emailSink{}
 		sender := TemplateSender{Templates: localizedTemplates{defaultLocale: test.defaultLocale, locales: locales}, Next: sink}
-		message := notifier.Message{TenantID: uuid.NewString(), Channel: "email", To: test.to, TemplateKey: "magic_link", TemplateVariables: map[string]string{"magic_url": "https://example.test/once"}, Subject: "Original", Body: "Original"}
+		message := notifier.Message{OrganizationID: uuid.NewString(), Channel: "email", To: test.to, TemplateKey: "magic_link", TemplateVariables: map[string]string{"magic_url": "https://example.test/once"}, Subject: "Original", Body: "Original"}
 		if err := sender.Send(context.Background(), message); err != nil {
 			t.Fatal(err)
 		}
@@ -197,30 +198,67 @@ func (sink *emailSink) Send(_ context.Context, message notifier.Message) error {
 	return nil
 }
 
+// TestTemplateSenderScope checks which messages get an organization's template.
 func TestTemplateSenderScope(t *testing.T) {
-	tenantID := uuid.New()
+	organizationID := uuid.New()
 	templates := &templateFixture{}
 	sink := &emailSink{}
 	sender := TemplateSender{Templates: templates, Next: sink}
-	message := notifier.Message{TenantID: tenantID.String(), Channel: "email", TemplateKey: "magic_link", TemplateVariables: map[string]string{"magic_url": "https://example.test/once"}, Subject: "Original", Body: "Original"}
+	message := notifier.Message{OrganizationID: organizationID.String(), Channel: "email", TemplateKey: "magic_link", TemplateVariables: map[string]string{"magic_url": "https://example.test/once"}, Subject: "Original", Body: "Original"}
 	if err := sender.Send(context.Background(), message); err != nil {
 		t.Fatal(err)
 	}
-	if templates.tenant != tenantID || sink.last.Subject != "Custom sign-in" || !strings.Contains(sink.last.HTML, "https://example.test/once") {
+	if templates.organization != organizationID || sink.last.Subject != "Custom sign-in" || !strings.Contains(sink.last.HTML, "https://example.test/once") {
 		t.Fatal("scoped template not applied")
 	}
-	for _, message := range []notifier.Message{{TemplateKey: "magic_link", Subject: "Platform"}, {TenantID: tenantID.String(), TemplateKey: "password_reset", Subject: "Platform"}, {TenantID: tenantID.String(), Channel: "sms", TemplateKey: "magic_link", Subject: "Platform"}} {
+	for _, key := range []string{"verify_email", "password_reset", "mfa_otp", "invite"} {
+		calls := templates.calls
+		if err := sender.Send(context.Background(), notifier.Message{OrganizationID: organizationID.String(), Channel: "email", TemplateKey: key, Subject: "Platform"}); err != nil {
+			t.Fatal(err)
+		}
+		if templates.calls != calls+1 || templates.key != key {
+			t.Errorf("%s: the organization's template was not looked up", key)
+		}
+	}
+	calls := templates.calls
+	for _, message := range []notifier.Message{
+		{TemplateKey: "magic_link", Subject: "Platform"},
+		{OrganizationID: uuid.Nil.String(), TemplateKey: "password_reset", Subject: "Platform"},
+		{OrganizationID: organizationID.String(), TemplateKey: "account_notice", Subject: "Platform"},
+		{OrganizationID: organizationID.String(), Channel: "sms", TemplateKey: "mfa_otp", Subject: "Platform"},
+	} {
 		if err := sender.Send(context.Background(), message); err != nil {
 			t.Fatal(err)
 		}
-		if sink.last.Subject != "Platform" || templates.calls != 1 {
-			t.Fatal("platform security email was overridden")
+		if sink.last.Subject != "Platform" || templates.calls != calls {
+			t.Errorf("%+v: sent as %q after %d lookups, want the platform's wording unlooked-up", message, sink.last.Subject, templates.calls-calls)
+		}
+	}
+}
+
+// TestCodeTemplatesKeepTheirCode checks that a code template must keep {{code}}.
+func TestCodeTemplatesKeepTheirCode(t *testing.T) {
+	for _, key := range []string{"verify_email", "mfa_otp"} {
+		d, _ := defByKey(key)
+		for name, input := range map[string]EditorInput{
+			"no code in the text": {Subject: "Your code", Body: "Enter the code we sent."},
+			"no code in the HTML": {Subject: "Your code", Body: "Your code is {{code}}.", Options: EditorOptions{HTML: "<p>Enter the code we sent.</p>"}},
+			"code only in a translation": {Subject: "Your code", Body: "Enter it.", Options: EditorOptions{
+				Translations: map[string]LocalizedContent{"fr": {Subject: "Votre code", Body: "Votre code est {{code}}."}}}},
+		} {
+			if err := normalizeEditor(&input, d); err == nil {
+				t.Errorf("%s with %s: accepted", key, name)
+			}
+		}
+		kept := EditorInput{Subject: "Your code", Body: "Your code is {{code}}. It expires in {{ttl}}.", Options: EditorOptions{HTML: "<p><strong>{{code}}</strong></p>"}}
+		if err := normalizeEditor(&kept, d); err != nil {
+			t.Errorf("%s with its code: %v", key, err)
 		}
 	}
 }
 
 func TestTemplateLinksPreserveVariablesAndSanitizeResolvedURLs(t *testing.T) {
-	input := EditorInput{Subject: "Sign in", Body: "Use {{magic_url}}", Options: EditorOptions{HTML: `<p><a href="{{magic_url}}">Continue</a></p>`}}
+	input := EditorInput{Subject: "Sign in", Body: "Use this link:\n{{magic_url}}", Options: EditorOptions{HTML: `<p><a href="{{magic_url}}">Continue</a></p>`}}
 	if err := normalizeEditor(&input, catalog[2]); err != nil {
 		t.Fatal(err)
 	}
@@ -256,6 +294,38 @@ func TestActionVariablesCannotLeakThroughExternalAssets(t *testing.T) {
 		input := EditorInput{Subject: "Sign in", Body: "{{magic_url}}", Options: EditorOptions{HTML: markup}}
 		if err := normalizeEditor(&input, catalog[2]); err == nil {
 			t.Fatal("credential-bearing external URL was accepted")
+		}
+	}
+}
+
+// TestActionURLOnlyInHref checks that a template may carry its one-time link
+// only as a whole href in the HTML and on a line of its own in the text, never
+// in the subject, the preheader or among the words, so an organization's
+// wording can't dress the link up as something else.
+func TestActionURLOnlyInHref(t *testing.T) {
+	standalone := EditorInput{Subject: "Sign in", Body: "Use the link below to sign in.\n\n{{magic_url}}\n\nIt works once.",
+		Options: EditorOptions{HTML: `<p>Use the button below.</p><p><a href="{{magic_url}}">Sign in</a></p>`}}
+	if err := normalizeEditor(&standalone, catalog[2]); err != nil {
+		t.Errorf("the link on its own line and as a whole href: %v, want it accepted", err)
+	}
+	for name, input := range map[string]EditorInput{
+		"among the text's words":  {Subject: "Sign in", Body: "Claim your prize at {{magic_url}} today"},
+		"in the subject":          {Subject: "Sign in at {{magic_url}}", Body: "{{magic_url}}"},
+		"in the preheader":        {Subject: "Sign in", Body: "{{magic_url}}", Options: EditorOptions{Preheader: "Open {{magic_url}}"}},
+		"among the HTML's words":  {Subject: "Sign in", Body: "{{magic_url}}", Options: EditorOptions{HTML: `<p>Claim your prize at {{magic_url}}</p><a href="{{magic_url}}">Sign in</a>`}},
+		"in a translation's text": {Subject: "Sign in", Body: "{{magic_url}}", Options: EditorOptions{Translations: map[string]LocalizedContent{"fr": {Subject: "Connexion", Body: "Gagnez sur {{magic_url}}"}}}},
+	} {
+		if err := normalizeEditor(&input, catalog[2]); err == nil {
+			t.Errorf("the link %s was accepted", name)
+		}
+	}
+	titled := EditorInput{Subject: "Sign in", Body: "{{magic_url}}", Options: EditorOptions{HTML: `<a href="{{magic_url}}" title="{{magic_url}}">Sign in</a>`}}
+	if err := normalizeEditor(&titled, catalog[2]); err != nil || strings.Count(titled.Options.HTML, "{{magic_url}}") != 1 {
+		t.Errorf("the link in another attribute: %v, %q; want that attribute dropped", err, titled.Options.HTML)
+	}
+	for _, d := range catalog {
+		if err := normalizeEditor(&EditorInput{Subject: d.DefaultSubject, Body: d.DefaultBody}, d); err != nil {
+			t.Errorf("the %s default can't be saved unchanged: %v", d.Key, err)
 		}
 	}
 }

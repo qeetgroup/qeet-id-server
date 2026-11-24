@@ -1,0 +1,66 @@
+type: object
+additionalProperties: false
+description: >-
+  The fields to change; every one is optional, and one left out or null keeps
+  its value.
+properties:
+  base_dn:
+    type:
+      - string
+      - "null"
+  bind_dn:
+    type:
+      - string
+      - "null"
+  bind_password:
+    type:
+      - string
+      - "null"
+  email_attribute:
+    type:
+      - string
+      - "null"
+  name:
+    type:
+      - string
+      - "null"
+  name_attribute:
+    type:
+      - string
+      - "null"
+  server_url:
+    type:
+      - string
+      - "null"
+  skip_tls_verify:
+    type:
+      - boolean
+      - "null"
+  start_tls:
+    type:
+      - boolean
+      - "null"
+    description: >-
+      Upgrade an ldap:// connection to TLS with StartTLS before anything is
+      sent. Outside development an ldap:// server_url needs it (422
+      ldap.tls_required otherwise).
+  status:
+    type:
+      - string
+      - "null"
+  sync_interval_minutes:
+    type:
+      - integer
+      - "null"
+    minimum: 5
+    maximum: 60
+    description: >-
+      How often, in minutes, the scheduled sync reads the directory with the
+      service account (5 to 60; 422 ldap.sync_interval_invalid otherwise). It
+      reads the people changed since its last run, and every person once a
+      day; someone the directory disabled, deleted or no longer matches is
+      suspended and signed out.
+  user_filter:
+    type:
+      - string
+      - "null"

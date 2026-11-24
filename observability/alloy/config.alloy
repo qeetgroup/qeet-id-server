@@ -1,0 +1,40 @@
+// Grafana Alloy for the local stack: scrapes the API's runtime profiles (PPROF_ADDR, which
+// `make dev-observed` sets to :6060) every 15s and writes them to Pyroscope.
+pyroscope.scrape "qeet_id" {
+  targets         = [{"__address__" = "host.docker.internal:6060", "service_name" = "qeet-id"}]
+  forward_to      = [pyroscope.write.local.receiver]
+  scrape_interval = "15s"
+
+  profiling_config {
+    profile.process_cpu {
+      enabled = true
+    }
+    profile.memory {
+      enabled = true
+    }
+    profile.goroutine {
+      enabled = true
+    }
+    profile.mutex {
+      enabled = false
+    }
+    profile.block {
+      enabled = false
+    }
+    profile.godeltaprof_memory {
+      enabled = false
+    }
+    profile.godeltaprof_mutex {
+      enabled = false
+    }
+    profile.godeltaprof_block {
+      enabled = false
+    }
+  }
+}
+
+pyroscope.write "local" {
+  endpoint {
+    url = "http://pyroscope:4040"
+  }
+}

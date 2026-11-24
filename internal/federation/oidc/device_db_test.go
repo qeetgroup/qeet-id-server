@@ -3,6 +3,7 @@
 package oidc
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,8 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/ipallow"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -22,19 +24,19 @@ import (
 var userCodeShape = regexp.MustCompile(`^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$`)
 
 // TestDeviceFlow checks that a device polls as pending and is slowed when too
-// quick, that only a member of the application's organisation approves it,
+// quick, that only a member of the application's organization approves it,
 // once, and its code buys tokens once for the application that asked, and that
 // a denial, an expiry and an admin's revocation each end it.
 func TestDeviceFlow(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	p := newProvider(t)
-	tenant, otherTenant := dbtest.Tenant(t), dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	outsider := dbtest.User(t, otherTenant, otherTenant)
+	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	outsider := dbtest.User(t, otherOrganization, otherOrganization)
 	grants := []string{grantTypeDeviceCode, "refresh_token"}
-	device, _ := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, Name: "TV", Type: "public", GrantTypes: grants})
-	other, _ := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, Type: "public", GrantTypes: grants})
+	device, _ := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organization, Name: "TV", Type: "public", GrantTypes: grants})
+	other, _ := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organization, Type: "public", GrantTypes: grants})
 	cookie, _ := p.signIn(t, person.ID)
 	outsiderCookie, _ := p.signIn(t, outsider.ID)
 
@@ -50,13 +52,13 @@ func TestDeviceFlow(t *testing.T) {
 	}
 	collect := func(clientID, deviceCode string) *httptest.ResponseRecorder {
 		t.Helper()
-		return postForm(t, p.public, "/oauth/token-code", url.Values{"grant_type": {grantTypeDeviceCode}, "client_id": {clientID}, "device_code": {deviceCode}}, "", "")
+		return postForm(t, p.public, "/oauth/token", url.Values{"grant_type": {grantTypeDeviceCode}, "client_id": {clientID}, "device_code": {deviceCode}}, "", "")
 	}
 	// poll collects as a device that waited out the interval since its last poll.
 	poll := func(clientID, deviceCode string) *httptest.ResponseRecorder {
 		t.Helper()
 		if _, err := pool.Exec(ctx, `UPDATE auth.oidc_device_codes SET last_polled_at = last_polled_at - INTERVAL '1 minute'
-			WHERE tenant_id = $1 AND device_code_hash = $2`, tenant, codes.Hash(deviceCode)); err != nil {
+			WHERE organization_id = $1 AND device_code_hash = $2`, organization, codes.Hash(deviceCode)); err != nil {
 			t.Fatal(err)
 		}
 		return collect(clientID, deviceCode)
@@ -77,7 +79,7 @@ func TestDeviceFlow(t *testing.T) {
 		t.Errorf("device authorization %+v, want the hosted /device page and the RFC 8628 timings", started)
 	}
 	tooWide := url.Values{"client_id": {device.ClientID}, "scope": {"openid admin"}}
-	if rec := postForm(t, p.public, "/oauth/device_authorization", tooWide, "", ""); !strings.Contains(rec.Body.String(), errs.CodeOIDCScopeNotPermitted) {
+	if rec := postForm(t, p.public, "/oauth/device_authorization", tooWide, "", ""); !strings.Contains(rec.Body.String(), CodeScopeNotPermitted) {
 		t.Errorf("device authorization for a scope the application may not have: %d %s", rec.Code, rec.Body.String())
 	}
 	if got := pollError(device.ClientID, started.DeviceCode); got != "authorization_pending" {
@@ -99,8 +101,8 @@ func TestDeviceFlow(t *testing.T) {
 	if shown.ClientName != "TV" || !slices.Equal(shown.Scopes, []string{"openid", "email"}) {
 		t.Errorf("the verification page shows %+v, want the application and its scopes", shown)
 	}
-	if rec := decide(outsiderCookie, started.UserCode, true); !strings.Contains(rec.Body.String(), errs.CodeOIDCUserTenantMismatch) {
-		t.Errorf("approval by another organisation's person: %d %s", rec.Code, rec.Body.String())
+	if rec := decide(outsiderCookie, started.UserCode, true); !strings.Contains(rec.Body.String(), CodeUserOrganizationMismatch) {
+		t.Errorf("approval by another organization's person: %d %s", rec.Code, rec.Body.String())
 	}
 	if got := pollError(device.ClientID, started.DeviceCode); got != "authorization_pending" {
 		t.Errorf("poll after the outsider's approval: %s, want authorization_pending", got)
@@ -108,7 +110,7 @@ func TestDeviceFlow(t *testing.T) {
 	if rec := decide(cookie, started.UserCode, true); rec.Code != http.StatusOK {
 		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := decide(cookie, started.UserCode, false); !strings.Contains(rec.Body.String(), errs.CodeOIDCDeviceAlreadyDecided) {
+	if rec := decide(cookie, started.UserCode, false); !strings.Contains(rec.Body.String(), CodeDeviceAlreadyDecided) {
 		t.Errorf("decide again: %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -116,7 +118,7 @@ func TestDeviceFlow(t *testing.T) {
 	var issued TokenResponse
 	dbtest.Decode(t, rec, &issued)
 	claims, err := p.svc.issuer.VerifyAccessAnyAudience(issued.AccessToken)
-	if rec.Code != http.StatusOK || err != nil || claims.UserID != person.ID || claims.TenantID != tenant || claims.ClientID != device.ClientID ||
+	if rec.Code != http.StatusOK || err != nil || claims.UserID != person.ID || claims.OrganizationID != organization || claims.ClientID != device.ClientID ||
 		issued.IDToken == "" || issued.RefreshToken == "" || issued.Scope != "openid email" {
 		t.Fatalf("collect: %d %s, %v", rec.Code, rec.Body.String(), err)
 	}
@@ -134,10 +136,10 @@ func TestDeviceFlow(t *testing.T) {
 
 	expired := start()
 	if _, err := pool.Exec(ctx, `UPDATE auth.oidc_device_codes SET expires_at = NOW() - INTERVAL '1 second'
-		WHERE tenant_id = $1 AND device_code_hash = $2`, tenant, codes.Hash(expired.DeviceCode)); err != nil {
+		WHERE organization_id = $1 AND device_code_hash = $2`, organization, codes.Hash(expired.DeviceCode)); err != nil {
 		t.Fatal(err)
 	}
-	if rec := decide(cookie, expired.UserCode, true); !strings.Contains(rec.Body.String(), errs.CodeOIDCUserCodeExpired) {
+	if rec := decide(cookie, expired.UserCode, true); !strings.Contains(rec.Body.String(), CodeUserCodeExpired) {
 		t.Errorf("approve an expired code: %d %s", rec.Code, rec.Body.String())
 	}
 	if got := pollError(device.ClientID, expired.DeviceCode); got != "expired_token" {
@@ -145,9 +147,9 @@ func TestDeviceFlow(t *testing.T) {
 	}
 
 	revoked := start()
-	asAdmin := dbtest.Serve(dbtest.Principal(person.ID, tenant), p.mount)
-	asOutsider := dbtest.Serve(dbtest.Principal(outsider.ID, otherTenant), p.mount)
-	rec = dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+tenant.String()+"/oauth/devices", nil)
+	asAdmin := dbtest.Serve(dbtest.Principal(person.ID, organization), p.mount)
+	asOutsider := dbtest.Serve(dbtest.Principal(outsider.ID, otherOrganization), p.mount)
+	rec = dbtest.Do(t, asAdmin, http.MethodGet, "/organizations/"+organization.String()+"/oauth/devices", nil)
 	var list struct {
 		Items []DeviceAuthorization `json:"items"`
 	}
@@ -162,20 +164,20 @@ func TestDeviceFlow(t *testing.T) {
 		}
 	}
 	id := list.Items[at].ID.String()
-	if rec := dbtest.Do(t, asOutsider, http.MethodGet, "/tenants/"+tenant.String()+"/oauth/devices", nil); rec.Code != http.StatusForbidden {
-		t.Errorf("another organisation listing the devices: %d, want 403", rec.Code)
+	if rec := dbtest.Do(t, asOutsider, http.MethodGet, "/organizations/"+organization.String()+"/oauth/devices", nil); rec.Code != http.StatusForbidden {
+		t.Errorf("another organization listing the devices: %d, want 403", rec.Code)
 	}
-	inOther := "/tenants/" + otherTenant.String() + "/oauth/devices/" + id
-	if rec := dbtest.Do(t, asOutsider, http.MethodDelete, inOther, nil); !strings.Contains(rec.Body.String(), errs.CodeOIDCDeviceNotFound) {
-		t.Errorf("another organisation revoking the device: %d %s", rec.Code, rec.Body.String())
+	inOther := "/organizations/" + otherOrganization.String() + "/oauth/devices/" + id
+	if rec := dbtest.Do(t, asOutsider, http.MethodDelete, inOther, nil); !strings.Contains(rec.Body.String(), CodeDeviceNotFound) {
+		t.Errorf("another organization revoking the device: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/tenants/"+tenant.String()+"/oauth/devices/"+id, nil); rec.Code != http.StatusNoContent {
+	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/organizations/"+organization.String()+"/oauth/devices/"+id, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("revoke the device: %d %s", rec.Code, rec.Body.String())
 	}
 	if got := pollError(device.ClientID, revoked.DeviceCode); got != "access_denied" {
 		t.Errorf("poll after revocation: %s, want access_denied", got)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oauth.device_revoked'`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'oauth.device_revoked'`, organization); n != 1 {
 		t.Errorf("the revocation was audited %d times, want once", n)
 	}
 
@@ -186,20 +188,20 @@ func TestDeviceFlow(t *testing.T) {
 		t.Errorf("devices %+v, want the application's name and when an approval was spent", list.Items)
 	}
 	renew := url.Values{"grant_type": {"refresh_token"}, "client_id": {device.ClientID}, "refresh_token": {issued.RefreshToken}}
-	if rec := postForm(t, p.public, "/oauth/token-code", renew, "", ""); rec.Code != http.StatusOK {
+	if rec := postForm(t, p.public, "/oauth/token", renew, "", ""); rec.Code != http.StatusOK {
 		t.Fatalf("renew the device's tokens: %d %s", rec.Code, rec.Body.String())
 	} else {
 		dbtest.Decode(t, rec, &issued)
 	}
-	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/tenants/"+tenant.String()+"/oauth/devices/"+approved.ID.String(), nil); rec.Code != http.StatusNoContent {
+	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/organizations/"+organization.String()+"/oauth/devices/"+approved.ID.String(), nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("revoke the approved device: %d %s", rec.Code, rec.Body.String())
 	}
 	renew.Set("refresh_token", issued.RefreshToken)
-	if code, _ := decodeTokenError(t, postForm(t, p.public, "/oauth/token-code", renew, "", "")); code != "invalid_grant" {
+	if code, _ := decodeTokenError(t, postForm(t, p.public, "/oauth/token", renew, "", "")); code != "invalid_grant" {
 		t.Errorf("renew after the device was revoked: %s, want invalid_grant", code)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oauth.device_revoked'
-		AND (metadata->>'grant_ended')::boolean`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'oauth.device_revoked'
+		AND (metadata->>'grant_ended')::boolean`, organization); n != 1 {
 		t.Errorf("%d revocations recorded ending a grant, want one", n)
 	}
 }
@@ -210,8 +212,8 @@ func TestDeviceFlow(t *testing.T) {
 // device sign-in in its name.
 func TestDeviceAuthorizationNeedsTheDeviceGrant(t *testing.T) {
 	p := newProvider(t)
-	tenant := dbtest.Tenant(t)
-	spa, _ := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, Type: "public"})
+	organization := dbtest.Organization(t)
+	spa, _ := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organization, Type: "public"})
 
 	rec := postForm(t, p.public, "/oauth/device_authorization", url.Values{"client_id": {spa.ClientID}, "scope": {"openid"}}, "", "")
 	if rec.Code == http.StatusOK || !strings.Contains(rec.Body.String(), "unauthorized_client") {
@@ -221,23 +223,23 @@ func TestDeviceAuthorizationNeedsTheDeviceGrant(t *testing.T) {
 
 // TestDeviceAndBackchannelJudgeMembershipLikeSignIn checks that device
 // approval and backchannel sign-in admit whom the browser sign-in admits: a
-// member of the application's organisation whose account lives in another,
-// and an account of the organisation holding no role there; not a guest whose
-// roles were removed, nor a suspended account of the organisation.
+// member of the application's organization whose account lives in another,
+// and an account of the organization holding no role there; not a guest whose
+// roles were removed, nor a suspended account of the organization.
 func TestDeviceAndBackchannelJudgeMembershipLikeSignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
-	tenant, home := dbtest.Tenant(t), dbtest.Tenant(t)
-	web, _ := registerClient(t, svc, tenant)
-	device, _ := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, Type: "public", GrantTypes: []string{grantTypeDeviceCode}})
-	ciba, cibaSecret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: []string{grantTypeCIBA}})
+	svc := newTestService(t, pool, dbtest.Issuer(t))
+	organization, home := dbtest.Organization(t), dbtest.Organization(t)
+	web, _ := registerClient(t, svc, organization)
+	device, _ := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, Type: "public", GrantTypes: []string{grantTypeDeviceCode}})
+	ciba, cibaSecret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{grantTypeCIBA}})
 	_, challenge, _ := codes.URLToken()
-	formerGuest, suspended := dbtest.User(t, home, tenant), dbtest.User(t, tenant)
-	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, formerGuest.ID, tenant); err != nil {
+	formerGuest, suspended := dbtest.User(t, home, organization), dbtest.User(t, organization)
+	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, formerGuest.ID, organization); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -246,10 +248,10 @@ func TestDeviceAndBackchannelJudgeMembershipLikeSignIn(t *testing.T) {
 		account dbtest.Account
 		member  bool
 	}{
-		{"a member whose account lives elsewhere", dbtest.User(t, home, home, tenant), true},
-		{"an account of the organisation without a role", dbtest.User(t, tenant), true},
+		{"a member whose account lives elsewhere", dbtest.User(t, home, home, organization), true},
+		{"an account of the organization without a role", dbtest.User(t, organization), true},
 		{"a guest whose roles were removed", formerGuest, false},
-		{"a suspended account of the organisation", suspended, false},
+		{"a suspended account of the organization", suspended, false},
 	} {
 		if _, _, err := svc.Authorize(ctx, tc.account.ID, web.ClientID, testRedirect, []string{"openid"}, "n-1", challenge, "S256"); (err == nil) != tc.member {
 			t.Fatalf("%s signing in: %v, want admitted %t", tc.name, err, tc.member)
@@ -265,9 +267,9 @@ func TestDeviceAndBackchannelJudgeMembershipLikeSignIn(t *testing.T) {
 		if tc.member {
 			want = 1
 		}
-		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oauth.device_approved'
+		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'oauth.device_approved'
 			AND actor_user_id = $2 AND resource_type = 'oidc_device_code' AND host(ip) = $3 AND metadata->>'client_id' = $4`,
-			tenant, tc.account.ID, deviceIP, device.ClientID); n != want {
+			organization, tc.account.ID, deviceIP, device.ClientID); n != want {
 			t.Errorf("%s: %d approval records, want %d", tc.name, n, want)
 		}
 		if _, err := svc.BackchannelAuthorize(ctx, ciba.ClientID, cibaSecret, tc.account.Email, "openid", ""); (err == nil) != tc.member {
@@ -277,13 +279,13 @@ func TestDeviceAndBackchannelJudgeMembershipLikeSignIn(t *testing.T) {
 }
 
 // TestDeviceDenialIsAudited checks that denying a device code is recorded in
-// the code's organisation, naming the person, the code and the client.
+// the code's organization, naming the person, the code and the client.
 func TestDeviceDenialIsAudited(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	device, _ := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, Type: "public", GrantTypes: []string{grantTypeDeviceCode}})
-	person := dbtest.User(t, tenant, tenant)
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
+	organization := dbtest.Organization(t)
+	device, _ := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, Type: "public", GrantTypes: []string{grantTypeDeviceCode}})
+	person := dbtest.User(t, organization, organization)
 	_, userCode, _, err := svc.DeviceAuthorize(ctx, device.ClientID, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -292,8 +294,8 @@ func TestDeviceDenialIsAudited(t *testing.T) {
 		t.Fatalf("deny: %v", err)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events e JOIN auth.oidc_device_codes d ON d.id = e.resource_id
-		WHERE e.tenant_id = $1 AND e.action = 'oauth.device_denied' AND e.actor_user_id = $2 AND d.status = 'denied'
-		AND e.metadata->>'client_id' = $3 AND host(e.ip) = $4`, tenant, person.ID, device.ClientID, deviceIP); n != 1 {
+		WHERE e.organization_id = $1 AND e.action = 'oauth.device_denied' AND e.actor_user_id = $2 AND d.status = 'denied'
+		AND e.metadata->>'client_id' = $3 AND host(e.ip) = $4`, organization, person.ID, device.ClientID, deviceIP); n != 1 {
 		t.Errorf("%d denial records, want 1", n)
 	}
 }
@@ -303,7 +305,7 @@ func TestDeviceDenialIsAudited(t *testing.T) {
 func TestSigningKeysAreDated(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
+	svc := newTestService(t, pool, dbtest.Issuer(t))
 	keys, err := svc.SigningKeys(ctx)
 	if err != nil || len(keys) == 0 {
 		t.Fatalf("signing keys: %v, %v", keys, err)
@@ -321,4 +323,50 @@ func TestSigningKeysAreDated(t *testing.T) {
 	if err != nil || keys[0].CreatedAt == nil || keys[0].ActivatedAt == nil || !keys[0].ActivatedAt.Equal(activated) {
 		t.Errorf("signing key %+v (%v), want it dated from the registry", keys[0], err)
 	}
+}
+
+// TestDeviceFlowAddressRulesWithOneConnection checks, with only one connection
+// free, that the organization's address rules decide device approval and token
+// collection: a refusal is recorded, leaves the device pending when approving,
+// and spends the device code when collecting.
+func TestDeviceFlowAddressRulesWithOneConnection(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := newTestService(t, pool, dbtest.Issuer(t), func(d *Deps) { d.Addresses = ipallow.NewService(pool) })
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
+	if _, err := pool.Exec(ctx, `
+		WITH rule AS (INSERT INTO organization.ip_rules (organization_id, cidr, label, action) VALUES ($1, '192.0.2.0/24', 'office', 'allow'))
+		INSERT INTO organization.ip_rules_config (organization_id, enabled) VALUES ($1, TRUE)
+	`, organization); err != nil {
+		t.Fatalf("address rules: %v", err)
+	}
+	client, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{grantTypeDeviceCode}})
+	deviceCode, userCode, _, err := svc.DeviceAuthorize(ctx, client.ClientID, nil)
+	if err != nil {
+		t.Fatalf("device authorize: %v", err)
+	}
+	const refusedIP = "198.51.100.7"
+	refusals := func(path string) int {
+		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.address_refused' AND organization_id = $1
+			AND metadata->>'path' = $2 AND metadata->>'address' = $3`, organization, path, refusedIP)
+	}
+
+	dbtest.LeaveOneConnection(t)
+	if err := svc.DecideDevice(ctx, user.ID, userCode, true, refusedIP); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
+		t.Fatalf("approve from a refused address: %v, want %v", err, errs.ErrAuthAddressNotAllowed)
+	}
+	if n := refusals("device_approval"); n != 1 {
+		t.Errorf("the refused approval was recorded %d times, want 1", n)
+	}
+	if err := svc.DecideDevice(ctx, user.ID, userCode, true, deviceIP); err != nil {
+		t.Fatalf("approve from an allowed address after a refused one: %v", err)
+	}
+	_, err = svc.DeviceToken(ctx, client.ClientID, secret, deviceCode, refusedIP)
+	wantOAuthError(t, "collect from a refused address", err, "access_denied")
+	if n := refusals("device"); n != 1 {
+		t.Errorf("the refused collection was recorded %d times, want 1", n)
+	}
+	_, err = svc.DeviceToken(ctx, client.ClientID, secret, deviceCode, deviceIP)
+	wantOAuthError(t, "collect again after a refused collection", err, "invalid_grant")
 }

@@ -2,7 +2,10 @@ package critical
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -11,6 +14,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 type fakeAudit struct {
@@ -67,5 +71,33 @@ func TestCriticalEventsMergeNewestFirst(t *testing.T) {
 	}
 	if _, err := s.List(context.Background(), uuid.New(), 0); !errors.Is(err, errs.ErrBadRequest) {
 		t.Errorf("0 hours: %v", err)
+	}
+}
+
+// TestCriticalEventsSayWhenCut checks that more than maxEvents events answer
+// the newest maxEvents with "truncated": true, and that exactly maxEvents don't.
+func TestCriticalEventsSayWhenCut(t *testing.T) {
+	now := time.Now()
+	for _, n := range []int{maxEvents, maxEvents + 1} {
+		rows := make([]audit.Row, n)
+		for i := range rows {
+			rows[i] = audit.Row{ID: uuid.New(), Action: "user.suspended", CreatedAt: now.Add(-time.Duration(i) * time.Minute)}
+		}
+		h := &Handler{Service: NewService(&fakeAudit{rows: rows}, &fakeAnomalies{})}
+		organizationID := uuid.New()
+		req := httptest.NewRequest(http.MethodGet, "/v1/organizations/"+organizationID.String()+"/critical-events", nil)
+		req = req.WithContext(httpx.WithPrincipal(req.Context(), &httpx.Principal{OrganizationID: &organizationID}))
+		rec := httptest.NewRecorder()
+		h.list(rec, req)
+		var body struct {
+			Events    []Event `json:"events"`
+			Truncated bool    `json:"truncated"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%d events: status %d, body %s", n, rec.Code, rec.Body)
+		}
+		if len(body.Events) != maxEvents || body.Truncated != (n > maxEvents) {
+			t.Errorf("%d events: answered %d, truncated %v", n, len(body.Events), body.Truncated)
+		}
 	}
 }

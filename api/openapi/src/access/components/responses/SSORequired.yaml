@@ -1,0 +1,21 @@
+description: >-
+  The address must sign in through its organization's identity provider
+  (`auth.sso_required`): its domain is managed by an organization (the domain it
+  verified, or the closest verified domain above it) that has switched
+  sso_enabled on for that domain and has an active SAML, LDAP or OpenID Connect
+  connection. Decided from the domain before any account is looked up, so every
+  address on the domain gets this answer whether or not it has an account; only
+  the organization's break-glass members, and its administrators single sign-on
+  can't sign in (an administrator isn't adopted by address, so one without an
+  identity linked to an active connection keeps their own methods), are let
+  through. error.metadata.connections lists the organization's active
+  connections to sign in with, each {id, protocol: saml | ldap | oidc, name}:
+  start SAML at GET /v1/saml/login/{id}, LDAP at POST /ldap/{id}/authenticate,
+  OpenID Connect at GET /v1/oidc-connections/{id}/login.
+headers:
+  X-Request-Id:
+    $ref: ../../../shared/headers/RequestId.yaml
+content:
+  application/json:
+    schema:
+      $ref: ../../../shared/schemas/Error.yaml

@@ -1,0 +1,4 @@
+type: boolean
+description: >-
+  Present, and true, when the list was cut at its limit (1,000 items unless the
+  operation says otherwise): there are more than were answered.

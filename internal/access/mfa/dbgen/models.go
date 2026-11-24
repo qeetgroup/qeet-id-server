@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AuthMfaOtpFactor struct {
@@ -16,6 +15,6 @@ type AuthMfaOtpFactor struct {
 	UserID      uuid.UUID
 	Channel     string
 	Destination string
-	VerifiedAt  pgtype.Timestamptz
+	VerifiedAt  *time.Time
 	CreatedAt   time.Time
 }

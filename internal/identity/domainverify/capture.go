@@ -7,57 +7,44 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// Domain capture: an organisation that manages a domain (ManagingDomain), has
-// switched SSO on for it and has an active SAML or LDAP connection requires
-// everyone on that domain to sign in through its identity provider. Their own
-// sign-in methods are refused, except for the break-glass members its owners
-// name, so an outage of the identity provider can't lock everyone out, and the
-// administrators single sign-on never takes over by address.
+// Domain capture: an organization that manages a domain, has switched SSO on for it and has an active
+// SAML or LDAP connection makes everyone on that domain sign in through its identity provider. Their
+// own sign-in methods are refused, except for the break-glass members its owners name (so an IdP
+// outage can't lock everyone out) and the administrators single sign-on never takes over by address.
 
-// OwnerChecker reports whether userID holds tenantID's owner role. Satisfied by
+// OwnerChecker reports whether userID holds organizationID's owner role. Satisfied by
 // *rbac.Repository.
 type OwnerChecker interface {
-	IsOwner(ctx context.Context, userID, tenantID uuid.UUID) (bool, error)
+	IsOwner(ctx context.Context, userID, organizationID uuid.UUID) (bool, error)
 }
-
-// SetOwners sets the owner check break-glass changes need (nil refuses them).
-func (s *Service) SetOwners(o OwnerChecker) { s.owners = o }
-
-// SetAdminPermissions sets the permissions that make a member an
-// administrator single sign-on doesn't adopt by address (identitylink's);
-// owners always count.
-func (s *Service) SetAdminPermissions(keys []string) { s.adminPermissions = keys }
 
 // errBreakGlassOwnerOnly refuses a break-glass change by anyone but an owner.
 var errBreakGlassOwnerOnly = errs.ErrRBACOwnerOnly.WithMessage("Only an owner can choose who keeps signing in without single sign-on.")
 
-// RefuseCaptured returns errs.ErrAuthSSORequired, naming the organisation's
-// active connections in its metadata, when email's domain is captured and its
-// account isn't exempt. Only an exempt account's answer differs; every other
-// address on the domain gets the same one, with the same queries, whether or
-// not it has an account.
+// RefuseCaptured returns errs.ErrAuthSSORequired, naming the organization's active connections in its
+// metadata, when email's domain is captured and its account isn't exempt. Every address on the
+// domain that isn't exempt gets the same answer from the same queries, account or not.
 func (s *Service) RefuseCaptured(ctx context.Context, email string) error {
-	// A verified domain belongs to one organisation, whoever asks.
-	ctx = postgres.AcrossTenants(ctx)
+	// A verified domain belongs to one organization, whoever asks.
+	ctx = postgres.AcrossOrganizations(ctx)
 	email = strings.TrimSpace(email)
 	managed, ok, err := ManagingDomain(ctx, s.pool, email)
 	if err != nil || !ok || !managed.SSO {
 		return err
 	}
 	ex, err := s.q.GetCaptureExemption(ctx, dbgen.GetCaptureExemptionParams{
-		TenantID: managed.TenantID, AdminPermissions: s.adminPermissions, Email: email,
+		OrganizationID: managed.OrganizationID, MemberPermissions: s.memberPermissions, Email: email,
 	})
 	if err != nil {
 		return err
@@ -65,7 +52,7 @@ func (s *Service) RefuseCaptured(ctx context.Context, email string) error {
 	if !ex.Sso || ex.BreakGlass || ex.UnadoptableAdmin {
 		return nil
 	}
-	conns, err := s.q.ListActiveSSOConnections(ctx, managed.TenantID)
+	conns, err := s.q.ListActiveSSOConnections(ctx, managed.OrganizationID)
 	if err != nil {
 		return err
 	}
@@ -86,31 +73,28 @@ type BreakGlassMember struct {
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
-// ListBreakGlass returns tenantID's break-glass members.
-func (s *Service) ListBreakGlass(ctx context.Context, tenantID uuid.UUID) ([]BreakGlassMember, error) {
-	rows, err := s.q.ListBreakGlassMembers(ctx, tenantID)
+// ListBreakGlass returns organizationID's break-glass members.
+func (s *Service) ListBreakGlass(ctx context.Context, organizationID uuid.UUID) ([]BreakGlassMember, error) {
+	rows, err := s.q.ListBreakGlassMembers(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]BreakGlassMember, 0, len(rows))
 	for _, r := range rows {
 		m := BreakGlassMember{UserID: r.UserID, Email: r.Email, DisplayName: r.DisplayName, CreatedAt: r.CreatedAt}
-		if r.CreatedBy.Valid {
-			by := uuid.UUID(r.CreatedBy.Bytes)
-			m.CreatedBy = &by
-		}
+		m.CreatedBy = r.CreatedBy
 		out = append(out, m)
 	}
 	return out, nil
 }
 
-// requireOwner refuses actor unless they are a person holding tenantID's owner
+// requireOwner refuses actor unless they are a person holding organizationID's owner
 // role; a credential acting for one is refused too.
-func (s *Service) requireOwner(ctx context.Context, tenantID uuid.UUID, actor audit.Actor) error {
-	if s.owners == nil || actor.UserID == nil || actor.Type != "user" {
+func (s *Service) requireOwner(ctx context.Context, organizationID uuid.UUID, actor audit.Actor) error {
+	if actor.UserID == nil || actor.Type != "user" {
 		return errBreakGlassOwnerOnly
 	}
-	owner, err := s.owners.IsOwner(ctx, *actor.UserID, tenantID)
+	owner, err := s.owners.IsOwner(ctx, *actor.UserID, organizationID)
 	if err != nil {
 		return err
 	}
@@ -120,12 +104,12 @@ func (s *Service) requireOwner(ctx context.Context, tenantID uuid.UUID, actor au
 	return nil
 }
 
-// SetBreakGlass makes userID, a member of tenantID, a break-glass member (on)
+// SetBreakGlass makes userID, a member of organizationID, a break-glass member (on)
 // or an ordinary one, as actor, who must be an owner. A change is recorded in
 // the audit trail in the same transaction; asking for the current state
 // changes and records nothing.
-func (s *Service) SetBreakGlass(ctx context.Context, tenantID, userID uuid.UUID, on bool, actor audit.Actor) error {
-	if err := s.requireOwner(ctx, tenantID, actor); err != nil {
+func (s *Service) SetBreakGlass(ctx context.Context, organizationID, userID uuid.UUID, on bool, actor audit.Actor) error {
+	if err := s.requireOwner(ctx, organizationID, actor); err != nil {
 		return err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -137,45 +121,41 @@ func (s *Service) SetBreakGlass(ctx context.Context, tenantID, userID uuid.UUID,
 	var changed int64
 	action := "domain.break_glass_removed"
 	if on {
-		member, err := q.IsTenantMember(ctx, dbgen.IsTenantMemberParams{UserID: userID, TenantID: tenantID})
+		member, err := q.IsOrganizationMember(ctx, dbgen.IsOrganizationMemberParams{UserID: userID, OrganizationID: organizationID})
 		if err != nil {
 			return err
 		}
 		if !member {
-			return errs.ErrDomainVerifyNotMember
+			return ErrNotMember
 		}
-		var by pgtype.UUID
-		if actor.UserID != nil {
-			by = pgtype.UUID{Bytes: *actor.UserID, Valid: true}
-		}
-		if changed, err = q.InsertBreakGlassMember(ctx, dbgen.InsertBreakGlassMemberParams{TenantID: tenantID, UserID: userID, CreatedBy: by}); err != nil {
+		if changed, err = q.InsertBreakGlassMember(ctx, dbgen.InsertBreakGlassMemberParams{OrganizationID: organizationID, UserID: userID, CreatedBy: actor.UserID}); err != nil {
 			return err
 		}
 		action = "domain.break_glass_added"
-	} else if changed, err = q.DeleteBreakGlassMember(ctx, dbgen.DeleteBreakGlassMemberParams{TenantID: tenantID, UserID: userID}); err != nil {
+	} else if changed, err = q.DeleteBreakGlassMember(ctx, dbgen.DeleteBreakGlassMemberParams{OrganizationID: organizationID, UserID: userID}); err != nil {
 		return err
 	}
 	if changed == 0 {
 		return nil
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, action, "user", userID, nil)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, action, "user", userID, nil)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
 func (h *Handler) listBreakGlass(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.ListBreakGlass(r.Context(), tenantID)
+	out, err := h.Service.ListBreakGlass(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 func (h *Handler) addBreakGlass(w http.ResponseWriter, r *http.Request) { h.setBreakGlass(w, r, true) }
@@ -185,17 +165,17 @@ func (h *Handler) removeBreakGlass(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) setBreakGlass(w http.ResponseWriter, r *http.Request, on bool) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	userID, err := uuid.Parse(chi.URLParam(r, "userID"))
+	userID, err := httpx.PathUUID(r, "userID", errs.ErrBadRequest.WithDetail("invalid user id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid user id"))
+		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.SetBreakGlass(r.Context(), tenantID, userID, on, audit.ActorOf(r)); err != nil {
+	if err := h.Service.SetBreakGlass(r.Context(), organizationID, userID, on, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -217,11 +197,9 @@ type DiscoveredConnection struct {
 	SessionPath string `json:"session_path,omitempty"`
 }
 
-// Discovery is where an address signs in. SSO is true when the organisation
-// managing its domain sends the domain to its identity provider, through
-// Connections. Organization is that organisation's name, for the sign-in page
-// to say whose sign-in it is; like the connections' names it is the same for
-// every address on the domain.
+// Discovery is where an address signs in. SSO is true when the organization managing its domain sends
+// the domain to its identity provider, through Connections. Organization is that organization's name,
+// for the sign-in page; like the connections' names it is the same for every address on the domain.
 type Discovery struct {
 	SSO          bool                   `json:"sso"`
 	Organization string                 `json:"organization_name,omitempty"`
@@ -232,13 +210,13 @@ type Discovery struct {
 // address on a domain gets the same answer, whether or not it has an account
 // or is exempt from single sign-on.
 func (s *Service) Discover(ctx context.Context, email string) (*Discovery, error) {
-	ctx = postgres.AcrossTenants(ctx)
+	ctx = postgres.AcrossOrganizations(ctx)
 	out := &Discovery{Connections: []DiscoveredConnection{}}
 	managed, ok, err := ManagingDomain(ctx, s.pool, strings.TrimSpace(email))
 	if err != nil || !ok || !managed.SSO {
 		return out, err
 	}
-	conns, err := s.q.ListActiveSSOConnections(ctx, managed.TenantID)
+	conns, err := s.q.ListActiveSSOConnections(ctx, managed.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -257,18 +235,13 @@ func (s *Service) Discover(ctx context.Context, email string) (*Discovery, error
 	}
 	out.SSO = len(out.Connections) > 0
 	if out.SSO {
-		name, err := s.q.OrganisationName(ctx, managed.TenantID)
+		name, err := s.q.OrganizationName(ctx, managed.OrganizationID)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
 		out.Organization = name
 	}
 	return out, nil
-}
-
-// MountPublic registers POST /sso/discovery, which needs no credential.
-func (h *Handler) MountPublic(r chi.Router) {
-	r.Post("/sso/discovery", h.discover)
 }
 
 func (h *Handler) discover(w http.ResponseWriter, r *http.Request) {

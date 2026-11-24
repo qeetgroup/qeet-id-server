@@ -1,0 +1,25 @@
+type: object
+description: >-
+  The anchor event plus events correlated with it. by_request_id shares the
+  anchor's request_id; by_actor is the same actor within a symmetric time
+  window. An event never appears in both lists.
+required:
+  - event
+  - related
+properties:
+  event:
+    $ref: ./ActivityEvent.yaml
+  related:
+    type: object
+    required:
+      - by_request_id
+      - by_actor
+    properties:
+      by_request_id:
+        type: array
+        items:
+          $ref: ./ActivityEvent.yaml
+      by_actor:
+        type: array
+        items:
+          $ref: ./ActivityEvent.yaml

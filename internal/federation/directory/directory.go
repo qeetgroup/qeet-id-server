@@ -1,4 +1,4 @@
-// Package directory gives administrators one view of a tenant's directory
+// Package directory gives administrators one view of an organization's directory
 // connections (its SCIM endpoint and LDAP connections): sync activity and
 // errors, failure alerts, and the attribute mappings applied to the profiles
 // they provision.
@@ -6,17 +6,16 @@ package directory
 
 import (
 	"context"
-	"net/http"
+	"errors"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/federation/directory/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // Connection is a SCIM or LDAP directory connection, as listed.
@@ -37,42 +36,65 @@ type Connection struct {
 	ServerURL      *string    `json:"server_url"`
 }
 
-// SCIMSource lists a tenant's SCIM connection.
+// SCIMSource lists an organization's SCIM connection.
 type SCIMSource interface {
 	Config(context.Context, uuid.UUID) (*scim.ConfigView, error)
 }
 
-// LDAPSource lists a tenant's LDAP connections.
+// LDAPSource lists an organization's LDAP connections.
 type LDAPSource interface {
 	List(context.Context, uuid.UUID) ([]ldap.Connection, error)
 }
 
-// Service gives one view of a tenant's directory connections, their events
+// Store records the connections' events and keeps their attribute mappings:
+// the part SCIM and LDAP report to and map through, so it is built before them.
+type Store struct {
+	pool *pgxpool.Pool
+	q    *dbgen.Queries
+}
+
+// NewStore returns the store on pool.
+func NewStore(pool *pgxpool.Pool) (*Store, error) {
+	if pool == nil {
+		return nil, errors.New("directory: missing pool")
+	}
+	return &Store{pool: pool, q: dbgen.New(pool)}, nil
+}
+
+// Service gives one view of an organization's directory connections, their events
 // and their mappings.
 type Service struct {
+	*Store
 	scim SCIMSource
 	ldap LDAPSource
-	pool *pgxpool.Pool
 }
 
-// NewService returns the directory service.
-func NewService(scimSource SCIMSource, ldapSource LDAPSource) *Service {
-	return &Service{scim: scimSource, ldap: ldapSource}
+// NewService returns the directory service over store and the two sources.
+func NewService(store *Store, scimSource SCIMSource, ldapSource LDAPSource) (*Service, error) {
+	switch {
+	case store == nil:
+		return nil, errors.New("directory: missing store")
+	case scimSource == nil:
+		return nil, errors.New("directory: missing SCIM source")
+	case ldapSource == nil:
+		return nil, errors.New("directory: missing LDAP source")
+	}
+	return &Service{Store: store, scim: scimSource, ldap: ldapSource}, nil
 }
 
-// List returns the tenant's connections.
-func (service *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
-	if tenantID == uuid.Nil {
+// List returns the organization's connections.
+func (service *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Connection, error) {
+	if organizationID == uuid.Nil {
 		return nil, errs.ErrUnauthorized
 	}
-	config, err := service.scim.Config(ctx, tenantID)
+	config, err := service.scim.Config(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	if config == nil {
 		return nil, errs.ErrInternalServer
 	}
-	ldapConnections, err := service.ldap.List(ctx, tenantID)
+	ldapConnections, err := service.ldap.List(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -80,25 +102,25 @@ func (service *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connect
 	if config.TokenSet {
 		count := config.ProvisionedCount
 		records = append(records, Connection{
-			ID: "scim:" + tenantID.String(), Name: "SCIM", Reference: "/scim/v2",
+			ID: "scim:" + organizationID.String(), Name: "SCIM", Reference: "/scim/v2",
 			Type: "scim", Status: "configured", Health: "unknown", Scope: "users-and-groups",
 			CreatedAt: config.CreatedAt, LastActivityAt: config.LastUsedAt, UserCount: &count,
 		})
 	}
 	for _, source := range ldapConnections {
-		if source.TenantID != tenantID {
+		if source.OrganizationID != organizationID {
 			return nil, errs.ErrInternalServer
 		}
 		records = append(records, Connection{
 			ID: source.ID.String(), Name: source.Name, Reference: source.ID.String(),
-			Type: "ldap", Status: source.Status, Health: "unknown", Scope: "users-on-signin",
+			Type: "ldap", Status: source.Status, Health: "unknown", Scope: "users-and-groups",
 			CreatedAt: &source.CreatedAt, LastActivityAt: source.LastLoginAt, ServerURL: &source.ServerURL,
 		})
 	}
-	if err := service.enrichConnections(ctx, tenantID, records); err != nil {
+	if err := service.enrichConnections(ctx, organizationID, records); err != nil {
 		return nil, err
 	}
-	if err := service.countConnections(ctx, tenantID, records); err != nil {
+	if err := service.countConnections(ctx, organizationID, records); err != nil {
 		return nil, err
 	}
 	return records, nil
@@ -106,37 +128,20 @@ func (service *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connect
 
 // countConnections sets each LDAP connection's user count, the people with an
 // identity it signed in, and SCIM's group count, the groups it provisioned.
-func (service *Service) countConnections(ctx context.Context, tenantID uuid.UUID, records []Connection) error {
-	if service.pool == nil {
-		return nil
-	}
-	people := map[string]int{}
-	rows, err := service.pool.Query(ctx, `
-		SELECT ei.connection_id::text, count(DISTINCT ei.user_id)::int
-		FROM "user".external_identities ei
-		JOIN "user".users u ON u.id = ei.user_id AND u.deleted_at IS NULL
-		WHERE ei.tenant_id = $1 AND ei.provider = 'ldap' AND ei.connection_id IS NOT NULL
-		GROUP BY ei.connection_id`, tenantID)
+func (service *Service) countConnections(ctx context.Context, organizationID uuid.UUID, records []Connection) error {
+	counted, err := service.q.CountLDAPPeople(ctx, organizationID)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		var id string
-		var n int
-		if err := rows.Scan(&id, &n); err != nil {
-			rows.Close()
-			return err
-		}
-		people[id] = n
+	people := make(map[string]int, len(counted))
+	for _, c := range counted {
+		people[c.ConnectionID] = int(c.People)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	scimGroups, err := service.q.CountSCIMGroups(ctx, organizationID)
+	if err != nil {
 		return err
 	}
-	var groups int
-	if err := service.pool.QueryRow(ctx, `SELECT count(*)::int FROM tenant.groups WHERE tenant_id = $1 AND provisioned_via = 'scim'`, tenantID).Scan(&groups); err != nil {
-		return err
-	}
+	groups := int(scimGroups)
 	for i := range records {
 		switch records[i].Type {
 		case "ldap":
@@ -150,58 +155,37 @@ func (service *Service) countConnections(ctx context.Context, tenantID uuid.UUID
 	return nil
 }
 
-// Handler serves the directory HTTP API.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers the directory routes on r.
-func (handler *Handler) Mount(router chi.Router) {
-	router.Get("/tenants/{tenantID}/directory/connections", handler.list)
-	router.Get("/tenants/{tenantID}/directory/profiles/{userID}", handler.profiles)
-	router.Get("/tenants/{tenantID}/directory/activity", handler.events)
-	router.Post("/tenants/{tenantID}/directory/alerts", handler.createAlert)
-	router.Get("/tenants/{tenantID}/directory/alerts", handler.listAlerts)
-	router.Patch("/tenants/{tenantID}/directory/alerts/{alertID}", handler.updateAlert)
-	router.Delete("/tenants/{tenantID}/directory/alerts/{alertID}", handler.deleteAlert)
-	router.Get("/tenants/{tenantID}/directory/errors", handler.errors)
-	router.Post("/tenants/{tenantID}/directory/errors/{eventID}/resolve", handler.resolveError)
-	router.Post("/tenants/{tenantID}/directory/errors/{eventID}/retry", handler.retryError)
-	router.Get("/tenants/{tenantID}/directory/connections/{connectionID}/mappings", handler.mappings)
-	router.Post("/tenants/{tenantID}/directory/connections/{connectionID}/mappings", handler.saveMapping)
-	router.Post("/tenants/{tenantID}/directory/connections/{connectionID}/mappings/preview", handler.previewMappings)
-	router.Put("/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}", handler.saveMapping)
-	router.Delete("/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}", handler.deleteMapping)
-}
-
-func requireTenant(request *http.Request) (uuid.UUID, error) {
-	tenantID, err := httpx.RequireTenant(request)
+func (service *Service) enrichConnections(ctx context.Context, organizationID uuid.UUID, records []Connection) error {
+	syncs, err := service.q.LastDirectorySyncs(ctx, organizationID)
 	if err != nil {
-		return uuid.Nil, err
+		return err
 	}
-	if tenantID == uuid.Nil {
-		return uuid.Nil, errs.ErrUnauthorized
+	synced := make(map[string]time.Time, len(syncs))
+	for _, s := range syncs {
+		synced[s.ConnectionID] = s.SyncedAt
 	}
-	pathTenant, err := uuid.Parse(chi.URLParam(request, "tenantID"))
+	latest, err := service.q.LatestDirectoryEvents(ctx, organizationID)
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest
+		return err
 	}
-	if pathTenant != tenantID {
-		return uuid.Nil, errs.ErrForbidden
+	for _, event := range latest {
+		var successful *time.Time
+		if at, ok := synced[event.ConnectionID]; ok {
+			successful = &at
+		}
+		for index := range records {
+			if records[index].ID != event.ConnectionID {
+				continue
+			}
+			records[index].Health = event.Status
+			if event.Status == "success" {
+				records[index].Health = "healthy"
+			}
+			if time.Since(event.StartedAt) > 24*time.Hour {
+				records[index].Health = "unknown"
+			}
+			records[index].LastSyncAt = successful
+		}
 	}
-	return tenantID, nil
-}
-
-func (handler *Handler) list(response http.ResponseWriter, request *http.Request) {
-	tenantID, err := requireTenant(request)
-	if err != nil {
-		httpx.WriteError(response, request, err)
-		return
-	}
-	records, err := handler.Service.List(request.Context(), tenantID)
-	if err != nil {
-		httpx.WriteError(response, request, err)
-		return
-	}
-	httpx.WriteJSON(response, http.StatusOK, map[string]any{"items": records})
+	return nil
 }

@@ -208,8 +208,8 @@ func TestParseSESEvent(t *testing.T) {
 }
 
 func TestAddressHashAndHint(t *testing.T) {
-	if HashAddress(" Ana@Example.COM ") != HashAddress("ana@example.com") {
-		t.Error("the hash must ignore case and surrounding space")
+	if got, want := HashAddress(" Ana@Example.COM "), "8e43ca37701228e74983efdbd0cff5c16b3b1e5d4e29a7c05626d4d25a018e11"; got != want {
+		t.Errorf("HashAddress = %q, want the hex SHA-256 of the address trimmed and lower-cased, %q", got, want)
 	}
 	if got := Hint("Ana.Lopez@example.com"); got != "a***@example.com" {
 		t.Errorf("Hint = %q", got)
@@ -225,5 +225,46 @@ func TestWebhookReadsNothingWithoutTopics(t *testing.T) {
 	h.receive(rr, httptest.NewRequest(http.MethodPost, "/v1/webhooks/ses", strings.NewReader("{")))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("= %d, want 404", rr.Code)
+	}
+}
+
+// anyCertificate serves the signer's certificate at every .pem URL, as SNS
+// does whatever query follows a certificate's path.
+type anyCertificate struct{ *snsSigner }
+
+func (a anyCertificate) RoundTrip(r *http.Request) (*http.Response, error) {
+	a.fetched = append(a.fetched, r.URL.String())
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(a.certPEM)), Header: http.Header{}}, nil
+}
+
+// TestSNSCertificateCacheIsBounded checks that a signing certificate URL with
+// a query string or fragment is refused unfetched, so a known topic alone
+// can't make the server fetch and keep a certificate per request, and that the
+// certificates kept never exceed the cache's cap.
+func TestSNSCertificateCacheIsBounded(t *testing.T) {
+	signer := newSNSSigner(t)
+	transport := anyCertificate{signer}
+	h := &Webhook{TopicARNs: []string{testTopic}, Client: &http.Client{Transport: transport}}
+	note := func(certURL string) map[string]string {
+		m := signer.sign(t, map[string]string{"Type": "Notification", "MessageId": "n-1", "TopicArn": testTopic, "Message": `{"eventType":"Send","mail":{"messageId":"m-1"}}`})
+		m["SigningCertURL"] = certURL
+		return m
+	}
+	for _, certURL := range []string{testCertURL + "?v=1", testCertURL + "?", testCertURL + "#x"} {
+		if code := post(h, note(certURL)); code != http.StatusUnauthorized {
+			t.Errorf("certificate at %s = %d, want 401", certURL, code)
+		}
+	}
+	if len(signer.fetched) != 0 {
+		t.Errorf("fetched %v; a certificate URL with a query or fragment must not be fetched", signer.fetched)
+	}
+	for i := range maxCachedCerts + 10 {
+		certURL := strings.Replace(testCertURL, "-test.pem", "-"+string(rune('a'+i%26))+strings.Repeat("x", i/26)+".pem", 1)
+		if code := post(h, note(certURL)); code != http.StatusNoContent {
+			t.Fatalf("signed notification with certificate %s = %d, want 204", certURL, code)
+		}
+	}
+	if n := len(h.certs); n > maxCachedCerts {
+		t.Errorf("%d certificates kept, want at most %d", n, maxCachedCerts)
 	}
 }

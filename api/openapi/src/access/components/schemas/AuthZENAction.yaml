@@ -1,0 +1,8 @@
+type: object
+properties:
+  name:
+    type: string
+  properties:
+    type: object
+    description: The action's attributes for ABAC policies (action.*).
+    additionalProperties: true

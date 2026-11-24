@@ -11,49 +11,37 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
-	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/logincode"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/oauthstate"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcrp"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcsso/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/provision"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 const (
-	stateTTL      = 10 * time.Minute // how long a begun sign-in can be completed
-	loginCodeTTL  = 5 * time.Minute  // how long the console has to trade its code
-	sweepInterval = 5 * time.Minute  // how often a replica deletes expired states and codes
+	stateTTL     = 10 * time.Minute // how long a begun sign-in can be completed
+	loginCodeTTL = 5 * time.Minute  // how long the console has to trade its code
 )
 
 // providerFor reads c's discovery document and returns it with the ID token
 // rules it implies.
-func (s *Service) providerFor(ctx context.Context, c *signInConnection) (discovery, idTokenRules, error) {
-	doc, err := s.providers.discover(ctx, c.discoveryURL())
-	if errors.Is(err, errDiscoveryInvalid) {
-		return discovery{}, idTokenRules{}, errs.ErrOIDCSSOMisconfigured.Wrap(err)
+func (s *Service) providerFor(ctx context.Context, c *signInConnection) (oidcrp.Discovery, oidcrp.Rules, error) {
+	doc, err := s.providers.Discover(ctx, c.discoveryURL())
+	if errors.Is(err, oidcrp.ErrDiscoveryInvalid) {
+		return oidcrp.Discovery{}, oidcrp.Rules{}, ErrMisconfigured.Wrap(err)
 	}
 	if err != nil {
-		return discovery{}, idTokenRules{}, errs.ErrOIDCSSOProviderUnreachable.Wrap(err)
+		return oidcrp.Discovery{}, oidcrp.Rules{}, ErrProviderUnreachable.Wrap(err)
 	}
 	rules, err := rulesFor(&c.Connection, doc)
 	if err != nil {
-		return discovery{}, idTokenRules{}, errs.ErrOIDCSSOMisconfigured.Wrap(err)
+		return oidcrp.Discovery{}, oidcrp.Rules{}, ErrMisconfigured.Wrap(err)
 	}
 	return doc, rules, nil
-}
-
-// sweep deletes expired sign-in states and stale login codes, at most once
-// per sweepInterval on this replica. Best effort: the deletes are idempotent
-// and touch only rows past their use.
-func (s *Service) sweep(ctx context.Context) {
-	now := time.Now().Unix()
-	due := s.nextSweep.Load()
-	if now < due || !s.nextSweep.CompareAndSwap(due, now+int64(sweepInterval.Seconds())) {
-		return
-	}
-	_ = s.q.DeleteExpiredOidcConnectionStates(ctx)
-	_ = s.q.DeleteStaleOidcConnectionLoginCodes(ctx)
 }
 
 // BeginSignIn starts a sign-in through connection id, returning the provider
@@ -63,14 +51,14 @@ func (s *Service) sweep(ctx context.Context) {
 func (s *Service) BeginSignIn(ctx context.Context, id uuid.UUID, redirectURI, returnTo string) (authURL, state string, err error) {
 	// A sign-in started on the hosted login names where the browser goes back to.
 	if returnTo != "" && (s.loginBaseURL == "" || !s.returnTo.Valid(returnTo)) {
-		return "", "", errs.ErrOIDCSSOReturnToInvalid
+		return "", "", ErrReturnToInvalid
 	}
 	c, err := s.loadForSignIn(ctx, id)
 	if err != nil {
 		return "", "", err
 	}
 	// Every sign-in needs a plan with SSO, not only setting the connection up.
-	if err := s.RequireSSO(ctx, c.TenantID); err != nil {
+	if err := s.RequireSSO(ctx, c.OrganizationID); err != nil {
 		return "", "", err
 	}
 	doc, _, err := s.providerFor(ctx, c)
@@ -82,27 +70,23 @@ func (s *Service) BeginSignIn(ctx context.Context, id uuid.UUID, redirectURI, re
 	if err != nil {
 		return "", "", err
 	}
-	state, stateHash, err := codes.URLToken()
-	if err != nil {
-		return "", "", err
-	}
 	nonce, nonceHash, err := codes.URLToken()
 	if err != nil {
 		return "", "", err
 	}
-	s.sweep(ctx)
-	if err := s.q.InsertOidcConnectionState(ctx, dbgen.InsertOidcConnectionStateParams{
-		StateHash:    stateHash,
-		ConnectionID: c.ID,
-		CodeVerifier: verifier,
-		NonceHash:    nonceHash,
-		RedirectUri:  redirectURI,
-		ExpiresAt:    time.Now().UTC().Add(stateTTL),
-		ReturnTo:     nonEmpty(returnTo),
-	}); err != nil {
+	state, err = oauthstate.Save(ctx, s.pool, oauthstate.State{
+		Kind:           oauthstate.KindOIDCConnection,
+		OrganizationID: c.OrganizationID,
+		ConnectionID:   c.ID,
+		CodeVerifier:   verifier,
+		NonceHash:      nonceHash,
+		RedirectURI:    redirectURI,
+		ReturnTo:       returnTo,
+	}, stateTTL)
+	if err != nil {
 		return "", "", err
 	}
-	q := url.Values{
+	return oidcrp.AuthorizeURL(doc.AuthorizationEndpoint, url.Values{
 		"response_type":         {"code"},
 		"client_id":             {c.ClientID},
 		"redirect_uri":          {redirectURI},
@@ -111,136 +95,119 @@ func (s *Service) BeginSignIn(ctx context.Context, id uuid.UUID, redirectURI, re
 		"nonce":                 {nonce},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
-	}
-	sep := "?"
-	if strings.Contains(doc.AuthorizationEndpoint, "?") {
-		sep = "&"
-	}
-	return doc.AuthorizationEndpoint + sep + q.Encode(), state, nil
+	}), state, nil
 }
 
 // Callback is a provider's answer to a sign-in, as the browser brings it back.
+// Its Actor is the provider, with the browser's address, user agent and
+// request ID.
 type Callback struct {
+	audit.Actor
 	ConnectionID  uuid.UUID
 	State, Code   string
 	ProviderError string // the error parameter, when the provider refused
 	StartedHere   bool   // the browser holds the sign-in's binding
-	IP, UserAgent string
 }
 
-// CompleteSignIn spends the sign-in's state, then, when this browser began it,
-// trades the code for an ID token, validates it, finds or provisions the
-// person it names and returns a one-time code the console trades for a
-// session at ExchangeLogin, and the hosted login at its session route, with
-// the return_to the hosted login stored when it began ("" for the console's).
-// A refusal after the state is found to be this browser's still returns that
-// return_to. Each refusal is recorded as a failed sign-in.
+// CompleteSignIn spends the sign-in's state and, when this browser began it, trades the code for an
+// ID token, validates it, finds or provisions its person and returns a one-time code (for the
+// console's ExchangeLogin or the hosted login's session route) with the stored return_to. Refusals
+// after the browser check still return that return_to; each is recorded as a failed sign-in.
 func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, returnTo string, err error) {
 	c, err := s.loadForSignIn(ctx, cb.ConnectionID)
 	if c == nil {
 		return "", "", err
 	}
-	var userID uuid.UUID
+	// A refusal of the account is recorded where it is made (identitylink).
+	recorded := false
 	defer func() {
-		if err != nil {
-			s.recordFailure(ctx, c, userID, cb, err)
+		if err != nil && !recorded {
+			s.recordFailure(ctx, c, cb, err)
 		}
 	}()
 	if err != nil {
 		return "", "", err
 	}
 	if cb.State == "" {
-		return "", "", errs.ErrOIDCSSOCallbackInvalid
+		return "", "", ErrCallbackInvalid
 	}
-	st, err := s.q.ConsumeOidcConnectionState(ctx, codes.Hash(cb.State))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", errs.ErrOIDCSSOStateInvalid
-	}
+	st, err := oauthstate.Take(ctx, s.pool, oauthstate.KindOIDCConnection, cb.State, c.ID,
+		oauthstate.Refusals{Invalid: ErrStateInvalid, Expired: ErrStateInvalid})
 	if err != nil {
 		return "", "", err
-	}
-	if st.ConnectionID != c.ID || !time.Now().Before(st.ExpiresAt) {
-		return "", "", errs.ErrOIDCSSOStateInvalid
 	}
 	// A sign-in completes only in the browser that began it, or whoever began
 	// one could have someone else's browser finish it as themselves.
 	if !cb.StartedHere {
-		return "", "", errs.ErrOIDCSSOOtherBrowser
+		return "", "", ErrOtherBrowser
 	}
 	// From here the sign-in is this browser's own: a failure still says where the hosted login's
 	// sign-in goes back to.
-	back := deref(st.ReturnTo)
+	back := st.ReturnTo
 	if cb.ProviderError != "" {
-		return "", back, errs.ErrOIDCSSOProviderRefused
+		return "", back, ErrProviderRefused
 	}
 	if cb.Code == "" {
-		return "", back, errs.ErrOIDCSSOCallbackInvalid
+		return "", back, ErrCallbackInvalid
 	}
 	// Checked again as the answer arrives, so a plan that has since lapsed
 	// signs no one in.
-	if err := s.RequireSSO(ctx, c.TenantID); err != nil {
+	if err := s.RequireSSO(ctx, c.OrganizationID); err != nil {
 		return "", back, err
 	}
 	doc, rules, err := s.providerFor(ctx, c)
 	if err != nil {
 		return "", back, err
 	}
-	rawIDToken, err := s.providers.exchangeCode(ctx, doc, c.ClientID, c.clientSecret, cb.Code, st.RedirectUri, st.CodeVerifier)
-	if err != nil {
-		return "", back, errs.ErrOIDCSSOTokenExchangeFailed.Wrap(err)
+	tokens, err := s.providers.Exchange(ctx, doc, oidcrp.Credentials{ClientID: c.ClientID, ClientSecret: c.clientSecret}, cb.Code, st.RedirectURI, st.CodeVerifier)
+	if err == nil && tokens.IDToken == "" {
+		err = errors.New("token endpoint: no id_token")
 	}
-	rules.nonceHash = st.NonceHash
-	claims, err := s.providers.verifyIDToken(ctx, rawIDToken, doc.JWKSURI, rules)
 	if err != nil {
-		return "", back, errs.ErrOIDCSSOIDTokenInvalid.Wrap(err)
+		return "", back, ErrTokenExchangeFailed.Wrap(err)
 	}
-	if userID, err = s.findOrCreateUser(ctx, c, c.profileOf(claims)); err != nil {
+	rules.NonceHash = st.NonceHash
+	claims, err := s.providers.VerifyIDToken(ctx, tokens.IDToken, doc.JWKSURI, rules)
+	if err != nil {
+		return "", back, ErrIDTokenInvalid.Wrap(err)
+	}
+	userID, err := s.findOrCreateUser(ctx, c, c.profileOf(claims), cb)
+	if err != nil {
+		recorded = true
 		return "", back, err
 	}
-	if s.auth != nil {
-		// A suspended or deleted account gets no code to sign in with.
-		if err := s.auth.CheckSignInAccount(ctx, userID, c.TenantID, provider, cb.IP, cb.UserAgent); err != nil {
-			return "", back, err
-		}
-	}
-	rawCode, codeHash, err := codes.URLToken()
-	if err != nil {
+	// A suspended or deleted account gets no code to sign in with.
+	if err := s.auth.CheckSignInAccount(ctx, userID, c.OrganizationID, provider, cb.IP, cb.UserAgent); err != nil {
 		return "", back, err
 	}
-	if err := s.q.InsertOidcConnectionLoginCode(ctx, dbgen.InsertOidcConnectionLoginCodeParams{
-		CodeHash:     codeHash,
-		ConnectionID: c.ID,
-		UserID:       userID,
-		ExpiresAt:    time.Now().UTC().Add(loginCodeTTL),
-	}); err != nil {
+	rawCode, err := logincode.Issue(ctx, s.pool, logincode.Code{
+		Kind: logincode.KindOIDCConnection, UserID: userID, OrganizationID: c.OrganizationID, ConnectionID: c.ID,
+	}, loginCodeTTL)
+	if err != nil {
 		return "", back, err
 	}
 	s.touchLastLogin(ctx, c)
 	return rawCode, back, nil
 }
 
-// recordFailure records a refused sign-in through c in the organisation's
+// recordFailure records a refused sign-in through c in the organization's
 // audit trail, with the error code as its reason.
-func (s *Service) recordFailure(ctx context.Context, c *signInConnection, userID uuid.UUID, cb Callback, err error) {
-	if s.auth == nil {
-		return
-	}
+func (s *Service) recordFailure(ctx context.Context, c *signInConnection, cb Callback, err error) {
 	reason := errs.CodeInternal
 	if e := errs.As(err); e != nil {
 		reason = e.Code
 	}
 	meta := map[string]any{"connection_id": c.ID.String()}
-	if code := safeCode(cb.ProviderError); code != "" {
+	if code := oidcrp.SafeErrorCode(cb.ProviderError); code != "" {
 		meta["provider_error"] = code
 	}
-	s.auth.RecordSignInFailure(ctx, auth.SignInFailure{
-		TenantID:  c.TenantID,
-		UserID:    userID,
-		Method:    provider,
-		Reason:    reason,
-		IP:        cb.IP,
-		UserAgent: cb.UserAgent,
-		Metadata:  meta,
+	s.auth.RecordSignInFailure(ctx, authentication.SignInFailure{
+		OrganizationID: c.OrganizationID,
+		Method:         provider,
+		Reason:         reason,
+		IP:             cb.IP,
+		UserAgent:      cb.UserAgent,
+		Metadata:       meta,
 	})
 }
 
@@ -258,196 +225,98 @@ func linkMetadata(p profile) ([]byte, error) {
 	return json.Marshal(meta)
 }
 
-// findOrCreateUser returns the person c linked to the token's subject, else
-// the one with its email address, else a new one, and links the subject to c.
-// An address is adopted or given an account only on a domain the organisation
-// manages, and only while the provider hasn't said it is unverified; a new
-// account only where that domain has just-in-time provisioning on; an adopted
-// account must have the organisation as its home, a verified address, and not
-// administer the organisation. One transaction, so concurrent sign-ins can't
-// duplicate rows.
-func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p profile) (uuid.UUID, error) {
-	tenantID := c.TenantID
-	// Read before the transaction: it reads every organisation's domains.
-	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossTenants(ctx), s.pool, p.email)
-	if err != nil {
-		return uuid.Nil, err
-	}
+// findOrCreateUser returns the account c signs in for the ID token's
+// profile p, found, adopted or created by identitylink's rules, which also
+// keep its profile and groups in step with the token. A provider that says
+// itself it hasn't verified the address doesn't vouch for it.
+func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p profile, cb Callback) (uuid.UUID, error) {
 	meta, err := linkMetadata(p)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	defer tx.Rollback(ctx)
-	q := s.q.WithTx(tx)
-	var email *string
-	if p.email != "" {
-		email = &p.email
-	}
-	link := dbgen.LinkExternalIdentityParams{
-		TenantID:     tenantID,
-		Provider:     provider,
-		ConnectionID: c.ID,
-		Subject:      p.subject,
-		Email:        email,
-		Metadata:     meta,
-	}
-
-	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
-		TenantID:     tenantID,
-		Provider:     provider,
-		ConnectionID: c.ID,
-		Subject:      p.subject,
-	})
-	if err == nil {
-		// A linked subject signs in only while this organisation is still the
-		// account's home.
-		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
-		if herr != nil {
-			return uuid.Nil, herr
-		}
-		if !home {
-			return uuid.Nil, errs.ErrOIDCSSOUserTenantMismatch
-		}
-		link.UserID = userID
-		if err := q.LinkExternalIdentity(ctx, link); err != nil {
-			return uuid.Nil, err
-		}
-		return userID, tx.Commit(ctx)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, err
-	}
-	if p.email == "" {
-		return uuid.Nil, errs.ErrOIDCSSONoEmail
-	}
-	// The token proves only that this connection's provider vouched for the
-	// address. Anyone who can configure a connection runs one, so it speaks
-	// only for the organisation's own domains; and an address the provider
-	// itself calls unverified isn't vouched for at all. A provider that doesn't
-	// say (Microsoft Entra ID) is trusted for those domains, as SAML is.
-	if !managed || domain.TenantID != tenantID {
-		return uuid.Nil, errs.ErrOIDCSSOEmailDomainUnverified
-	}
-	if p.verified != nil && !*p.verified {
-		return uuid.Nil, errs.ErrOIDCSSOEmailUnverified
-	}
-
-	userID, err = q.GetUserByEmail(ctx, p.email)
-	if errors.Is(err, pgx.ErrNoRows) {
-		if !domain.JIT {
-			return uuid.Nil, errs.ErrOIDCSSOJITNotAllowed
-		}
-		var displayName *string
-		if p.name != "" {
-			displayName = &p.name
-		}
-		userID, err = q.InsertUserWithEmail(ctx, dbgen.InsertUserWithEmailParams{
-			TenantID:    pgUUID(tenantID),
-			Email:       p.email,
-			DisplayName: displayName,
-		})
-		if err != nil {
-			return uuid.Nil, err
-		}
-	} else if err != nil {
-		return uuid.Nil, err
-	} else {
-		// Emails are unique across organisations, so the address may be another
-		// organisation's account; and an administrator keeps the credentials
-		// they have, or the connection's provider could take over an owner.
-		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
-		if herr != nil {
-			return uuid.Nil, herr
-		}
-		if !home {
-			return uuid.Nil, errs.ErrOIDCSSOUserTenantMismatch
-		}
-		verified, verr := identitylink.AddressVerified(ctx, tx, userID)
-		if verr != nil {
-			return uuid.Nil, verr
-		}
-		if !verified {
-			return uuid.Nil, errs.ErrOIDCSSOAccountUnverified
-		}
-		admin, aerr := identitylink.Administers(ctx, tx, userID, tenantID)
-		if aerr != nil {
-			return uuid.Nil, aerr
-		}
-		if admin {
-			return uuid.Nil, errs.ErrOIDCSSOAccountAdministers
-		}
-		if err := identitylink.MarkAddressVerified(ctx, tx, userID); err != nil {
-			return uuid.Nil, err
-		}
-	}
-	link.UserID = userID
-	if err := q.LinkExternalIdentity(ctx, link); err != nil {
-		return uuid.Nil, err
-	}
-	return userID, tx.Commit(ctx)
+	return s.link.Resolve(ctx, provision.Source{OrganizationID: c.OrganizationID, Provider: provider, ConnectionID: c.ID},
+		provision.Person{
+			Subject: p.subject, Email: p.email, EmailVerified: p.verified, Name: p.name,
+			Groups: p.groups, GroupsWithheld: p.groupsWithheld, LinkMetadata: meta,
+		},
+		cb.Actor)
 }
 
 // ExchangeLogin trades a one-time login code for a token pair, while the
 // connection that issued it is still active.
-func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
-	userID, tenantID, err := s.consumeLoginCode(ctx, rawCode)
+func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*authentication.TokenPair, error) {
+	code, err := s.consumeLoginCode(ctx, rawCode)
 	if err != nil {
 		return nil, err
 	}
-	return s.auth.IssuePair(ctx, userID, tenantID, ip, ua, provider)
+	return s.auth.IssuePair(ctx, code.UserID, code.OrganizationID, ip, ua, provider)
 }
 
-// consumeLoginCode spends a one-time code the callback issued, once, and returns whom it signs in.
-func (s *Service) consumeLoginCode(ctx context.Context, rawCode string) (uuid.UUID, uuid.UUID, error) {
-	if rawCode == "" {
-		return uuid.Nil, uuid.Nil, errs.ErrOIDCSSOLoginCodeRequired
-	}
-	codeHash := codes.Hash(rawCode)
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return uuid.Nil, uuid.Nil, err
-	}
-	defer tx.Rollback(ctx)
-	q := s.q.WithTx(tx)
-	row, err := q.ConsumeOidcConnectionLoginCode(ctx, codeHash)
+// loginCodeRefusals are the errors a connection's login code is refused with.
+var loginCodeRefusals = logincode.Refusals{
+	Required: ErrLoginCodeRequired,
+	Invalid:  ErrLoginCodeInvalid,
+	Used:     ErrLoginCodeUsed,
+	Expired:  ErrLoginCodeExpired,
+	Draft:    ErrConnectionDraft,
+	Disabled: ErrConnectionDisabled,
+}
+
+// consumeLoginCode spends a one-time code the callback issued, once, and
+// returns whom it signs in. A code of a connection since disabled, put back to
+// draft or deleted is refused.
+func (s *Service) consumeLoginCode(ctx context.Context, rawCode string) (logincode.Code, error) {
+	return logincode.Consume(ctx, s.pool, logincode.KindOIDCConnection, rawCode, loginCodeRefusals)
+}
+
+// signInConnection is a connection being signed in through, with its client
+// secret opened.
+type signInConnection struct {
+	Connection
+	clientSecret string
+}
+
+// loadForSignIn loads a connection by ID alone, for the public sign-in
+// endpoints, and refuses one that isn't active: a draft one is still being
+// set up, so it signs nobody in until an administrator turns it on.
+func (s *Service) loadForSignIn(ctx context.Context, id uuid.UUID) (*signInConnection, error) {
+	r, err := s.q.GetOidcConnectionForSignIn(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, uuid.Nil, errs.ErrOIDCSSOLoginCodeInvalid
+		return nil, errs.ErrNotFound
 	}
 	if err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return nil, err
 	}
-	if row.UsedAt.Valid {
-		return uuid.Nil, uuid.Nil, errs.ErrOIDCSSOLoginCodeUsed
+	c := &signInConnection{Connection: *toConnection(dbgen.GetOidcConnectionRow{
+		ID: r.ID, OrganizationID: r.OrganizationID, Name: r.Name, Issuer: r.Issuer, DiscoveryUrl: r.DiscoveryUrl,
+		ClientID: r.ClientID, Scopes: r.Scopes, AllowedIdpTenantIds: r.AllowedIdpTenantIds,
+		EmailClaim: r.EmailClaim, NameClaim: r.NameClaim, GivenNameClaim: r.GivenNameClaim,
+		FamilyNameClaim: r.FamilyNameClaim, GroupsClaim: r.GroupsClaim, Status: r.Status,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, LastLoginAt: r.LastLoginAt,
+	})}
+	if err := signInStatus(c.Status); err != nil {
+		return c, err
 	}
-	if !time.Now().Before(row.ExpiresAt) {
-		return uuid.Nil, uuid.Nil, errs.ErrOIDCSSOLoginCodeExpired
+	plain, err := s.box.Open(c.OrganizationID, secretPurpose, c.ID.String(), r.ClientSecretCt, r.ClientSecretNonce)
+	if err != nil {
+		return c, ErrMisconfigured.Wrap(err)
 	}
-	if err := signInStatus(row.Status); err != nil {
-		return uuid.Nil, uuid.Nil, err
-	}
-	if err := q.MarkOidcConnectionLoginCodeUsed(ctx, codeHash); err != nil {
-		return uuid.Nil, uuid.Nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return uuid.Nil, uuid.Nil, err
-	}
-	return row.UserID, row.TenantID, nil
+	c.clientSecret = string(plain)
+	return c, nil
 }
 
-func nonEmpty(v string) *string {
-	if v == "" {
+// signInStatus refuses a sign-in through a connection that isn't active.
+func signInStatus(status string) error {
+	switch status {
+	case "active":
 		return nil
+	case "draft":
+		return ErrConnectionDraft
 	}
-	return &v
+	return ErrConnectionDisabled
 }
 
-func deref(v *string) string {
-	if v == nil {
-		return ""
-	}
-	return *v
+// touchLastLogin stamps the connection's last sign-in. Best effort.
+func (s *Service) touchLastLogin(ctx context.Context, c *signInConnection) {
+	_ = s.q.TouchOidcConnectionLastLogin(ctx, dbgen.TouchOidcConnectionLastLoginParams{ID: c.ID, OrganizationID: c.OrganizationID})
 }

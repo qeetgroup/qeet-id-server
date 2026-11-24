@@ -1,0 +1,32 @@
+get:
+  operationId: startSocialSignIn
+  summary: Start social login
+  tags:
+    - Social
+  parameters:
+    - name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[^/\\]+$'
+  security: []
+  description: >-
+    Begins a social sign-in and redirects the browser to the provider. ?organization
+    (slug) or ?organization_id names the organization; without either it is the
+    console's own sign-in, where ?intent=signup allows creating an account.
+    ?return_to opts into the hosted flow. The browser is given an HttpOnly
+    binding cookie (qe_social, __Host- prefixed outside dev, SameSite=None so a
+    form_post callback carries it) naming the sign-in, which the callback
+    requires.
+  responses:
+    "302":
+      description: OK
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

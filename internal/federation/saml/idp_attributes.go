@@ -1,9 +1,9 @@
 package saml
 
 // What an assertion says about the person signing in to one of their home
-// organisation's service providers: the NameID the service provider asked for
+// organization's service providers: the NameID the service provider asked for
 // and the attributes it maps. Values come only from the person's own account
-// and that organisation's groups, roles and directory profiles.
+// and that organization's groups, roles and directory profiles.
 
 import (
 	"bytes"
@@ -42,7 +42,7 @@ const (
 	sourceDisplayName  = "display_name"  // their display name
 	sourceGivenName    = "given_name"    // metadata given_name, else their directory first name
 	sourceFamilyName   = "family_name"   // metadata family_name, else their directory last name
-	sourceGroups       = "groups"        // names of their groups in the organisation
+	sourceGroups       = "groups"        // names of their groups in the organization
 	sourceRoles        = "roles"         // names of their roles there, directly or through a group
 	sourceMetadata     = "metadata."     // prefix of one key of their user metadata
 )
@@ -137,13 +137,13 @@ func checkNameID(format, attribute *string) error {
 		*format = nameIDEmail
 	}
 	if !knownNameIDFormat(*format) {
-		return errs.ErrSAMLNameIDFormatInvalid
+		return ErrNameIDFormatInvalid
 	}
 	if *attribute == "" {
 		*attribute = defaultNameIDAttribute(*format)
 	}
 	if !validNameIDAttribute(*attribute) || !nameIDFits(*format, *attribute) {
-		return errs.ErrSAMLNameIDAttributeInvalid
+		return ErrNameIDAttributeInvalid
 	}
 	return nil
 }
@@ -159,7 +159,7 @@ func mergeNameID(curFormat, curAttribute string, format, attribute *string) (str
 			f = nameIDEmail
 		}
 		if !knownNameIDFormat(f) {
-			return "", "", errs.ErrSAMLNameIDFormatInvalid
+			return "", "", ErrNameIDFormatInvalid
 		}
 	}
 	if attribute != nil {
@@ -168,7 +168,7 @@ func mergeNameID(curFormat, curAttribute string, format, attribute *string) (str
 			a = defaultNameIDAttribute(f)
 		}
 		if !validNameIDAttribute(a) || !nameIDFits(f, a) {
-			return "", "", errs.ErrSAMLNameIDAttributeInvalid
+			return "", "", ErrNameIDAttributeInvalid
 		}
 		return f, a, nil
 	}
@@ -193,7 +193,7 @@ func validSource(source string) bool {
 // unknown source or an unknown name format, naming each field at fault.
 func checkAttributes(list []AttributeMapping) error {
 	if len(list) > maxAttributes {
-		return errs.ErrSAMLAttributesInvalid.WithFields([]errs.FieldError{{
+		return ErrAttributesInvalid.WithFields([]errs.FieldError{{
 			Field: "attributes", Code: "too_many", Message: fmt.Sprintf("At most %d attributes.", maxAttributes),
 		}})
 	}
@@ -223,7 +223,7 @@ func checkAttributes(list []AttributeMapping) error {
 		}
 	}
 	if faults != nil {
-		return errs.ErrSAMLAttributesInvalid.WithFields(faults)
+		return ErrAttributesInvalid.WithFields(faults)
 	}
 	return nil
 }
@@ -250,13 +250,13 @@ func decodeAttributes(raw []byte) []AttributeMapping {
 }
 
 // person is an account signing in to a service provider of its home
-// organisation, tenantID.
+// organization, organizationID.
 type person struct {
-	id          uuid.UUID
-	tenantID    uuid.UUID
-	email       string
-	displayName string
-	metadata    map[string]any
+	id             uuid.UUID
+	organizationID uuid.UUID
+	email          string
+	displayName    string
+	metadata       map[string]any
 }
 
 // decodeMetadata reads user metadata, keeping numbers as written.
@@ -329,9 +329,9 @@ func (c *claims) values(ctx context.Context, source string) ([]string, error) {
 	return v, nil
 }
 
-// read loads source's values, scoped to the service provider's organisation.
+// read loads source's values, scoped to the service provider's organization.
 func (c *claims) read(ctx context.Context, source string) ([]string, error) {
-	q, tenantID, userID := c.idp.q, c.sp.TenantID, c.p.id
+	q, organizationID, userID := c.idp.q, c.sp.OrganizationID, c.p.id
 	switch source {
 	case sourceEmail:
 		return nonEmpty(c.p.email), nil
@@ -343,14 +343,14 @@ func (c *claims) read(ctx context.Context, source string) ([]string, error) {
 		id, err := c.idp.persistentID(ctx, c.sp, userID)
 		return nonEmpty(id), err
 	case sourceGroups:
-		return q.ListIdPUserGroupNames(ctx, dbgen.ListIdPUserGroupNamesParams{TenantID: tenantID, UserID: userID})
+		return q.ListIdPUserGroupNames(ctx, dbgen.ListIdPUserGroupNamesParams{OrganizationID: organizationID, UserID: userID})
 	case sourceRoles:
-		return q.ListIdPUserRoleNames(ctx, dbgen.ListIdPUserRoleNamesParams{TenantID: tenantID, UserID: userID})
+		return q.ListIdPUserRoleNames(ctx, dbgen.ListIdPUserRoleNamesParams{OrganizationID: organizationID, UserID: userID})
 	case sourceGivenName, sourceFamilyName:
 		if v := metadataValues(c.p.metadata[source]); len(v) == 1 {
 			return v, nil
 		}
-		names, err := q.GetIdPNameParts(ctx, dbgen.GetIdPNamePartsParams{TenantID: tenantID, UserID: userID})
+		names, err := q.GetIdPNameParts(ctx, dbgen.GetIdPNamePartsParams{OrganizationID: organizationID, UserID: userID})
 		if err != nil {
 			return nil, err
 		}
@@ -386,7 +386,7 @@ func (i *IdP) subjectFor(ctx context.Context, sp *ServiceProvider, p *person) (a
 		return assertionSubject{}, err
 	}
 	if len(ids) != 1 {
-		return assertionSubject{}, errs.ErrSAMLNameIDUnavailable
+		return assertionSubject{}, ErrNameIDUnavailable
 	}
 	s := assertionSubject{nameID: ids[0], nameIDFormat: format}
 	for _, m := range sp.Attributes {
@@ -410,7 +410,7 @@ func (i *IdP) subjectFor(ctx context.Context, sp *ServiceProvider, p *person) (a
 // the first time they sign in to it. It never changes after, whatever happens
 // to their email, and no other app can work it out.
 func (i *IdP) persistentID(ctx context.Context, sp *ServiceProvider, userID uuid.UUID) (string, error) {
-	id, err := i.q.GetSamlPersistentID(ctx, dbgen.GetSamlPersistentIDParams{TenantID: sp.TenantID, SpID: sp.ID, UserID: userID})
+	id, err := i.q.GetSamlPersistentID(ctx, dbgen.GetSamlPersistentIDParams{OrganizationID: sp.OrganizationID, SpID: sp.ID, UserID: userID})
 	if err == nil || !errors.Is(err, pgx.ErrNoRows) {
 		return id, err
 	}
@@ -419,6 +419,6 @@ func (i *IdP) persistentID(ctx context.Context, sp *ServiceProvider, userID uuid
 		return "", err
 	}
 	return i.q.InsertSamlPersistentID(ctx, dbgen.InsertSamlPersistentIDParams{
-		TenantID: sp.TenantID, SpID: sp.ID, UserID: userID, NameID: hex.EncodeToString(raw),
+		OrganizationID: sp.OrganizationID, SpID: sp.ID, UserID: userID, NameID: hex.EncodeToString(raw),
 	})
 }

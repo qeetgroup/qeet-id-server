@@ -1,0 +1,127 @@
+delete:
+  operationId: deleteSamlApp
+  description: >-
+    Removes a downstream Service Provider from the organization's IdP-side registry so
+    it can no longer obtain assertions from Qeet as the Identity Provider. The
+    deletion is audited. Pairs with the SP list and registration endpoints.
+  summary: Delete SAML SP
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "204":
+      description: Deleted
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+get:
+  operationId: getSamlApp
+  description: >-
+    Returns a single registered downstream Service Provider's configuration in
+    the organization, from the IdP-side registry where Qeet acts as the Identity
+    Provider. Update it with PATCH or remove it with DELETE.
+  summary: Get SAML SP
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Service provider
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/SAMLServiceProvider.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+patch:
+  operationId: updateSamlApp
+  description: >-
+    Updates a registered downstream Service Provider's configuration in the
+    organization, such as its entity id, ACS URL, NameID settings or status, on the
+    IdP side where Qeet acts as the Identity Provider. Changes are confined to
+    the organization in the path and are audited as saml.sp_updated, naming the fields
+    changed and the new entity id, ACS URL, NameID, attribute and assignment
+    settings. A new ACS URL is checked as on registration (422
+    saml.acs_url_invalid), and so are the NameID settings and attributes. A new
+    NameID format without a name_id_attribute moves the attribute to the
+    format's default when the current one doesn't fit it (persistent_id for
+    persistent, email for emailAddress); a name_id_attribute given must fit the
+    format (422 saml.name_id_attribute_invalid). attributes replaces the whole
+    list, and assignment_required turns assigned-people-only sign-in on or off;
+    the people and groups assigned stay either way.
+  summary: Update SAML SP
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/SAMLServiceProviderUpdate.yaml
+  responses:
+    "200":
+      description: Updated
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/SAMLServiceProvider.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

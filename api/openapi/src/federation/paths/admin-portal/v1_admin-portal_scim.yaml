@@ -1,0 +1,23 @@
+get:
+  operationId: getPortalScimConfig
+  summary: Get SCIM config (portal)
+  description: >-
+    Requires the link's capabilities to include "scim". Never exposes the
+    provisioned-users list — only rotate/revoke/status.
+  tags:
+    - Admin Portal
+  security:
+    - adminPortalCookie: []
+  responses:
+    "200":
+      description: SCIM config
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/ConfigView.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

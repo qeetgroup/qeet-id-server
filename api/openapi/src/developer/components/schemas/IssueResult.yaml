@@ -1,0 +1,13 @@
+type: object
+required:
+  - credential_id
+  - jwt
+properties:
+  credential_id:
+    type: string
+    format: uuid
+  expires_at:
+    type: string
+    format: date-time
+  jwt:
+    type: string

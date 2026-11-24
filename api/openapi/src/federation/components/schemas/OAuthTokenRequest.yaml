@@ -1,0 +1,73 @@
+type: object
+required:
+  - grant_type
+properties:
+  grant_type:
+    type: string
+    enum:
+      - authorization_code
+      - refresh_token
+      - urn:ietf:params:oauth:grant-type:device_code
+      - urn:ietf:params:oauth:grant-type:token-exchange
+      - urn:openid:params:grant-type:ciba
+      - client_credentials
+  code:
+    type: string
+  redirect_uri:
+    type: string
+    format: uri
+  code_verifier:
+    type: string
+  refresh_token:
+    type: string
+  device_code:
+    type: string
+    description: Present when grant_type is the RFC 8628 device_code grant.
+  auth_req_id:
+    type: string
+    description: >-
+      Present when grant_type is the CIBA grant; the auth_req_id the backchannel
+      authentication request answered.
+  resource:
+    type: string
+    format: uri
+    description: >-
+      RFC 8707 resource indicator, accepted on authorization_code,
+      refresh_token and token-exchange: the issued access token's audience is
+      this resource alone (e.g. an MCP server). On refresh_token, omitting it
+      carries the resource bound at the original grant forward, and naming
+      another is refused with invalid_target. Refused with invalid_target on
+      client_credentials, device_code and CIBA.
+  subject_token:
+    type: string
+    description: >-
+      RFC 8693 token-exchange grant only — the token identifying the party whose
+      authority is being exercised.
+  subject_token_type:
+    type: string
+    description: >-
+      RFC 8693 token-exchange grant only. Only
+      "urn:ietf:params:oauth:token-type:access_token" is supported.
+  actor_token:
+    type: string
+    description: >-
+      RFC 8693 token-exchange grant only (optional) — names the delegate acting
+      on the subject's behalf (e.g. an AI agent); the issued token carries an
+      "act" claim.
+  actor_token_type:
+    type: string
+  requested_token_type:
+    type: string
+  scope:
+    type: string
+    description: >-
+      The scopes asked for, on token-exchange. Ignored on client_credentials:
+      the token always carries every scope the service principal or agent
+      holds.
+  client_id:
+    type: string
+    description: >-
+      The application's client_id, or on client_credentials the service
+      principal's or agent's id. Sent here or as the HTTP Basic user.
+  client_secret:
+    type: string

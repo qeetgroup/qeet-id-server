@@ -1,0 +1,15 @@
+type: object
+required:
+  - display_name
+  - email
+  - user_id
+properties:
+  display_name:
+    type:
+      - string
+      - "null"
+  email:
+    type: string
+  user_id:
+    type: string
+    format: uuid

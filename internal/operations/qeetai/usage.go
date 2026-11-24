@@ -4,27 +4,24 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/qeetai/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // RecordUsage adds one turn, with the tokens its provider said it used, to
-// tenantID's month.
-func (s *Service) RecordUsage(ctx context.Context, tenantID uuid.UUID, input, output int) error {
-	return s.q.RecordUsage(ctx, dbgen.RecordUsageParams{TenantID: tenantID, InputTokens: int64(input), OutputTokens: int64(output)})
+// organizationID's month.
+func (s *Service) RecordUsage(ctx context.Context, organizationID uuid.UUID, input, output int) error {
+	return s.q.RecordUsage(ctx, dbgen.RecordUsageParams{OrganizationID: organizationID, InputTokens: int64(input), OutputTokens: int64(output)})
 }
 
-// MonthUsage is what an organisation's Qeet AI used in one UTC month: its
+// MonthUsage is what an organization's Qeet AI used in one UTC month: its
 // turns (messages answered) and the tokens they took.
 type MonthUsage struct {
 	Month        string    `json:"month"`
@@ -34,7 +31,7 @@ type MonthUsage struct {
 	LastUsedAt   time.Time `json:"last_used_at"`
 }
 
-// Usage is the organisation's use this month, its last use, and its twelve
+// Usage is the organization's use this month, its last use, and its twelve
 // most recent months.
 type Usage struct {
 	ThisMonth  MonthUsage   `json:"this_month"`
@@ -42,9 +39,9 @@ type Usage struct {
 	Months     []MonthUsage `json:"months"`
 }
 
-// UsageOf returns tenantID's Usage.
-func (s *Service) UsageOf(ctx context.Context, tenantID uuid.UUID) (*Usage, error) {
-	rows, err := s.q.ListUsage(ctx, tenantID)
+// UsageOf returns organizationID's Usage.
+func (s *Service) UsageOf(ctx context.Context, organizationID uuid.UUID) (*Usage, error) {
+	rows, err := s.q.ListUsage(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +49,7 @@ func (s *Service) UsageOf(ctx context.Context, tenantID uuid.UUID) (*Usage, erro
 	thisMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).Format("2006-01")
 	out := &Usage{ThisMonth: MonthUsage{Month: thisMonth}, Months: make([]MonthUsage, len(rows))}
 	for i, r := range rows {
-		m := MonthUsage{Month: r.Month.Time.Format("2006-01"), Messages: int(r.Messages), InputTokens: r.InputTokens,
+		m := MonthUsage{Month: r.Month.Format("2006-01"), Messages: int(r.Messages), InputTokens: r.InputTokens,
 			OutputTokens: r.OutputTokens, LastUsedAt: r.LastUsedAt}
 		out.Months[i] = m
 		if m.Month == thisMonth {
@@ -66,7 +63,7 @@ func (s *Service) UsageOf(ctx context.Context, tenantID uuid.UUID) (*Usage, erro
 	return out, nil
 }
 
-// Settings are an organisation's Qeet AI settings: how many days an
+// Settings are an organization's Qeet AI settings: how many days an
 // untouched conversation is kept (nil: always), and their last change.
 type Settings struct {
 	ConversationRetentionDays *int       `json:"conversation_retention_days"`
@@ -75,9 +72,9 @@ type Settings struct {
 	UpdatedByEmail            *string    `json:"updated_by_email,omitempty"`
 }
 
-// SettingsOf returns tenantID's Settings.
-func (s *Service) SettingsOf(ctx context.Context, tenantID uuid.UUID) (*Settings, error) {
-	row, err := s.q.GetSettings(ctx, tenantID)
+// SettingsOf returns organizationID's Settings.
+func (s *Service) SettingsOf(ctx context.Context, organizationID uuid.UUID) (*Settings, error) {
+	row, err := s.q.GetSettings(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &Settings{}, nil
 	}
@@ -89,16 +86,13 @@ func (s *Service) SettingsOf(ctx context.Context, tenantID uuid.UUID) (*Settings
 		d := int(*row.ConversationRetentionDays)
 		out.ConversationRetentionDays = &d
 	}
-	if row.UpdatedBy.Valid {
-		by := uuid.UUID(row.UpdatedBy.Bytes)
-		out.UpdatedBy = &by
-	}
+	out.UpdatedBy = row.UpdatedBy
 	return out, nil
 }
 
-// SetSettings stores tenantID's settings, as actor's change: days from 1 to
+// SetSettings stores organizationID's settings, as actor's change: days from 1 to
 // 3650, or nil to keep conversations.
-func (s *Service) SetSettings(ctx context.Context, tenantID uuid.UUID, days *int, actor audit.Actor) (*Settings, error) {
+func (s *Service) SetSettings(ctx context.Context, organizationID uuid.UUID, days *int, actor audit.Actor) (*Settings, error) {
 	var stored *int32
 	if days != nil {
 		if *days < 1 || *days > 3650 {
@@ -114,40 +108,37 @@ func (s *Service) SetSettings(ctx context.Context, tenantID uuid.UUID, days *int
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	var by pgtype.UUID
-	if actor.UserID != nil {
-		by = pgtype.UUID{Bytes: *actor.UserID, Valid: true}
-	}
-	if err := s.q.WithTx(tx).UpsertSettings(ctx, dbgen.UpsertSettingsParams{TenantID: tenantID, ConversationRetentionDays: stored, UpdatedBy: by}); err != nil {
+	by := actor.UserID
+	if err := s.q.WithTx(tx).UpsertSettings(ctx, dbgen.UpsertSettingsParams{OrganizationID: organizationID, ConversationRetentionDays: stored, UpdatedBy: by}); err != nil {
 		return nil, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "qeetai.settings_updated", "qeetai_settings", tenantID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "qeetai.settings_updated", "qeetai_settings", organizationID,
 		map[string]any{"conversation_retention_days": days})); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return s.SettingsOf(ctx, tenantID)
+	return s.SettingsOf(ctx, organizationID)
 }
 
 // retentionBatch is how many conversations one delete removes.
 const retentionBatch = 1000
 
 // PurgeExpiredConversations deletes, with their messages, every
-// organisation's conversations untouched for longer than it keeps them, and
-// audits each organisation's deletion on its chain. It returns how many went.
+// organization's conversations untouched for longer than it keeps them, and
+// audits each organization's deletion on its chain. It returns how many went.
 func PurgeExpiredConversations(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 	q := dbgen.New(pool)
-	tenants, err := q.ListConversationRetention(ctx)
+	organizations, err := q.ListConversationRetention(ctx)
 	if err != nil {
 		return 0, err
 	}
 	var total int64
-	for _, t := range tenants {
+	for _, t := range organizations {
 		var deleted int64
 		for {
-			n, err := q.DeleteExpiredConversations(ctx, dbgen.DeleteExpiredConversationsParams{TenantID: t.TenantID, Days: t.Days, RowLimit: retentionBatch})
+			n, err := q.DeleteExpiredConversations(ctx, dbgen.DeleteExpiredConversationsParams{OrganizationID: t.OrganizationID, Days: t.Days, RowLimit: retentionBatch})
 			if err != nil {
 				return total, err
 			}
@@ -160,76 +151,10 @@ func PurgeExpiredConversations(ctx context.Context, pool *pgxpool.Pool) (int64, 
 			continue
 		}
 		total += deleted
-		if err := recordPurge(ctx, pool, t.TenantID, deleted, t.Days); err != nil {
-			slog.Warn("qeetai: audit the conversation purge", "tenant_id", t.TenantID, "err", err)
+		if err := audit.RecordAlone(ctx, pool, audit.Actor{Type: "system"}.Event(t.OrganizationID, "qeetai.conversations_purged", "qeetai_settings",
+			t.OrganizationID, map[string]any{"deleted": deleted, "days": t.Days})); err != nil {
+			slog.Warn("qeetai: audit the conversation purge", "organization_id", t.OrganizationID, "err", err)
 		}
 	}
 	return total, nil
-}
-
-// recordPurge audits on tenantID's chain that deleted conversations older
-// than days were removed.
-func recordPurge(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, deleted int64, days int32) error {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(tenantID, "qeetai.conversations_purged", "qeetai_settings", tenantID,
-		map[string]any{"deleted": deleted, "days": days})); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-// usage handles GET /v1/tenants/{tenantID}/qeetai/usage.
-func (h *Handler) usage(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Admin.UsageOf(r.Context(), tenantID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
-}
-
-// settings handles GET /v1/tenants/{tenantID}/qeetai/settings.
-func (h *Handler) settings(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Admin.SettingsOf(r.Context(), tenantID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
-}
-
-// putSettings handles PUT /v1/tenants/{tenantID}/qeetai/settings.
-func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var in struct {
-		ConversationRetentionDays *int `json:"conversation_retention_days"`
-	}
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Admin.SetSettings(r.Context(), tenantID, in.ConversationRetentionDays, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
 }

@@ -1,0 +1,15 @@
+type: object
+description: The principal that caused an activity event.
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Actor user UUID (absent for system/agent actors).
+  name:
+    type: string
+    description: Display name when resolvable; omitted otherwise.
+  type:
+    type: string
+    description: Actor type (e.g. "user", "system", "agent").
+required:
+  - type

@@ -1,0 +1,34 @@
+type: object
+required:
+  - ok
+  - rows_checked
+properties:
+  broken_at_id:
+    type: string
+    format: uuid
+  broken_reason:
+    type: string
+    description: >-
+      Why the chain is broken at broken_at_id, in English. Show reason_code's
+      meaning instead.
+  last_verified_id:
+    type: string
+    format: uuid
+  ok:
+    type: boolean
+  reason_code:
+    type: string
+    enum:
+      - audit.chain_prev_hash_mismatch
+      - audit.chain_row_hash_mismatch
+      - audit.chain_checkpoint_gone
+      - audit.chain_checkpoint_unsigned
+    description: >-
+      Set when the chain is broken: the row's link to the one before it is
+      wrong, or its contents no longer match its hash; the row the chain's
+      last verification checkpoint names is gone; or a checkpoint the chain
+      relies on (its last verification's, or where it starts after a purge)
+      doesn't carry the server's signature, as when the chain and its
+      checkpoint were rewritten together.
+  rows_checked:
+    type: integer

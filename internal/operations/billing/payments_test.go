@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVerifyStripeSignature(t *testing.T) {
@@ -21,21 +22,69 @@ func TestVerifyStripeSignature(t *testing.T) {
 	mac.Write(body)
 	sig := hex.EncodeToString(mac.Sum(nil))
 	header := fmt.Sprintf("t=%s,v1=%s", ts, sig)
+	signedAt := time.Unix(1700000000, 0)
 
-	if !verifyStripeSignature(secret, header, body) {
+	if !verifyStripeSignature(secret, header, body, signedAt) {
 		t.Error("valid signature rejected")
 	}
-	if verifyStripeSignature("wrong", header, body) {
+	if verifyStripeSignature("wrong", header, body, signedAt) {
 		t.Error("wrong secret accepted")
 	}
-	if verifyStripeSignature(secret, fmt.Sprintf("t=%s,v1=deadbeef", ts), body) {
+	if verifyStripeSignature(secret, fmt.Sprintf("t=%s,v1=deadbeef", ts), body, signedAt) {
 		t.Error("tampered signature accepted")
 	}
-	if verifyStripeSignature(secret, header, []byte(`{"tampered":true}`)) {
+	if verifyStripeSignature(secret, header, []byte(`{"tampered":true}`), signedAt) {
 		t.Error("tampered body accepted")
 	}
-	if verifyStripeSignature(secret, "", body) || verifyStripeSignature("", header, body) {
+	if verifyStripeSignature(secret, "", body, signedAt) || verifyStripeSignature("", header, body, signedAt) {
 		t.Error("empty secret/header accepted")
+	}
+}
+
+// stripeSigned is the v1 signature secret makes of body at ts.
+func stripeSigned(secret, ts string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts + "."))
+	mac.Write(body)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// TestStripeSignatureAcceptsAnyV1AndRefusesStale checks that a header carrying
+// several v1 signatures, as Stripe sends while a webhook secret rotates, is
+// accepted when any of them is right, and that an event signed more than five
+// minutes before or after now is refused however well signed.
+func TestStripeSignatureAcceptsAnyV1AndRefusesStale(t *testing.T) {
+	secret := "whsec_current"
+	body := []byte(`{"type":"checkout.session.completed"}`)
+	now := time.Unix(1800000000, 0)
+	ts := "1800000000"
+	good, other := stripeSigned(secret, ts, body), stripeSigned("whsec_previous", ts, body)
+	for _, header := range []string{
+		"t=" + ts + ",v1=" + good + ",v1=" + other,
+		"t=" + ts + ",v1=" + other + ",v1=" + good,
+		"t=" + ts + ",v0=" + other + ",v1=" + good,
+	} {
+		if !verifyStripeSignature(secret, header, body, now) {
+			t.Errorf("%s: refused, want accepted (one v1 is right)", header)
+		}
+	}
+	if verifyStripeSignature(secret, "t="+ts+",v1="+other+",v1=deadbeef", body, now) {
+		t.Error("no right v1: accepted")
+	}
+	for name, at := range map[string]time.Time{
+		"signed six minutes ago":      now.Add(6 * time.Minute),
+		"signed six minutes from now": now.Add(-6 * time.Minute),
+		"signed a day ago":            now.Add(24 * time.Hour),
+	} {
+		if verifyStripeSignature(secret, "t="+ts+",v1="+good, body, at) {
+			t.Errorf("an event %s: accepted, want refused", name)
+		}
+	}
+	if !verifyStripeSignature(secret, "t="+ts+",v1="+good, body, now.Add(4*time.Minute)) {
+		t.Error("an event signed four minutes ago: refused, want accepted")
+	}
+	if verifyStripeSignature(secret, "t=soon,v1="+stripeSigned(secret, "soon", body), body, now) {
+		t.Error("a timestamp that isn't a number: accepted")
 	}
 }
 

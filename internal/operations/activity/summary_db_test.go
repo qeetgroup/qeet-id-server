@@ -19,8 +19,8 @@ import (
 // days with coarser buckets.
 func TestTheSummaryCountsWhatTheFiltersMatch(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	key1, key2, agent := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	insert := func(action, actorType string, actorUser *uuid.UUID, actorID string, ago time.Duration) {
 		t.Helper()
@@ -28,8 +28,8 @@ func TestTheSummaryCountsWhatTheFiltersMatch(t *testing.T) {
 		if actorID != "" {
 			meta["actor_id"] = actorID
 		}
-		if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO audit.events (tenant_id, actor_type, actor_user_id, action, resource_type, metadata, created_at)
-			VALUES ($1, $2, $3, $4, 'user', $5, NOW() - $6::interval)`, tenant, actorType, actorUser, action, meta, ago.String()); err != nil {
+		if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO audit.events (organization_id, actor_type, actor_user_id, action, resource_type, metadata, created_at)
+			VALUES ($1, $2, $3, $4, 'user', $5, NOW() - $6::interval)`, organization, actorType, actorUser, action, meta, ago.String()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -40,7 +40,7 @@ func TestTheSummaryCountsWhatTheFiltersMatch(t *testing.T) {
 	insert("risk.rule_created", "agent", nil, agent, time.Hour)
 	insert("user.created", "user", &admin.ID, "", 200*24*time.Hour)
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), NewHub(nil)).Mount)
 	var got struct {
 		Total         int64       `json:"total"`
 		UniqueActors  int64       `json:"unique_actors"`

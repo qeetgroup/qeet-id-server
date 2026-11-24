@@ -113,18 +113,17 @@ func encryptAssertion(t *testing.T, cert *x509.Certificate, method string) func(
 // and that one encrypted to another key, encrypted but unsigned, or sent to a
 // connection that has no key, is refused.
 func TestSAMLEncryptedAssertion(t *testing.T) {
-	sp := newSPSide(t)
 	master := make([]byte, 32)
 	_, _ = rand.Read(master)
 	box, err := envelope.New(master)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sp.handler.Service.SetCipher(box)
+	sp := newSPSide(t, func(d *Deps) { d.Cipher = box })
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn, keyless := sp.connect(t, tenant, idp), sp.connect(t, tenant, idp)
-	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	conn, keyless := sp.connect(t, organization, idp), sp.connect(t, organization, idp)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, member.ID)
 
 	cert := spEncryptionCertificate(t, sp, conn.ID)
@@ -132,11 +131,11 @@ func TestSAMLEncryptedAssertion(t *testing.T) {
 		t.Fatal("the SP metadata published a new encryption certificate on the second fetch")
 	}
 	var ct, nonce []byte
-	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT key_ct, key_nonce FROM tenant.saml_connection_keys WHERE connection_id = $1 AND tenant_id = $2`,
-		conn.ID, tenant).Scan(&ct, &nonce); err != nil {
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT key_ct, key_nonce FROM organization.saml_connection_keys WHERE connection_id = $1 AND organization_id = $2`,
+		conn.ID, organization).Scan(&ct, &nonce); err != nil {
 		t.Fatal(err)
 	}
-	pkcs8, err := box.Open(tenant, spKeyPurpose, conn.ID.String(), ct, nonce)
+	pkcs8, err := box.Open(organization, spKeyPurpose, conn.ID.String(), ct, nonce)
 	if err != nil {
 		t.Fatalf("open the stored key: %v", err)
 	}
@@ -144,7 +143,7 @@ func TestSAMLEncryptedAssertion(t *testing.T) {
 		t.Fatalf("the stored key isn't the published certificate's: %v", err)
 	}
 	if _, err := box.Open(uuid.New(), spKeyPurpose, conn.ID.String(), ct, nonce); err == nil {
-		t.Error("the stored key opened under another organisation")
+		t.Error("the stored key opened under another organization")
 	}
 
 	sp.signIn(t, idp, conn.ID, answer{email: member.Email, edit: encryptAssertion(t, cert, xencAES256GCM)})

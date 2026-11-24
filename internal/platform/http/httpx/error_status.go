@@ -6,111 +6,40 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// statusByCode maps each error code to its HTTP status. It lives in the
-// transport layer, not on errs.Error, so the errs catalog stays
-// transport-agnostic. Keep it in sync with that catalog.
-var statusByCode = map[string]int{
-	// Generic platform errors.
-	errs.CodeBadRequest:          http.StatusBadRequest,
-	errs.CodeUnauthorized:        http.StatusUnauthorized,
-	errs.CodeForbidden:           http.StatusForbidden,
-	errs.CodeStepUpRequired:      http.StatusForbidden,
-	errs.CodeRecentSignIn:        http.StatusForbidden,
-	errs.CodeNotFound:            http.StatusNotFound,
-	errs.CodeConflict:            http.StatusConflict,
-	errs.CodeUnprocessable:       http.StatusUnprocessableEntity,
-	errs.CodeValidation:          http.StatusUnprocessableEntity,
-	errs.CodeTooManyRequests:     http.StatusTooManyRequests,
-	errs.CodeRequestBodyTooLarge: http.StatusRequestEntityTooLarge,
-	errs.CodeUnsupportedMedia:    http.StatusUnsupportedMediaType,
-	errs.CodeInternal:            http.StatusInternalServerError,
-	errs.CodeNotImplemented:      http.StatusNotImplemented,
-	errs.CodeServerOverloaded:    http.StatusServiceUnavailable,
-
-	// MFA.
-	errs.CodeMFATOTPCodeInvalid:     http.StatusBadRequest,
-	errs.CodeMFAOTPCodeInvalid:      http.StatusBadRequest,
-	errs.CodeMFACodeInvalid:         http.StatusUnauthorized,
-	errs.CodeMFAEnrollNotStarted:    http.StatusBadRequest,
-	errs.CodeMFANotConfirmed:        http.StatusBadRequest,
-	errs.CodeMFAChannelInvalid:      http.StatusUnprocessableEntity,
-	errs.CodeMFADestinationRequired: http.StatusUnprocessableEntity,
-	errs.CodeMFAWebAuthnUnavailable: http.StatusNotImplemented,
-
-	// Auth / credentials.
-	errs.CodeAuthSessionInvalid:   http.StatusBadRequest,
-	errs.CodeAuthAccountInactive:  http.StatusForbidden,
-	errs.CodeAuthEmailExists:      http.StatusConflict,
-	errs.CodeAuthEmailRequired:    http.StatusUnprocessableEntity,
-	errs.CodeAuthSessionExpired:   http.StatusBadRequest,
-	errs.CodeAuthPasswordBreached: http.StatusUnprocessableEntity,
-
-	// Recovery.
-	errs.CodeResetLinkInvalid:    http.StatusBadRequest,
-	errs.CodeMagicLinkInvalid:    http.StatusBadRequest,
-	errs.CodeRecoveryLinkUsed:    http.StatusBadRequest,
-	errs.CodeRecoveryLinkExpired: http.StatusBadRequest,
-
-	// Verification.
-	errs.CodeVerifyCodeInvalid: http.StatusBadRequest,
-	errs.CodeVerifyCodeUsed:    http.StatusBadRequest,
-	errs.CodeVerifyCodeExpired: http.StatusBadRequest,
-	errs.CodeEmailNotVerified:  http.StatusForbidden,
-	errs.CodeEmailTaken:        http.StatusConflict,
-
-	// Invitations.
-	errs.CodeInviteLinkInvalid:      http.StatusBadRequest,
-	errs.CodeInviteInvalid:          http.StatusBadRequest,
-	errs.CodeInviteExpired:          http.StatusBadRequest,
-	errs.CodeInviteAccountExists:    http.StatusConflict,
-	errs.CodeInviteEmailMismatch:    http.StatusForbidden,
-	errs.CodeInviteEmailNotVerified: http.StatusForbidden,
-	errs.CodeInviteRoleRequired:     http.StatusUnprocessableEntity,
-
-	// Access requests.
-	errs.CodeAccessRequestRoleHeld:   http.StatusConflict,
-	errs.CodeAccessRequestPending:    http.StatusConflict,
-	errs.CodeAccessRequestClosed:     http.StatusConflict,
-	errs.CodeAccessRequestOwn:        http.StatusForbidden,
-	errs.CodeAccessRequestNoteNeeded: http.StatusUnprocessableEntity,
-
-	// Passkeys.
-	errs.CodePasskeyExists:      http.StatusConflict,
-	errs.CodePasskeyLoginFailed: http.StatusUnauthorized,
-
-	// Organization / tenant.
-	errs.CodeOrgSlugTaken:               http.StatusConflict,
-	errs.CodeTenantLastOwner:            http.StatusConflict,
-	errs.CodeTenantOwnerOnly:            http.StatusForbidden,
-	errs.CodeTenantSelfSuspend:          http.StatusForbidden,
-	errs.CodeTenantDeletionScheduled:    http.StatusConflict,
-	errs.CodeTenantDeletionNotScheduled: http.StatusConflict,
-	errs.CodeTenantRegionReadOnly:       http.StatusUnprocessableEntity,
-	errs.CodeTenantRegionUnavailable:    http.StatusUnprocessableEntity,
+// statusByKind is the HTTP status each kind of error is answered with.
+var statusByKind = map[errs.Kind]int{
+	errs.KindInvalid:          http.StatusBadRequest,
+	errs.KindUnauthenticated:  http.StatusUnauthorized,
+	errs.KindPaymentRequired:  http.StatusPaymentRequired,
+	errs.KindForbidden:        http.StatusForbidden,
+	errs.KindNotFound:         http.StatusNotFound,
+	errs.KindConflict:         http.StatusConflict,
+	errs.KindGone:             http.StatusGone,
+	errs.KindTooLarge:         http.StatusRequestEntityTooLarge,
+	errs.KindUnsupportedMedia: http.StatusUnsupportedMediaType,
+	errs.KindUnprocessable:    http.StatusUnprocessableEntity,
+	errs.KindTooManyRequests:  http.StatusTooManyRequests,
+	errs.KindInternal:         http.StatusInternalServerError,
+	errs.KindNotImplemented:   http.StatusNotImplemented,
+	errs.KindBadGateway:       http.StatusBadGateway,
+	errs.KindUnavailable:      http.StatusServiceUnavailable,
 }
 
-// registerStatuses adds a domain's code→status entries to statusByCode; each
-// error_status_<domain>.go calls it from init.
-func registerStatuses(m map[string]int) {
-	for k, v := range m {
-		statusByCode[k] = v
-	}
-}
-
-// ErrorStatus is the HTTP status WriteError would answer e with, for a handler
-// that reports an error inside its response rather than as one.
-func ErrorStatus(e *errs.Error) int { return statusForCode(e.Code) }
-
-// statusForCode returns the HTTP status for a canonical error code. An unmapped
-// code falls back to 400 (client error) — a forgotten mapping should never
-// surface to a user as a 500.
-func statusForCode(code string) int {
-	if s, ok := statusByCode[code]; ok {
+// ErrorStatus is the HTTP status WriteError answers e with, for a handler that
+// reports an error inside its response rather than as one. An error of no
+// known kind is answered 400: a client error, never a 500 by accident.
+func ErrorStatus(e *errs.Error) int {
+	if s, ok := statusByKind[e.Kind]; ok {
 		return s
 	}
 	return http.StatusBadRequest
 }
 
-// StatusForCode is the HTTP status WriteError answers an error code with, for
-// a handler that shows the error on a page of its own.
-func StatusForCode(code string) int { return statusForCode(code) }
+// StatusForCode is the HTTP status WriteError answers the error declared with
+// code with, for a handler that shows the error on a page of its own.
+func StatusForCode(code string) int {
+	if e, ok := errs.Lookup(code); ok {
+		return ErrorStatus(e)
+	}
+	return http.StatusBadRequest
+}

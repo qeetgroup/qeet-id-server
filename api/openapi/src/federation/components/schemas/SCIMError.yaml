@@ -1,0 +1,20 @@
+type: object
+description: An RFC 7644 §3.12 SCIM error.
+required:
+  - schemas
+  - status
+properties:
+  schemas:
+    type: array
+    items:
+      type: string
+      enum:
+        - urn:ietf:params:scim:api:messages:2.0:Error
+  status:
+    type: string
+    example: "409"
+  scimType:
+    type: string
+    example: uniqueness
+  detail:
+    type: string

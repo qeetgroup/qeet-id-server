@@ -1,0 +1,52 @@
+type: object
+required:
+  - medium_threshold
+  - high_threshold
+  - force_mfa_at_level
+  - impossible_travel_enabled
+  - min_travel_hours
+  - device_reputation_enabled
+  - country_header_configured
+  - country_last_seen_at
+properties:
+  medium_threshold:
+    type: number
+  high_threshold:
+    type: number
+  force_mfa_at_level:
+    type: string
+    enum:
+      - medium
+      - high
+  impossible_travel_enabled:
+    type: boolean
+    description: >-
+      Off by default. Also needs a geo signal to do anything — see
+      GEO_COUNTRY_HEADER.
+  min_travel_hours:
+    type: number
+    description: >-
+      A login from a different country than the last one, sooner than this many
+      hours later, is flagged.
+  device_reputation_enabled:
+    type: boolean
+    description: >-
+      Off by default. Flags a login from a browser+OS combination never seen
+      before for this user.
+  country_header_configured:
+    type: boolean
+    readOnly: true
+    description: >-
+      Whether the deployment names a trusted proxy country header
+      (GEO_COUNTRY_HEADER). Without one impossible travel never fires. Ignored
+      on update.
+  country_last_seen_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+    readOnly: true
+    description: >-
+      When the instance answering last read a country from that header; null if
+      none since it started (no header, or the proxy isn't sending it). Ignored
+      on update.

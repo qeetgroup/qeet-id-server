@@ -11,21 +11,20 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const claimConversationTurn = `-- name: ClaimConversationTurn :one
-INSERT INTO qeetai.conversation_turns (conversation_id, tenant_id)
+INSERT INTO qeetai.conversation_turns (conversation_id, organization_id)
 VALUES ($1, $2)
 ON CONFLICT (conversation_id) DO UPDATE SET started_at = now()
-WHERE qeetai.conversation_turns.tenant_id = $2
+WHERE qeetai.conversation_turns.organization_id = $2
   AND qeetai.conversation_turns.started_at < now() - make_interval(secs => $3::float8)
 RETURNING started_at
 `
 
 type ClaimConversationTurnParams struct {
 	ConversationID    uuid.UUID
-	TenantID          uuid.UUID
+	OrganizationID    uuid.UUID
 	StaleAfterSeconds float64
 }
 
@@ -33,7 +32,7 @@ type ClaimConversationTurnParams struct {
 // @stale_after_seconds ago and so may still be running; no row then. Returns
 // when this turn started, which releasing it names.
 func (q *Queries) ClaimConversationTurn(ctx context.Context, arg ClaimConversationTurnParams) (time.Time, error) {
-	row := q.db.QueryRow(ctx, claimConversationTurn, arg.ConversationID, arg.TenantID, arg.StaleAfterSeconds)
+	row := q.db.QueryRow(ctx, claimConversationTurn, arg.ConversationID, arg.OrganizationID, arg.StaleAfterSeconds)
 	var started_at time.Time
 	err := row.Scan(&started_at)
 	return started_at, err
@@ -41,26 +40,26 @@ func (q *Queries) ClaimConversationTurn(ctx context.Context, arg ClaimConversati
 
 const createConversation = `-- name: CreateConversation :one
 
-INSERT INTO qeetai.conversations (tenant_id, user_id, title)
+INSERT INTO qeetai.conversations (organization_id, user_id, title)
 VALUES ($1, $2, $3)
-RETURNING id, tenant_id, user_id, title, pinned, created_at, updated_at
+RETURNING id, organization_id, user_id, title, pinned, created_at, updated_at
 `
 
 type CreateConversationParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
-	Title    string
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	Title          string
 }
 
 // Queries for the qeetai domain.
 // Static queries against qeetai.conversations and qeetai.messages; compiled
-// by sqlc into ./dbgen. All queries are scoped by tenant_id (multi-tenancy).
+// by sqlc into ./dbgen. All queries are scoped by organization_id (multi-tenancy).
 func (q *Queries) CreateConversation(ctx context.Context, arg CreateConversationParams) (QeetaiConversation, error) {
-	row := q.db.QueryRow(ctx, createConversation, arg.TenantID, arg.UserID, arg.Title)
+	row := q.db.QueryRow(ctx, createConversation, arg.OrganizationID, arg.UserID, arg.Title)
 	var i QeetaiConversation
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.UserID,
 		&i.Title,
 		&i.Pinned,
@@ -72,17 +71,17 @@ func (q *Queries) CreateConversation(ctx context.Context, arg CreateConversation
 
 const deleteConversation = `-- name: DeleteConversation :execrows
 DELETE FROM qeetai.conversations
-WHERE id = $1 AND tenant_id = $2 AND user_id = $3
+WHERE id = $1 AND organization_id = $2 AND user_id = $3
 `
 
 type DeleteConversationParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
 func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversationParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteConversation, arg.ID, arg.TenantID, arg.UserID)
+	result, err := q.db.Exec(ctx, deleteConversation, arg.ID, arg.OrganizationID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}
@@ -92,20 +91,20 @@ func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversation
 const deleteExpiredConversations = `-- name: DeleteExpiredConversations :execrows
 DELETE FROM qeetai.conversations WHERE id IN (
     SELECT c.id FROM qeetai.conversations c
-    WHERE c.tenant_id = $1 AND c.updated_at < NOW() - make_interval(days => $2::int)
+    WHERE c.organization_id = $1 AND c.updated_at < NOW() - make_interval(days => $2::int)
     LIMIT $3)
 `
 
 type DeleteExpiredConversationsParams struct {
-	TenantID uuid.UUID
-	Days     int32
-	RowLimit int32
+	OrganizationID uuid.UUID
+	Days           int32
+	RowLimit       int32
 }
 
-// Deletes, with their messages, up to row_limit of the organisation's
+// Deletes, with their messages, up to row_limit of the organization's
 // conversations untouched for days.
 func (q *Queries) DeleteExpiredConversations(ctx context.Context, arg DeleteExpiredConversationsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteExpiredConversations, arg.TenantID, arg.Days, arg.RowLimit)
+	result, err := q.db.Exec(ctx, deleteExpiredConversations, arg.OrganizationID, arg.Days, arg.RowLimit)
 	if err != nil {
 		return 0, err
 	}
@@ -114,11 +113,11 @@ func (q *Queries) DeleteExpiredConversations(ctx context.Context, arg DeleteExpi
 
 const deleteProviderSettings = `-- name: DeleteProviderSettings :execrows
 DELETE FROM qeetai.provider_settings
-WHERE tenant_id = $1
+WHERE organization_id = $1
 `
 
-func (q *Queries) DeleteProviderSettings(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteProviderSettings, tenantID)
+func (q *Queries) DeleteProviderSettings(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProviderSettings, organizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -126,23 +125,23 @@ func (q *Queries) DeleteProviderSettings(ctx context.Context, tenantID uuid.UUID
 }
 
 const getConversation = `-- name: GetConversation :one
-SELECT id, tenant_id, user_id, title, pinned, created_at, updated_at
+SELECT id, organization_id, user_id, title, pinned, created_at, updated_at
 FROM qeetai.conversations
-WHERE id = $1 AND tenant_id = $2 AND user_id = $3
+WHERE id = $1 AND organization_id = $2 AND user_id = $3
 `
 
 type GetConversationParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
 func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams) (QeetaiConversation, error) {
-	row := q.db.QueryRow(ctx, getConversation, arg.ID, arg.TenantID, arg.UserID)
+	row := q.db.QueryRow(ctx, getConversation, arg.ID, arg.OrganizationID, arg.UserID)
 	var i QeetaiConversation
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.UserID,
 		&i.Title,
 		&i.Pinned,
@@ -154,20 +153,20 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 
 const getProviderSettings = `-- name: GetProviderSettings :one
 
-SELECT tenant_id, provider, model, base_url, max_tokens,
+SELECT organization_id, provider, model, base_url, max_tokens,
        key_ciphertext, key_nonce, key_last4, enabled, updated_by, created_at, updated_at
 FROM qeetai.provider_settings
-WHERE tenant_id = $1
+WHERE organization_id = $1
 `
 
-// Per-tenant BYOK provider settings. The key is stored encrypted (ciphertext +
+// Per-organization BYOK provider settings. The key is stored encrypted (ciphertext +
 // nonce); it is never selected into any response DTO — only the service layer
 // decrypts it to build the provider client.
-func (q *Queries) GetProviderSettings(ctx context.Context, tenantID uuid.UUID) (QeetaiProviderSetting, error) {
-	row := q.db.QueryRow(ctx, getProviderSettings, tenantID)
+func (q *Queries) GetProviderSettings(ctx context.Context, organizationID uuid.UUID) (QeetaiProviderSetting, error) {
+	row := q.db.QueryRow(ctx, getProviderSettings, organizationID)
 	var i QeetaiProviderSetting
 	err := row.Scan(
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Provider,
 		&i.Model,
 		&i.BaseUrl,
@@ -186,19 +185,19 @@ func (q *Queries) GetProviderSettings(ctx context.Context, tenantID uuid.UUID) (
 const getSettings = `-- name: GetSettings :one
 SELECT s.conversation_retention_days, s.updated_by, u.email AS updated_by_email, s.updated_at
 FROM qeetai.settings s
-LEFT JOIN "user".users u ON u.id = s.updated_by
-WHERE s.tenant_id = $1
+LEFT JOIN account.users u ON u.id = s.updated_by
+WHERE s.organization_id = $1
 `
 
 type GetSettingsRow struct {
 	ConversationRetentionDays *int32
-	UpdatedBy                 pgtype.UUID
+	UpdatedBy                 *uuid.UUID
 	UpdatedByEmail            *string
 	UpdatedAt                 time.Time
 }
 
-func (q *Queries) GetSettings(ctx context.Context, tenantID uuid.UUID) (GetSettingsRow, error) {
-	row := q.db.QueryRow(ctx, getSettings, tenantID)
+func (q *Queries) GetSettings(ctx context.Context, organizationID uuid.UUID) (GetSettingsRow, error) {
+	row := q.db.QueryRow(ctx, getSettings, organizationID)
 	var i GetSettingsRow
 	err := row.Scan(
 		&i.ConversationRetentionDays,
@@ -210,13 +209,13 @@ func (q *Queries) GetSettings(ctx context.Context, tenantID uuid.UUID) (GetSetti
 }
 
 const insertMessage = `-- name: InsertMessage :one
-INSERT INTO qeetai.messages (tenant_id, conversation_id, role, content)
+INSERT INTO qeetai.messages (organization_id, conversation_id, role, content)
 VALUES ($1, $2, $3, $4)
-RETURNING id, tenant_id, conversation_id, role, content, created_at
+RETURNING id, organization_id, conversation_id, role, content, created_at
 `
 
 type InsertMessageParams struct {
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 	ConversationID uuid.UUID
 	Role           string
 	Content        json.RawMessage
@@ -224,7 +223,7 @@ type InsertMessageParams struct {
 
 func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (QeetaiMessage, error) {
 	row := q.db.QueryRow(ctx, insertMessage,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ConversationID,
 		arg.Role,
 		arg.Content,
@@ -232,7 +231,7 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (Q
 	var i QeetaiMessage
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.ConversationID,
 		&i.Role,
 		&i.Content,
@@ -242,16 +241,16 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (Q
 }
 
 const listConversationRetention = `-- name: ListConversationRetention :many
-SELECT tenant_id, conversation_retention_days::int AS days
+SELECT organization_id, conversation_retention_days::int AS days
 FROM qeetai.settings WHERE conversation_retention_days IS NOT NULL
 `
 
 type ListConversationRetentionRow struct {
-	TenantID uuid.UUID
-	Days     int32
+	OrganizationID uuid.UUID
+	Days           int32
 }
 
-// Every organisation that keeps its conversations for a set time.
+// Every organization that keeps its conversations for a set time.
 func (q *Queries) ListConversationRetention(ctx context.Context) ([]ListConversationRetentionRow, error) {
 	rows, err := q.db.Query(ctx, listConversationRetention)
 	if err != nil {
@@ -261,7 +260,7 @@ func (q *Queries) ListConversationRetention(ctx context.Context) ([]ListConversa
 	items := []ListConversationRetentionRow{}
 	for rows.Next() {
 		var i ListConversationRetentionRow
-		if err := rows.Scan(&i.TenantID, &i.Days); err != nil {
+		if err := rows.Scan(&i.OrganizationID, &i.Days); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -273,21 +272,21 @@ func (q *Queries) ListConversationRetention(ctx context.Context) ([]ListConversa
 }
 
 const listConversations = `-- name: ListConversations :many
-SELECT id, tenant_id, user_id, title, pinned, created_at, updated_at
+SELECT id, organization_id, user_id, title, pinned, created_at, updated_at
 FROM qeetai.conversations
-WHERE tenant_id = $1 AND user_id = $2
+WHERE organization_id = $1 AND user_id = $2
 ORDER BY pinned DESC, updated_at DESC
 LIMIT 1001
 `
 
 type ListConversationsParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]QeetaiConversation, error) {
-	rows, err := q.db.Query(ctx, listConversations, arg.TenantID, arg.UserID)
+	rows, err := q.db.Query(ctx, listConversations, arg.OrganizationID, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +296,7 @@ func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsPa
 		var i QeetaiConversation
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.UserID,
 			&i.Title,
 			&i.Pinned,
@@ -315,19 +314,19 @@ func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsPa
 }
 
 const listMessages = `-- name: ListMessages :many
-SELECT id, tenant_id, conversation_id, role, content, created_at
+SELECT id, organization_id, conversation_id, role, content, created_at
 FROM qeetai.messages
-WHERE conversation_id = $1 AND tenant_id = $2
+WHERE conversation_id = $1 AND organization_id = $2
 ORDER BY created_at ASC
 `
 
 type ListMessagesParams struct {
 	ConversationID uuid.UUID
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]QeetaiMessage, error) {
-	rows, err := q.db.Query(ctx, listMessages, arg.ConversationID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listMessages, arg.ConversationID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +336,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]Q
 		var i QeetaiMessage
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.ConversationID,
 			&i.Role,
 			&i.Content,
@@ -354,23 +353,23 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]Q
 }
 
 const listRecentMessages = `-- name: ListRecentMessages :many
-SELECT id, tenant_id, conversation_id, role, content, created_at
+SELECT id, organization_id, conversation_id, role, content, created_at
 FROM qeetai.messages
-WHERE conversation_id = $1 AND tenant_id = $2
+WHERE conversation_id = $1 AND organization_id = $2
 ORDER BY created_at DESC
 LIMIT $3
 `
 
 type ListRecentMessagesParams struct {
 	ConversationID uuid.UUID
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 	MaxMessages    int32
 }
 
 // The conversation's latest @max_messages messages, newest first: the most of
 // its history one turn sends the model.
 func (q *Queries) ListRecentMessages(ctx context.Context, arg ListRecentMessagesParams) ([]QeetaiMessage, error) {
-	rows, err := q.db.Query(ctx, listRecentMessages, arg.ConversationID, arg.TenantID, arg.MaxMessages)
+	rows, err := q.db.Query(ctx, listRecentMessages, arg.ConversationID, arg.OrganizationID, arg.MaxMessages)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +379,7 @@ func (q *Queries) ListRecentMessages(ctx context.Context, arg ListRecentMessages
 		var i QeetaiMessage
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.ConversationID,
 			&i.Role,
 			&i.Content,
@@ -398,21 +397,21 @@ func (q *Queries) ListRecentMessages(ctx context.Context, arg ListRecentMessages
 
 const listUsage = `-- name: ListUsage :many
 SELECT month, messages, input_tokens, output_tokens, last_used_at
-FROM qeetai.usage WHERE tenant_id = $1
+FROM qeetai.usage WHERE organization_id = $1
 ORDER BY month DESC LIMIT 12
 `
 
 type ListUsageRow struct {
-	Month        pgtype.Date
+	Month        time.Time
 	Messages     int32
 	InputTokens  int64
 	OutputTokens int64
 	LastUsedAt   time.Time
 }
 
-// The organisation's last twelve months of use, newest first.
-func (q *Queries) ListUsage(ctx context.Context, tenantID uuid.UUID) ([]ListUsageRow, error) {
-	rows, err := q.db.Query(ctx, listUsage, tenantID)
+// The organization's last twelve months of use, newest first.
+func (q *Queries) ListUsage(ctx context.Context, organizationID uuid.UUID) ([]ListUsageRow, error) {
+	rows, err := q.db.Query(ctx, listUsage, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -443,16 +442,16 @@ SET
     title      = COALESCE($1, title),
     pinned     = COALESCE($2, pinned),
     updated_at = now()
-WHERE id = $3 AND tenant_id = $4 AND user_id = $5
-RETURNING id, tenant_id, user_id, title, pinned, created_at, updated_at
+WHERE id = $3 AND organization_id = $4 AND user_id = $5
+RETURNING id, organization_id, user_id, title, pinned, created_at, updated_at
 `
 
 type PatchConversationParams struct {
-	Title    *string
-	Pinned   *bool
-	ID       uuid.UUID
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+	Title          *string
+	Pinned         *bool
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
 func (q *Queries) PatchConversation(ctx context.Context, arg PatchConversationParams) (QeetaiConversation, error) {
@@ -460,13 +459,13 @@ func (q *Queries) PatchConversation(ctx context.Context, arg PatchConversationPa
 		arg.Title,
 		arg.Pinned,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.UserID,
 	)
 	var i QeetaiConversation
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.UserID,
 		&i.Title,
 		&i.Pinned,
@@ -477,9 +476,9 @@ func (q *Queries) PatchConversation(ctx context.Context, arg PatchConversationPa
 }
 
 const recordUsage = `-- name: RecordUsage :exec
-INSERT INTO qeetai.usage (tenant_id, month, messages, input_tokens, output_tokens, last_used_at)
+INSERT INTO qeetai.usage (organization_id, month, messages, input_tokens, output_tokens, last_used_at)
 VALUES ($1, date_trunc('month', NOW() AT TIME ZONE 'UTC')::date, 1, $2, $3, NOW())
-ON CONFLICT (tenant_id, month) DO UPDATE SET
+ON CONFLICT (organization_id, month) DO UPDATE SET
     messages      = qeetai.usage.messages + 1,
     input_tokens  = qeetai.usage.input_tokens + EXCLUDED.input_tokens,
     output_tokens = qeetai.usage.output_tokens + EXCLUDED.output_tokens,
@@ -487,59 +486,77 @@ ON CONFLICT (tenant_id, month) DO UPDATE SET
 `
 
 type RecordUsageParams struct {
-	TenantID     uuid.UUID
-	InputTokens  int64
-	OutputTokens int64
+	OrganizationID uuid.UUID
+	InputTokens    int64
+	OutputTokens   int64
 }
 
-// Adds one turn and its tokens to the organisation's month.
+// Adds one turn and its tokens to the organization's month.
 func (q *Queries) RecordUsage(ctx context.Context, arg RecordUsageParams) error {
-	_, err := q.db.Exec(ctx, recordUsage, arg.TenantID, arg.InputTokens, arg.OutputTokens)
+	_, err := q.db.Exec(ctx, recordUsage, arg.OrganizationID, arg.InputTokens, arg.OutputTokens)
 	return err
 }
 
 const releaseConversationTurn = `-- name: ReleaseConversationTurn :exec
 DELETE FROM qeetai.conversation_turns
-WHERE conversation_id = $1 AND tenant_id = $2 AND started_at = $3
+WHERE conversation_id = $1 AND organization_id = $2 AND started_at = $3
 `
 
 type ReleaseConversationTurnParams struct {
 	ConversationID uuid.UUID
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 	StartedAt      time.Time
 }
 
 // End the turn that started at @started_at, unless a later one has taken over.
 func (q *Queries) ReleaseConversationTurn(ctx context.Context, arg ReleaseConversationTurnParams) error {
-	_, err := q.db.Exec(ctx, releaseConversationTurn, arg.ConversationID, arg.TenantID, arg.StartedAt)
+	_, err := q.db.Exec(ctx, releaseConversationTurn, arg.ConversationID, arg.OrganizationID, arg.StartedAt)
+	return err
+}
+
+const resealProviderKey = `-- name: ResealProviderKey :exec
+UPDATE qeetai.provider_settings
+SET key_ciphertext = $1, key_nonce = $2
+WHERE organization_id = $3
+`
+
+type ResealProviderKeyParams struct {
+	KeyCiphertext  []byte
+	KeyNonce       []byte
+	OrganizationID uuid.UUID
+}
+
+// Stores the organization's key sealed again with the current encryption key.
+func (q *Queries) ResealProviderKey(ctx context.Context, arg ResealProviderKeyParams) error {
+	_, err := q.db.Exec(ctx, resealProviderKey, arg.KeyCiphertext, arg.KeyNonce, arg.OrganizationID)
 	return err
 }
 
 const touchConversation = `-- name: TouchConversation :exec
 UPDATE qeetai.conversations
 SET updated_at = now()
-WHERE id = $1 AND tenant_id = $2
+WHERE id = $1 AND organization_id = $2
 `
 
 type TouchConversationParams struct {
 	ConversationID uuid.UUID
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) TouchConversation(ctx context.Context, arg TouchConversationParams) error {
-	_, err := q.db.Exec(ctx, touchConversation, arg.ConversationID, arg.TenantID)
+	_, err := q.db.Exec(ctx, touchConversation, arg.ConversationID, arg.OrganizationID)
 	return err
 }
 
 const upsertProviderSettings = `-- name: UpsertProviderSettings :one
 INSERT INTO qeetai.provider_settings (
-    tenant_id, provider, model, base_url, max_tokens,
+    organization_id, provider, model, base_url, max_tokens,
     key_ciphertext, key_nonce, key_last4, enabled, updated_by, updated_at
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, now()
 )
-ON CONFLICT (tenant_id) DO UPDATE SET
+ON CONFLICT (organization_id) DO UPDATE SET
     provider       = EXCLUDED.provider,
     model          = EXCLUDED.model,
     base_url       = EXCLUDED.base_url,
@@ -550,26 +567,26 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     enabled        = EXCLUDED.enabled,
     updated_by     = EXCLUDED.updated_by,
     updated_at     = now()
-RETURNING tenant_id, provider, model, base_url, max_tokens,
+RETURNING organization_id, provider, model, base_url, max_tokens,
           key_ciphertext, key_nonce, key_last4, enabled, updated_by, created_at, updated_at
 `
 
 type UpsertProviderSettingsParams struct {
-	TenantID      uuid.UUID
-	Provider      string
-	Model         string
-	BaseUrl       string
-	MaxTokens     int32
-	KeyCiphertext []byte
-	KeyNonce      []byte
-	KeyLast4      string
-	Enabled       bool
-	UpdatedBy     pgtype.UUID
+	OrganizationID uuid.UUID
+	Provider       string
+	Model          string
+	BaseUrl        string
+	MaxTokens      int32
+	KeyCiphertext  []byte
+	KeyNonce       []byte
+	KeyLast4       string
+	Enabled        bool
+	UpdatedBy      *uuid.UUID
 }
 
 func (q *Queries) UpsertProviderSettings(ctx context.Context, arg UpsertProviderSettingsParams) (QeetaiProviderSetting, error) {
 	row := q.db.QueryRow(ctx, upsertProviderSettings,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Provider,
 		arg.Model,
 		arg.BaseUrl,
@@ -582,7 +599,7 @@ func (q *Queries) UpsertProviderSettings(ctx context.Context, arg UpsertProvider
 	)
 	var i QeetaiProviderSetting
 	err := row.Scan(
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Provider,
 		&i.Model,
 		&i.BaseUrl,
@@ -599,20 +616,20 @@ func (q *Queries) UpsertProviderSettings(ctx context.Context, arg UpsertProvider
 }
 
 const upsertSettings = `-- name: UpsertSettings :exec
-INSERT INTO qeetai.settings (tenant_id, conversation_retention_days, updated_by, updated_at)
+INSERT INTO qeetai.settings (organization_id, conversation_retention_days, updated_by, updated_at)
 VALUES ($1, $2, $3, NOW())
-ON CONFLICT (tenant_id) DO UPDATE SET
+ON CONFLICT (organization_id) DO UPDATE SET
     conversation_retention_days = EXCLUDED.conversation_retention_days,
     updated_by = EXCLUDED.updated_by, updated_at = NOW()
 `
 
 type UpsertSettingsParams struct {
-	TenantID                  uuid.UUID
+	OrganizationID            uuid.UUID
 	ConversationRetentionDays *int32
-	UpdatedBy                 pgtype.UUID
+	UpdatedBy                 *uuid.UUID
 }
 
 func (q *Queries) UpsertSettings(ctx context.Context, arg UpsertSettingsParams) error {
-	_, err := q.db.Exec(ctx, upsertSettings, arg.TenantID, arg.ConversationRetentionDays, arg.UpdatedBy)
+	_, err := q.db.Exec(ctx, upsertSettings, arg.OrganizationID, arg.ConversationRetentionDays, arg.UpdatedBy)
 	return err
 }

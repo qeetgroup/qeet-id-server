@@ -1,0 +1,9 @@
+type: http
+scheme: bearer
+description: >-
+  An organization's SCIM provisioning token, presented by its identity
+  provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs.
+  An organization can hold several, managed under
+  /v1/organizations/{organizationID}/scim/tokens. A revoked or expired token, and
+  every token of an organization that is suspended or due for deletion, is
+  refused with 401.

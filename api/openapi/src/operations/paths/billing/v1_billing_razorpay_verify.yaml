@@ -1,0 +1,52 @@
+post:
+  operationId: verifyRazorpayPayment
+  description: >-
+    Completes a checkout from a Razorpay payment-link redirect using the signed
+    callback parameters posted by the browser. Authenticity is established by
+    the Razorpay signature rather than a session, so the endpoint requires no
+    authentication and is CSRF-exempt. Completion is idempotent, so a later
+    asynchronous webhook for the same payment is a harmless no-op.
+  summary: Verify a Razorpay payment-link callback
+  tags:
+    - Billing
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - razorpay_payment_id
+            - razorpay_payment_link_id
+            - razorpay_payment_link_reference_id
+            - razorpay_payment_link_status
+            - razorpay_signature
+          properties:
+            razorpay_payment_id:
+              type: string
+              minLength: 1
+            razorpay_payment_link_id:
+              type: string
+              minLength: 1
+            razorpay_payment_link_reference_id:
+              type: string
+              minLength: 1
+            razorpay_payment_link_status:
+              type: string
+              minLength: 1
+            razorpay_signature:
+              type: string
+              minLength: 1
+  responses:
+    "200":
+      description: Signed callback accepted
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

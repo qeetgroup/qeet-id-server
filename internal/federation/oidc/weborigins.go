@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // webOriginsTTL is how long the set of every application's web origins is
@@ -61,18 +60,18 @@ func originOf(uri string) string {
 // lower case, each origin once.
 func checkWebOrigins(origins []string) ([]string, error) {
 	if len(origins) > maxWebOrigins {
-		return nil, errs.ErrOIDCWebOriginInvalid.WithDetail("at most 50 web origins")
+		return nil, ErrWebOriginInvalid.WithDetail("at most 50 web origins")
 	}
 	out := make([]string, 0, len(origins))
 	for _, o := range origins {
 		u, err := url.Parse(strings.TrimSpace(o))
 		if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-			return nil, errs.ErrOIDCWebOriginInvalid.WithDetail(o)
+			return nil, ErrWebOriginInvalid.WithDetail(o)
 		}
 		host := u.Hostname()
 		loopback := host == "localhost" || net.ParseIP(host).IsLoopback()
 		if u.Scheme != "https" && (u.Scheme != "http" || !loopback) {
-			return nil, errs.ErrOIDCWebOriginInvalid.WithDetail(o)
+			return nil, ErrWebOriginInvalid.WithDetail(o)
 		}
 		origin := strings.ToLower(u.Scheme + "://" + u.Host)
 		if !slices.Contains(out, origin) {
@@ -97,10 +96,10 @@ func effectiveWebOrigins(redirectURIs, set []string) []string {
 	return out
 }
 
-// clientWebOrigins fills each client's WebOrigins, read for the whole tenant
+// clientWebOrigins fills each client's WebOrigins, read for the whole organization
 // at once.
-func (s *Service) clientWebOrigins(ctx context.Context, tenantID uuid.UUID, clients []Client) error {
-	rows, err := s.q.ListClientWebOrigins(ctx, tenantID)
+func (s *Service) clientWebOrigins(ctx context.Context, organizationID uuid.UUID, clients []Client) error {
+	rows, err := s.q.ListClientWebOrigins(ctx, organizationID)
 	if err != nil {
 		return err
 	}
@@ -116,14 +115,14 @@ func (s *Service) clientWebOrigins(ctx context.Context, tenantID uuid.UUID, clie
 
 // setWebOrigins stores, in tx, the web origins an application sets; nil keeps
 // none of its own, so its redirect URIs' origins apply.
-func (s *Service) setWebOrigins(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, origins []string) error {
+func (s *Service) setWebOrigins(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID, origins []string) error {
 	if origins != nil {
 		var err error
 		if origins, err = checkWebOrigins(origins); err != nil {
 			return err
 		}
 	}
-	err := s.q.WithTx(tx).SetClientWebOrigins(ctx, dbgen.SetClientWebOriginsParams{ID: id, TenantID: tenantID, WebOrigins: origins})
+	err := s.q.WithTx(tx).SetClientWebOrigins(ctx, dbgen.SetClientWebOriginsParams{ID: id, OrganizationID: organizationID, WebOrigins: origins})
 	s.webOrigins.forget()
 	return err
 }

@@ -1,0 +1,371 @@
+package organization
+
+import (
+	"context"
+	"errors"
+	"maps"
+	"net/http"
+	"reflect"
+	"slices"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
+)
+
+// tokenIssuer is the part of authentication.Service this handler needs.
+type tokenIssuer interface {
+	EnterCreatedOrganization(ctx context.Context, userID, organizationID, fromSessionID uuid.UUID, ip, ua string) (*authentication.TokenPair, error)
+}
+
+// Handler serves the /organizations routes and /me/organizations. AuthService, if
+// set, issues a token pair for a newly created organization so the client can switch
+// in, continuing the caller's session; a nil Signals announces no ended
+// sessions.
+type Handler struct {
+	Repo        *Repository
+	Validate    *validator.Validate
+	AuthService tokenIssuer
+	Signals     *sessionsignal.Signaller
+	// OwnerCheck reports whether a person owns an organization
+	// (rbac.Repository.IsOwner). Only an owner deletes one, calls off its
+	// deletion or changes its status; without it those are refused.
+	OwnerCheck func(ctx context.Context, userID, organizationID uuid.UUID) (bool, error)
+}
+
+// requireOwner refuses, with ErrOrganizationOwnerOnly, a caller who isn't a person
+// owning organization id.
+func (h *Handler) requireOwner(r *http.Request, id uuid.UUID) error {
+	if h.OwnerCheck == nil {
+		return errs.ErrNotImplemented
+	}
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil || (p.ActorType != "" && p.ActorType != "user") {
+		return ErrOwnerOnly
+	}
+	owner, err := h.OwnerCheck(r.Context(), *p.UserID, id)
+	if err != nil {
+		return err
+	}
+	if !owner {
+		return ErrOwnerOnly
+	}
+	return nil
+}
+
+// Mount registers the organization routes on r.
+func (h *Handler) Mount(r chi.Router) {
+	r.Get("/organizations", h.list)
+	r.Get("/me/organizations", h.eligibleOrganizations)
+	r.Post("/organizations", h.create)
+	// {organizationID}, not {id}, so EnforceOrganizationScope rejects any path organization other
+	// than the caller's; rbac.Enforce checks only the caller's active organization.
+	r.Get("/organizations/{organizationID}", h.get)
+	r.Patch("/organizations/{organizationID}", h.update)
+	r.Delete("/organizations/{organizationID}", h.delete)
+	r.Post("/organizations/{organizationID}/deletion/cancel", h.cancelDeletion)
+}
+
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	after, err := paging.ParseCursor(r.URL.Query())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, next, err := h.Repo.List(r.Context(), *p.UserID, paging.Limit(r.URL.Query(), listLimit, listMaxLimit), after)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, paging.Page(out, next))
+}
+
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	// The new organization's rows aren't the caller's current organization's.
+	r = r.WithContext(postgres.AcrossOrganizations(r.Context()))
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	var in CreateInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return
+	}
+	if in.Region != "" && in.Region != h.Repo.HostingRegion() {
+		httpx.WriteError(w, r, ErrRegionUnavailable.WithMetadata(map[string]any{"available": []string{h.Repo.HostingRegion()}}))
+		return
+	}
+	// Only the free plan may be self-provisioned here: paid plans go through
+	// signup checkout so payment is captured first, and enterprise is sales-led.
+	if in.Plan != "" && in.Plan != "free" {
+		httpx.WriteError(w, r, errs.ErrBillingCheckoutRequired)
+		return
+	}
+	// Require a verified email before spinning up an org: it becomes the owner's
+	// account of record for billing, recovery, and every downstream notification.
+	if verified, err := h.Repo.IsEmailVerified(r.Context(), *p.UserID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	} else if !verified {
+		httpx.WriteError(w, r, ErrEmailNotVerified)
+		return
+	}
+	t, err := h.Repo.Create(r.Context(), in, *p.UserID, audit.ActorOf(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+
+	// Mint a pair scoped to the new organization so the caller switches in; organization
+	// still returned if it fails. It continues the caller's session, so
+	// creating an organization never lengthens a sign-in.
+	resp := map[string]any{
+		"organization":    t,
+		"organization_id": t.ID,
+		"roles":           []string{"owner"},
+	}
+	if p.SessionID != nil {
+		if pair, err := h.AuthService.EnterCreatedOrganization(r.Context(), *p.UserID, t.ID, *p.SessionID, httpx.ClientIP(r), r.UserAgent()); err == nil {
+			resp["access_token"] = pair.AccessToken
+			resp["token_type"] = pair.TokenType
+			resp["expires_at"] = pair.ExpiresAt
+			resp["refresh_token"] = pair.RefreshToken
+			resp["session_id"] = pair.SessionID
+			resp["user_id"] = pair.UserID
+		}
+	}
+	httpx.WriteJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathOrganization(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	t, err := h.Repo.Get(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, t)
+}
+
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathOrganization(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in UpdateInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return
+	}
+	// Changing an organization's status is an owner's. Suspending it would
+	// lock out every member, its owners too, with nobody left to undo it.
+	if in.Status != nil {
+		if err := h.requireOwner(r, id); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if *in.Status == "suspended" {
+			httpx.WriteError(w, r, ErrSelfSuspend)
+			return
+		}
+	}
+	t, err := h.Repo.Update(r.Context(), id, in, h.lifecycle(r), recordUpdate(audit.ActorOf(r)))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, t)
+}
+
+// recordUpdate returns the Changed that audits, as actor's, an update to the
+// organization's profile: organization.updated naming every field that changed, the
+// name and region with their old and new values (the logo and metadata by name
+// alone: they can be large). A status change is audited by its StatusChange.
+func recordUpdate(actor audit.Actor) Changed {
+	return func(ctx context.Context, tx pgx.Tx, before, after *Organization) error {
+		changes := audit.Changes(
+			map[string]any{"name": before.Name, "region": before.Region},
+			map[string]any{"name": after.Name, "region": after.Region})
+		changed := slices.Sorted(maps.Keys(changes))
+		if before.LogoURL != after.LogoURL {
+			changed = append(changed, "logo_url")
+		}
+		if !reflect.DeepEqual(before.Metadata, after.Metadata) {
+			changed = append(changed, "metadata")
+		}
+		if len(changed) == 0 {
+			return nil
+		}
+		return audit.Record(ctx, tx, actor.Event(after.ID, "organization.updated", "organization", after.ID,
+			map[string]any{"changed": changed, "changes": changes}))
+	}
+}
+
+// delete schedules the organization's deletion, which an owner can call off
+// until it is due; the background job deletes it then (DeleteDue).
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathOrganization(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.requireOwner(r, id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actor := audit.ActorOf(r)
+	due, err := h.Repo.ScheduleDeletion(r.Context(), id, func(ctx context.Context, tx pgx.Tx, due time.Time) error {
+		return recordDeletion(ctx, tx, actor, id, "organization.deletion_scheduled", map[string]any{"deletion_due_at": due})
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"organization_id": id, "deletion_due_at": due})
+}
+
+// cancelDeletion calls off the organization's scheduled deletion.
+func (h *Handler) cancelDeletion(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathOrganization(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.requireOwner(r, id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actor := audit.ActorOf(r)
+	if err := h.Repo.CancelDeletion(r.Context(), id, func(ctx context.Context, tx pgx.Tx) error {
+		return recordDeletion(ctx, tx, actor, id, "organization.deletion_cancelled", nil)
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	t, err := h.Repo.Get(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, t)
+}
+
+// recordDeletion audits and queues a change to an organization's scheduled
+// deletion, inside its transaction.
+func recordDeletion(ctx context.Context, tx pgx.Tx, actor audit.Actor, id uuid.UUID, action string, meta map[string]any) error {
+	if err := audit.Record(ctx, tx, actor.Event(id, action, "organization", id, meta)); err != nil {
+		return err
+	}
+	return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "organization.events", EventType: action,
+		Payload: map[string]any{"organization_id": id, "deletion_due_at": meta["deletion_due_at"]}})
+}
+
+// DeleteDue deletes every organization whose scheduled deletion is due, as
+// the system, ending and announcing its sessions through signals (nil: none).
+func DeleteDue(ctx context.Context, repo *Repository, signals *sessionsignal.Signaller) (int, error) {
+	ids, err := repo.DueForDeletion(ctx, 100)
+	if err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for _, id := range ids {
+		err := repo.SoftDelete(ctx, id, statusChange(signals, id, audit.Actor{Type: "system"}))
+		if errors.Is(err, errs.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return deleted, err
+		}
+		deleted++
+	}
+	return deleted, nil
+}
+
+// lifecycle returns the StatusChange run when an organization's status
+// changes in r.
+func (h *Handler) lifecycle(r *http.Request) StatusChange {
+	id, err := httpx.PathOrganization(r)
+	if err != nil {
+		return func(context.Context, pgx.Tx, string, string) error { return err }
+	}
+	return statusChange(h.Signals, id, audit.ActorOf(r))
+}
+
+// statusChange returns the StatusChange run when organization id's status changes, by actor.
+// Suspending or deleting it ends and announces every session in it; reactivating restores none, and
+// the ended sessions' access tokens stay refused. Each change is audited and queued as an event.
+func statusChange(signals *sessionsignal.Signaller, id uuid.UUID, actor audit.Actor) StatusChange {
+	return func(ctx context.Context, tx pgx.Tx, from, to string) error {
+		var action, reason string
+		switch to {
+		case "suspended":
+			action, reason = "organization.suspended", sessionsignal.ReasonOrganizationSuspended
+		case "deleted":
+			action, reason = "organization.deleted", sessionsignal.ReasonOrganizationDeleted
+		case "active":
+			action = "organization.reactivated"
+		default:
+			return nil
+		}
+		ended := 0
+		if reason != "" {
+			sessions, err := sessionsignal.EndOrganizationSessions(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			signals.Revoked(ctx, tx, reason, sessions...)
+			ended = len(sessions)
+		}
+		meta := map[string]any{"from": from, "status": to, "sessions_ended": ended}
+		if err := audit.Record(ctx, tx, actor.Event(id, action, "organization", id, meta)); err != nil {
+			return err
+		}
+		return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "organization.events", EventType: action,
+			Payload: map[string]any{"organization_id": id, "status": to, "from": from}})
+	}
+}
+
+// Check refuses a handler without what lets the creator enter a new
+// organization or what announces the sessions a suspension or deletion ends,
+// so bootstrap stops at start rather than serve without them.
+func (h *Handler) Check() error {
+	switch {
+	case h.AuthService == nil:
+		return errors.New("organization: the handler needs the sign-in service")
+	case h.Signals == nil:
+		return errors.New("organization: the handler needs session signals")
+	}
+	return nil
+}

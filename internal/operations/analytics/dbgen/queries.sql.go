@@ -7,16 +7,48 @@ package dbgen
 
 import (
 	"context"
+	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
+
+const avgSignInsPerPersonWindows = `-- name: AvgSignInsPerPersonWindows :one
+SELECT
+    COALESCE(
+        CASE WHEN COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') = 0 THEN 0
+             ELSE COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days')::float
+                  / NULLIF(COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days'), 0)
+        END, 0)::float8 AS avg_now,
+    COALESCE(
+        CASE WHEN COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at < NOW() - INTERVAL '30 days') = 0 THEN 0
+             ELSE COUNT(*) FILTER (WHERE created_at < NOW() - INTERVAL '30 days')::float
+                  / NULLIF(COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at < NOW() - INTERVAL '30 days'), 0)
+        END, 0)::float8 AS avg_prev
+FROM audit.events
+WHERE organization_id = $1 AND action = 'auth.login_succeeded'
+  AND COALESCE(metadata->>'method', '') NOT IN ('organization_switch', 'organization_create', 'invite_accept')
+  AND created_at >= NOW() - INTERVAL '60 days'
+`
+
+type AvgSignInsPerPersonWindowsRow struct {
+	AvgNow  float64
+	AvgPrev float64
+}
+
+// Sign-ins per person who signed in, in the last 30 days and the 30 before.
+func (q *Queries) AvgSignInsPerPersonWindows(ctx context.Context, tid *uuid.UUID) (AvgSignInsPerPersonWindowsRow, error) {
+	row := q.db.QueryRow(ctx, avgSignInsPerPersonWindows, tid)
+	var i AvgSignInsPerPersonWindowsRow
+	err := row.Scan(&i.AvgNow, &i.AvgPrev)
+	return i, err
+}
 
 const countDAUWindows = `-- name: CountDAUWindows :one
 SELECT
     COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= date_trunc('day', NOW())) AS dau_now,
     COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at <  date_trunc('day', NOW())) AS dau_prev
 FROM audit.events
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND action = 'auth.login_succeeded'
   AND created_at >= date_trunc('day', NOW() - INTERVAL '1 day')
 `
@@ -26,8 +58,8 @@ type CountDAUWindowsRow struct {
 	DauPrev int64
 }
 
-// People who signed in to the organisation today, and yesterday.
-func (q *Queries) CountDAUWindows(ctx context.Context, tid pgtype.UUID) (CountDAUWindowsRow, error) {
+// People who signed in to the organization today, and yesterday.
+func (q *Queries) CountDAUWindows(ctx context.Context, tid *uuid.UUID) (CountDAUWindowsRow, error) {
 	row := q.db.QueryRow(ctx, countDAUWindows, tid)
 	var i CountDAUWindowsRow
 	err := row.Scan(&i.DauNow, &i.DauPrev)
@@ -40,7 +72,7 @@ SELECT
     COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '48 hours'
                       AND created_at <  NOW() - INTERVAL '24 hours') AS failed_prev
 FROM audit.events
-WHERE tenant_id = $1 AND action = 'auth.sign_in_failed'
+WHERE organization_id = $1 AND action = 'auth.sign_in_failed'
 `
 
 type CountFailedLogins24hWindowsRow struct {
@@ -48,11 +80,49 @@ type CountFailedLogins24hWindowsRow struct {
 	FailedPrev int64
 }
 
-func (q *Queries) CountFailedLogins24hWindows(ctx context.Context, tid pgtype.UUID) (CountFailedLogins24hWindowsRow, error) {
+func (q *Queries) CountFailedLogins24hWindows(ctx context.Context, tid *uuid.UUID) (CountFailedLogins24hWindowsRow, error) {
 	row := q.db.QueryRow(ctx, countFailedLogins24hWindows, tid)
 	var i CountFailedLogins24hWindowsRow
 	err := row.Scan(&i.FailedNow, &i.FailedPrev)
 	return i, err
+}
+
+const countLoginMethods30d = `-- name: CountLoginMethods30d :many
+SELECT regexp_replace(COALESCE(metadata->>'method', 'password'), '_(mfa|email_confirmed)$', '')::text AS method,
+       COUNT(*) AS n
+FROM audit.events
+WHERE organization_id = $1
+  AND action = 'auth.login_succeeded'
+  AND COALESCE(metadata->>'method', '') NOT IN ('organization_switch', 'organization_create', 'invite_accept')
+  AND created_at >= NOW() - INTERVAL '30 days'
+GROUP BY 1
+ORDER BY n DESC
+`
+
+type CountLoginMethods30dRow struct {
+	Method string
+	N      int64
+}
+
+// Sign-ins of the last 30 days by first factor, most used first.
+func (q *Queries) CountLoginMethods30d(ctx context.Context, tid *uuid.UUID) ([]CountLoginMethods30dRow, error) {
+	rows, err := q.db.Query(ctx, countLoginMethods30d, tid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountLoginMethods30dRow{}
+	for rows.Next() {
+		var i CountLoginMethods30dRow
+		if err := rows.Scan(&i.Method, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const countLoginsTodayWindows = `-- name: CountLoginsTodayWindows :one
@@ -60,9 +130,9 @@ SELECT
     COUNT(*) FILTER (WHERE created_at >= date_trunc('day', NOW())) AS logins_today,
     COUNT(*) FILTER (WHERE created_at <  date_trunc('day', NOW())) AS logins_yday
 FROM audit.events
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND action = 'auth.login_succeeded'
-  AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
+  AND COALESCE(metadata->>'method', '') NOT IN ('organization_switch', 'organization_create', 'invite_accept')
   AND created_at >= date_trunc('day', NOW() - INTERVAL '1 day')
 `
 
@@ -71,8 +141,8 @@ type CountLoginsTodayWindowsRow struct {
 	LoginsYday  int64
 }
 
-// Sign-ins to the organisation today, and yesterday.
-func (q *Queries) CountLoginsTodayWindows(ctx context.Context, tid pgtype.UUID) (CountLoginsTodayWindowsRow, error) {
+// Sign-ins to the organization today, and yesterday.
+func (q *Queries) CountLoginsTodayWindows(ctx context.Context, tid *uuid.UUID) (CountLoginsTodayWindowsRow, error) {
 	row := q.db.QueryRow(ctx, countLoginsTodayWindows, tid)
 	var i CountLoginsTodayWindowsRow
 	err := row.Scan(&i.LoginsToday, &i.LoginsYday)
@@ -85,7 +155,7 @@ SELECT
     COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') AS mau_now,
     COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at <  NOW() - INTERVAL '30 days') AS mau_prev
 FROM audit.events
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND action = 'auth.login_succeeded'
   AND created_at >= NOW() - INTERVAL '60 days'
 `
@@ -96,29 +166,18 @@ type CountMAUWindowsRow struct {
 }
 
 // Queries for the analytics domain (admin dashboard KPIs + chart projections).
-//
-// These are the static aggregations whose result types sqlc can infer cleanly.
-// A handful of projections stay hand-written in analytics.go because sqlc cannot
-// infer their return types without changing behaviour:
-//   - kpis() MFA-adoption + MFA-adoption-prior: the mixed-type CASE
-//     (integer 0 vs numeric ratio) resolves to numeric, which sqlc emits as
-//     interface{} rather than float64.
-//   - extraKPIs() avg-sessions-per-user: COALESCE(CASE ... ::float, 0) also
-//     resolves to interface{} under sqlc.
-//   - trends14d(): users_cum = COALESCE(bigint) + COALESCE(SUM(...) numeric) is
-//     mis-inferred as int32 while the code scans int64 (narrowing/overflow risk).
-//   - loginMethodsMix(): COALESCE(metadata->>'method', ...) (jsonb ->>) is
-//     emitted as interface{} rather than string.
+// Where Postgres would answer numeric or an untyped expression, the result is
+// cast (::float8, ::bigint, ::text) so sqlc types it as the Go code reads it.
 //
 // Sign-ins and active users come from the sign-in log, the auth.login_succeeded
 // audit events, not from auth.sessions: ended sessions are purged after a
 // week, and the log is kept. Counts of people take every such event in the
-// organisation, switching to it, creating it and accepting an invitation to it
+// organization, switching to it, creating it and accepting an invitation to it
 // included; counts of sign-ins leave those three out, as they record no factor
 // of their own.
-// People who signed in to the organisation in the last 30 days, and in the 30
+// People who signed in to the organization in the last 30 days, and in the 30
 // before.
-func (q *Queries) CountMAUWindows(ctx context.Context, tid pgtype.UUID) (CountMAUWindowsRow, error) {
+func (q *Queries) CountMAUWindows(ctx context.Context, tid *uuid.UUID) (CountMAUWindowsRow, error) {
 	row := q.db.QueryRow(ctx, countMAUWindows, tid)
 	var i CountMAUWindowsRow
 	err := row.Scan(&i.MauNow, &i.MauPrev)
@@ -128,11 +187,11 @@ func (q *Queries) CountMAUWindows(ctx context.Context, tid pgtype.UUID) (CountMA
 const countMFARecoveryUsers = `-- name: CountMFARecoveryUsers :one
 SELECT COUNT(DISTINCT c.user_id)
 FROM auth.mfa_recovery_codes c
-JOIN "user".users u ON u.id = c.user_id
-WHERE u.tenant_id = $1 AND u.deleted_at IS NULL AND c.used_at IS NULL
+JOIN account.users u ON u.id = c.user_id
+WHERE u.organization_id = $1 AND u.deleted_at IS NULL AND c.used_at IS NULL
 `
 
-func (q *Queries) CountMFARecoveryUsers(ctx context.Context, tid pgtype.UUID) (int64, error) {
+func (q *Queries) CountMFARecoveryUsers(ctx context.Context, tid *uuid.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countMFARecoveryUsers, tid)
 	var count int64
 	err := row.Scan(&count)
@@ -142,15 +201,78 @@ func (q *Queries) CountMFARecoveryUsers(ctx context.Context, tid pgtype.UUID) (i
 const countMFATotpUsers = `-- name: CountMFATotpUsers :one
 SELECT COUNT(*)
 FROM auth.mfa_totp t
-JOIN "user".users u ON u.id = t.user_id
-WHERE u.tenant_id = $1 AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL
+JOIN account.users u ON u.id = t.user_id
+WHERE u.organization_id = $1 AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL
 `
 
-func (q *Queries) CountMFATotpUsers(ctx context.Context, tid pgtype.UUID) (int64, error) {
+func (q *Queries) CountMFATotpUsers(ctx context.Context, tid *uuid.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countMFATotpUsers, tid)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countSignInsByDay = `-- name: CountSignInsByDay :many
+SELECT to_char(d, 'YYYY-MM-DD')::text AS day,
+       count(e.id) FILTER (WHERE e.action = 'auth.login_succeeded') AS sign_ins,
+       count(DISTINCT e.actor_user_id) FILTER (WHERE e.action = 'auth.login_succeeded') AS people,
+       count(e.id) FILTER (WHERE e.action = 'auth.sign_in_failed') AS failed
+FROM generate_series(date_trunc('day', timezone('UTC', $1::timestamptz)),
+                     date_trunc('day', timezone('UTC', $2::timestamptz)), INTERVAL '1 day') AS d
+LEFT JOIN audit.events e
+  ON e.organization_id = $3
+ AND e.created_at >= timezone('UTC', d) AND e.created_at < timezone('UTC', d + INTERVAL '1 day')
+ AND e.created_at >= $1::timestamptz AND e.created_at <= $2::timestamptz
+ AND e.action IN ('auth.login_succeeded', 'auth.sign_in_failed')
+ AND COALESCE(e.metadata->>'method', '') NOT IN ('organization_switch', 'organization_create', 'invite_accept')
+ AND ($4::text = '' OR e.metadata->>'method' = $4::text)
+GROUP BY d ORDER BY d
+`
+
+type CountSignInsByDayParams struct {
+	FromAt time.Time
+	ToAt   time.Time
+	Tid    *uuid.UUID
+	Method string
+}
+
+type CountSignInsByDayRow struct {
+	Day     string
+	SignIns int64
+	People  int64
+	Failed  int64
+}
+
+// The organization's sign-ins, people signing in and failed sign-ins by UTC day
+// from the day of @from_at to the day of @to_at, of @method when not ”.
+func (q *Queries) CountSignInsByDay(ctx context.Context, arg CountSignInsByDayParams) ([]CountSignInsByDayRow, error) {
+	rows, err := q.db.Query(ctx, countSignInsByDay,
+		arg.FromAt,
+		arg.ToAt,
+		arg.Tid,
+		arg.Method,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountSignInsByDayRow{}
+	for rows.Next() {
+		var i CountSignInsByDayRow
+		if err := rows.Scan(
+			&i.Day,
+			&i.SignIns,
+			&i.People,
+			&i.Failed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const countStickinessPriorWeek = `-- name: CountStickinessPriorWeek :one
@@ -158,7 +280,7 @@ SELECT
     COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '8 days') AS dau_prev_week,
     COUNT(DISTINCT actor_user_id) AS mau_prev_week
 FROM audit.events
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND action = 'auth.login_succeeded'
   AND created_at >= NOW() - INTERVAL '37 days'
   AND created_at <  NOW() - INTERVAL '7 days'
@@ -170,7 +292,7 @@ type CountStickinessPriorWeekRow struct {
 }
 
 // DAU and MAU as they stood a week ago.
-func (q *Queries) CountStickinessPriorWeek(ctx context.Context, tid pgtype.UUID) (CountStickinessPriorWeekRow, error) {
+func (q *Queries) CountStickinessPriorWeek(ctx context.Context, tid *uuid.UUID) (CountStickinessPriorWeekRow, error) {
 	row := q.db.QueryRow(ctx, countStickinessPriorWeek, tid)
 	var i CountStickinessPriorWeekRow
 	err := row.Scan(&i.DauPrevWeek, &i.MauPrevWeek)
@@ -181,8 +303,8 @@ const countTotalUsersWindows = `-- name: CountTotalUsersWindows :one
 SELECT
     COUNT(*) FILTER (WHERE deleted_at IS NULL) AS users_now,
     COUNT(*) FILTER (WHERE deleted_at IS NULL AND created_at <= NOW() - INTERVAL '30 days') AS users_prev
-FROM "user".users
-WHERE tenant_id = $1
+FROM account.users
+WHERE organization_id = $1
 `
 
 type CountTotalUsersWindowsRow struct {
@@ -190,7 +312,7 @@ type CountTotalUsersWindowsRow struct {
 	UsersPrev int64
 }
 
-func (q *Queries) CountTotalUsersWindows(ctx context.Context, tid pgtype.UUID) (CountTotalUsersWindowsRow, error) {
+func (q *Queries) CountTotalUsersWindows(ctx context.Context, tid *uuid.UUID) (CountTotalUsersWindowsRow, error) {
 	row := q.db.QueryRow(ctx, countTotalUsersWindows, tid)
 	var i CountTotalUsersWindowsRow
 	err := row.Scan(&i.UsersNow, &i.UsersPrev)
@@ -209,7 +331,7 @@ WITH hours AS (
 grouped AS (
     SELECT date_trunc('hour', created_at) AS hour, COUNT(*) AS n
     FROM audit.events
-    WHERE tenant_id = $1
+    WHERE organization_id = $1
       AND action = 'auth.sign_in_failed'
       AND created_at >= NOW() - INTERVAL '24 hours'
     GROUP BY 1
@@ -224,7 +346,7 @@ type GetFailedLoginsHourly24hRow struct {
 	Attempts int64
 }
 
-func (q *Queries) GetFailedLoginsHourly24h(ctx context.Context, tid pgtype.UUID) ([]GetFailedLoginsHourly24hRow, error) {
+func (q *Queries) GetFailedLoginsHourly24h(ctx context.Context, tid *uuid.UUID) ([]GetFailedLoginsHourly24hRow, error) {
 	rows, err := q.db.Query(ctx, getFailedLoginsHourly24h, tid)
 	if err != nil {
 		return nil, err
@@ -258,9 +380,9 @@ grouped AS (
            regexp_replace(COALESCE(metadata->>'method', 'password'), '_(mfa|email_confirmed)$', '') AS method,
            COUNT(*) AS n
     FROM audit.events
-    WHERE tenant_id = $1
+    WHERE organization_id = $1
       AND action = 'auth.login_succeeded'
-      AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
+      AND COALESCE(metadata->>'method', '') NOT IN ('organization_switch', 'organization_create', 'invite_accept')
       AND created_at >= NOW() - INTERVAL '14 days'
     GROUP BY 1, 2
 )
@@ -291,9 +413,9 @@ type GetLoginActivity14dRow struct {
 
 // Sign-ins per day by first factor. The method's _mfa or _email_confirmed
 // suffix (a second step) is dropped, and sessions opened by switching or
-// creating an organisation or accepting an invitation are not counted: they
+// creating an organization or accepting an invitation are not counted: they
 // record no factor of their own.
-func (q *Queries) GetLoginActivity14d(ctx context.Context, tid pgtype.UUID) ([]GetLoginActivity14dRow, error) {
+func (q *Queries) GetLoginActivity14d(ctx context.Context, tid *uuid.UUID) ([]GetLoginActivity14dRow, error) {
 	rows, err := q.db.Query(ctx, getLoginActivity14d, tid)
 	if err != nil {
 		return nil, err
@@ -322,6 +444,102 @@ func (q *Queries) GetLoginActivity14d(ctx context.Context, tid pgtype.UUID) ([]G
 	return items, nil
 }
 
+const getTrends14d = `-- name: GetTrends14d :many
+WITH days AS (
+    SELECT date_trunc('day', d)::date AS day
+    FROM generate_series(
+        date_trunc('day', NOW() - INTERVAL '13 days'),
+        date_trunc('day', NOW()),
+        '1 day'::interval
+    ) AS d
+),
+users_per_day AS (
+    SELECT date_trunc('day', nu.created_at)::date AS day, COUNT(*) AS new_users
+    FROM account.users nu
+    WHERE nu.organization_id = $1 AND nu.deleted_at IS NULL
+    GROUP BY 1
+),
+base AS (
+    SELECT COUNT(*) AS total
+    FROM account.users bu
+    WHERE bu.organization_id = $1 AND bu.deleted_at IS NULL
+      AND bu.created_at < NOW() - INTERVAL '14 days'
+),
+sign_ins_per_day AS (
+    SELECT date_trunc('day', se.created_at)::date AS day, COUNT(*) AS sign_ins
+    FROM audit.events se
+    WHERE se.organization_id = $1 AND se.action = 'auth.login_succeeded'
+      AND COALESCE(se.metadata->>'method', '') NOT IN ('organization_switch', 'organization_create', 'invite_accept')
+      AND se.created_at >= NOW() - INTERVAL '14 days'
+    GROUP BY 1
+),
+failed_per_day AS (
+    SELECT date_trunc('day', fe.created_at)::date AS day, COUNT(*) AS fails
+    FROM audit.events fe
+    WHERE fe.organization_id = $1 AND fe.action = 'auth.sign_in_failed'
+      AND fe.created_at >= NOW() - INTERVAL '14 days'
+    GROUP BY 1
+),
+mfa_per_day AS (
+    SELECT date_trunc('day', confirmed_at)::date AS day, COUNT(*) AS enrolled
+    FROM auth.mfa_totp t
+    JOIN account.users u ON u.id = t.user_id
+    WHERE u.organization_id = $1 AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL
+    GROUP BY 1
+)
+SELECT
+    days.day::text AS day,
+    (COALESCE((SELECT total FROM base), 0)
+        + COALESCE(SUM(users_per_day.new_users)
+                   FILTER (WHERE users_per_day.day <= days.day), 0))::bigint AS users_cum,
+    COALESCE(sign_ins_per_day.sign_ins, 0)::bigint AS logins,
+    COALESCE(mfa_per_day.enrolled, 0)::bigint AS mfa_new,
+    COALESCE(failed_per_day.fails, 0)::bigint AS fails
+FROM days
+LEFT JOIN users_per_day ON users_per_day.day = days.day
+LEFT JOIN sign_ins_per_day ON sign_ins_per_day.day = days.day
+LEFT JOIN mfa_per_day ON mfa_per_day.day = days.day
+LEFT JOIN failed_per_day ON failed_per_day.day = days.day
+GROUP BY days.day, sign_ins_per_day.sign_ins, mfa_per_day.enrolled, failed_per_day.fails
+ORDER BY days.day ASC
+`
+
+type GetTrends14dRow struct {
+	Day      string
+	UsersCum int64
+	Logins   int64
+	MfaNew   int64
+	Fails    int64
+}
+
+// One bucket per day for the last 14 days, so the chart always has 14 points:
+// people in total, sign-ins, new TOTP enrolments and failed sign-ins.
+func (q *Queries) GetTrends14d(ctx context.Context, tid *uuid.UUID) ([]GetTrends14dRow, error) {
+	rows, err := q.db.Query(ctx, getTrends14d, tid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetTrends14dRow{}
+	for rows.Next() {
+		var i GetTrends14dRow
+		if err := rows.Scan(
+			&i.Day,
+			&i.UsersCum,
+			&i.Logins,
+			&i.MfaNew,
+			&i.Fails,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getWeeklyActivity8w = `-- name: GetWeeklyActivity8w :many
 WITH weeks AS (
     SELECT date_trunc('week', d) AS week_start
@@ -334,7 +552,7 @@ WITH weeks AS (
 sign_ins AS (
     SELECT created_at, actor_user_id AS user_id
     FROM audit.events
-    WHERE tenant_id = $1
+    WHERE organization_id = $1
       AND action = 'auth.login_succeeded'
       AND created_at >= date_trunc('week', NOW() - INTERVAL '7 weeks')
 ),
@@ -374,9 +592,9 @@ type GetWeeklyActivity8wRow struct {
 	Dau  int64
 }
 
-// People who signed in to the organisation per ISO week, and their daily
+// People who signed in to the organization per ISO week, and their daily
 // average, for the last 8 weeks.
-func (q *Queries) GetWeeklyActivity8w(ctx context.Context, tid pgtype.UUID) ([]GetWeeklyActivity8wRow, error) {
+func (q *Queries) GetWeeklyActivity8w(ctx context.Context, tid *uuid.UUID) ([]GetWeeklyActivity8wRow, error) {
 	rows, err := q.db.Query(ctx, getWeeklyActivity8w, tid)
 	if err != nil {
 		return nil, err
@@ -394,4 +612,51 @@ func (q *Queries) GetWeeklyActivity8w(ctx context.Context, tid pgtype.UUID) ([]G
 		return nil, err
 	}
 	return items, nil
+}
+
+const mFAAdoptionPct = `-- name: MFAAdoptionPct :one
+WITH active AS (
+    SELECT id FROM account.users
+    WHERE organization_id = $1 AND status = 'active' AND deleted_at IS NULL
+),
+enrolled AS (
+    SELECT user_id FROM auth.mfa_totp WHERE confirmed_at IS NOT NULL
+)
+SELECT (CASE WHEN COUNT(active.id) = 0 THEN 0
+             ELSE 100.0 * COUNT(*) FILTER (WHERE enrolled.user_id IS NOT NULL) / COUNT(active.id)
+        END)::float8 AS pct
+FROM active LEFT JOIN enrolled ON enrolled.user_id = active.id
+`
+
+// The share of the organization's active people with a confirmed TOTP factor,
+// as a percentage.
+func (q *Queries) MFAAdoptionPct(ctx context.Context, tid *uuid.UUID) (float64, error) {
+	row := q.db.QueryRow(ctx, mFAAdoptionPct, tid)
+	var pct float64
+	err := row.Scan(&pct)
+	return pct, err
+}
+
+const mFAAdoptionPctWeekAgo = `-- name: MFAAdoptionPctWeekAgo :one
+WITH active AS (
+    SELECT id FROM account.users
+    WHERE organization_id = $1 AND status = 'active' AND deleted_at IS NULL
+      AND created_at <= NOW() - INTERVAL '7 days'
+),
+enrolled AS (
+    SELECT user_id FROM auth.mfa_totp
+    WHERE confirmed_at IS NOT NULL AND confirmed_at <= NOW() - INTERVAL '7 days'
+)
+SELECT (CASE WHEN COUNT(active.id) = 0 THEN 0
+             ELSE 100.0 * COUNT(*) FILTER (WHERE enrolled.user_id IS NOT NULL) / COUNT(active.id)
+        END)::float8 AS pct
+FROM active LEFT JOIN enrolled ON enrolled.user_id = active.id
+`
+
+// MFAAdoptionPct as it stood a week ago.
+func (q *Queries) MFAAdoptionPctWeekAgo(ctx context.Context, tid *uuid.UUID) (float64, error) {
+	row := q.db.QueryRow(ctx, mFAAdoptionPctWeekAgo, tid)
+	var pct float64
+	err := row.Scan(&pct)
+	return pct, err
 }

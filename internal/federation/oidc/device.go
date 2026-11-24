@@ -6,17 +6,17 @@ import (
 	"errors"
 	"math/big"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
@@ -100,21 +100,21 @@ func generateUserCode() (string, error) {
 }
 
 // DeviceAuthorize validates the client and mints a (device_code, user_code)
-// pair, persisting the row scoped to the client's tenant. The device_code is
+// pair, persisting the row scoped to the client's organization. The device_code is
 // stored hashed; the user_code is stored in the clear for the verification
 // lookup. Returns the raw device_code + user_code for the response only.
-func (s *Service) DeviceAuthorize(ctx context.Context, clientID string, scopes []string) (rawDeviceCode, userCode string, tenantID uuid.UUID, err error) {
-	info, err := s.q.GetClientTenantAndScopes(ctx, clientID)
+func (s *Service) DeviceAuthorize(ctx context.Context, clientID string, scopes []string) (rawDeviceCode, userCode string, organizationID uuid.UUID, err error) {
+	info, err := s.q.GetClientOrganizationAndScopes(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", uuid.Nil, errs.ErrOIDCClientUnknown
+		return "", "", uuid.Nil, ErrClientUnknown
 	}
 	if err != nil {
 		return "", "", uuid.Nil, err
 	}
-	if !contains(info.GrantTypes, grantTypeDeviceCode) {
+	if !slices.Contains(info.GrantTypes, grantTypeDeviceCode) {
 		return "", "", uuid.Nil, oauthErr("unauthorized_client", "client is not permitted the device grant")
 	}
-	tenantID = info.TenantID
+	organizationID = info.OrganizationID
 	dbScopes := info.Scopes
 	// An empty scope request defaults to the client's full registered set.
 	if len(scopes) == 0 {
@@ -122,7 +122,7 @@ func (s *Service) DeviceAuthorize(ctx context.Context, clientID string, scopes [
 	}
 	for _, sc := range scopes {
 		if !scopePermitted(dbScopes, info.GrantTypes, sc) {
-			return "", "", uuid.Nil, errs.ErrOIDCScopeNotPermitted
+			return "", "", uuid.Nil, ErrScopeNotPermitted
 		}
 	}
 
@@ -140,12 +140,12 @@ func (s *Service) DeviceAuthorize(ctx context.Context, clientID string, scopes [
 			DeviceCodeHash:  hash,
 			UserCode:        userCode,
 			ClientID:        clientID,
-			TenantID:        tenantID,
+			OrganizationID:  organizationID,
 			Scopes:          scopes,
 			IntervalSeconds: int32(devicePollInterval),
 		})
 		if err == nil {
-			return raw, userCode, tenantID, nil
+			return raw, userCode, organizationID, nil
 		}
 		// 23505 = unique_violation; only the user_code can realistically collide.
 		if !strings.Contains(err.Error(), "23505") {
@@ -160,9 +160,9 @@ func (s *Service) DeviceAuthorize(ctx context.Context, clientID string, scopes [
 type DeviceVerificationContext struct {
 	ClientName string   `json:"client_name"`
 	Scopes     []string `json:"scopes"`
-	// TenantID is the organisation of the application asking, whose
+	// OrganizationID is the organization of the application asking, whose
 	// second-factor requirement the approval must meet; not shown.
-	TenantID uuid.UUID `json:"-"`
+	OrganizationID uuid.UUID `json:"-"`
 }
 
 // LookupDeviceByUserCode resolves a pending device-authorization row by its
@@ -172,29 +172,28 @@ func (s *Service) LookupDeviceByUserCode(ctx context.Context, userCode string) (
 	userCode = normalizeUserCode(userCode)
 	row, err := s.q.GetDeviceByUserCode(ctx, userCode)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrOIDCUserCodeInvalid
+		return nil, ErrUserCodeInvalid
 	}
 	if err != nil {
 		return nil, err
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return nil, errs.ErrOIDCUserCodeExpired
+		return nil, ErrUserCodeExpired
 	}
 	if row.Status != "pending" {
-		return nil, errs.ErrOIDCDeviceAlreadyDecided
+		return nil, ErrDeviceAlreadyDecided
 	}
 	name, _, err := s.ClientName(ctx, row.ClientID)
 	if err != nil {
 		return nil, err
 	}
-	return &DeviceVerificationContext{ClientName: name, Scopes: row.Scopes, TenantID: row.TenantID}, nil
+	return &DeviceVerificationContext{ClientName: name, Scopes: row.Scopes, OrganizationID: row.OrganizationID}, nil
 }
 
-// DecideDevice records the user's approve/deny decision against a pending device
-// row identified by user_code. On approval it binds the user (who must belong to
-// the row's tenant, and approve from an address its rules allow: ip) and marks
-// it authorized; on denial it marks it denied. Either is audited in the row's
-// organisation as oauth.device_approved or oauth.device_denied.
+// DecideDevice records the user's decision on the pending device row with user_code. Approving binds
+// the user (who must belong to the row's organization and approve from an address its rules allow:
+// ip) and authorizes it; denying marks it denied. Either is audited in the row's organization as
+// oauth.device_approved or oauth.device_denied.
 func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode string, approve bool, ip string) error {
 	userCode = normalizeUserCode(userCode)
 	tx, err := s.pool.Begin(ctx)
@@ -206,16 +205,16 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 	q := s.q.WithTx(tx)
 	row, err := q.LockDeviceByUserCode(ctx, userCode)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrOIDCUserCodeInvalid
+		return ErrUserCodeInvalid
 	}
 	if err != nil {
 		return err
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return errs.ErrOIDCUserCodeExpired
+		return ErrUserCodeExpired
 	}
 	if row.Status != "pending" {
-		return errs.ErrOIDCDeviceAlreadyDecided
+		return ErrDeviceAlreadyDecided
 	}
 
 	if !approve {
@@ -229,17 +228,17 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 	}
 
 	// The approving user must be an active member of the client's active
-	// tenant, as at a browser sign-in to the application.
-	live, err := s.activeTenantPrincipal(ctx, q, userID, row.TenantID)
+	// organization, as at a browser sign-in to the application.
+	live, err := s.activeOrganizationPrincipal(ctx, q, userID, row.OrganizationID)
 	if err != nil {
 		return err
 	}
 	if !live {
-		return errs.ErrOIDCUserTenantMismatch
+		return ErrUserOrganizationMismatch
 	}
 	// Approving is the person's sign-in to the application. Nothing else is
 	// written yet, so committing keeps only the refusal's record.
-	if err := s.checkAddressTx(ctx, tx, row.TenantID, userID, ip, "device_approval"); err != nil {
+	if err := s.checkAddressTx(ctx, tx, row.OrganizationID, userID, ip, "device_approval"); err != nil {
 		if errors.Is(err, errs.ErrAuthAddressNotAllowed) {
 			if cerr := tx.Commit(ctx); cerr != nil {
 				return cerr
@@ -256,7 +255,7 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 		return err
 	}
 	if err := q.ApproveDevice(ctx, dbgen.ApproveDeviceParams{
-		UserID: pgtype.UUID{Bytes: userID, Valid: true},
+		UserID: &userID,
 		ID:     row.ID,
 	}); err != nil {
 		return err
@@ -268,179 +267,38 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 }
 
 // recordDeviceDecision audits userID's decision on device code row, made from
-// ip, in the organisation the code was issued for.
+// ip, in the organization the code was issued for.
 func recordDeviceDecision(ctx context.Context, tx pgx.Tx, row dbgen.LockDeviceByUserCodeRow, userID uuid.UUID, action, ip string) error {
-	tenantID, codeID := row.TenantID, row.ID
-	return audit.Record(ctx, tx, audit.Event{
-		TenantID: &tenantID, ActorUserID: &userID, ActorType: "user",
-		Action: action, ResourceType: "oidc_device_code", ResourceID: &codeID, IP: ip,
-		Metadata: map[string]any{"client_id": row.ClientID, "scopes": row.Scopes},
-	})
+	return audit.Record(ctx, tx, audit.Actor{UserID: &userID, Type: "user", IP: ip}.Event(row.OrganizationID, action, "oidc_device_code", row.ID,
+		map[string]any{"client_id": row.ClientID, "scopes": row.Scopes}))
 }
 
-// DeviceToken implements the RFC 8628 §3.5 polling exchange: it enforces the
-// poll interval (slow_down) and, on approval, issues the authorization-code
-// flow's tokens. A confidential client authenticates as at the other grants;
-// ip is the device's address, which the organisation's rules must allow.
+// deviceGrant is the device grant's polling (RFC 8628 §3.4). Its poller is
+// the person's device, so its address must be one the organization allows,
+// and its grant ends when the device authorization is revoked.
+var deviceGrant = pollGrant{
+	grantType:   grantTypeDeviceCode,
+	param:       "device_code",
+	flow:        "device",
+	addressPath: "device",
+	bindsGrant:  true,
+	lock: func(ctx context.Context, q *dbgen.Queries, hash string) (polledRequest, error) {
+		r, err := q.LockDeviceByCode(ctx, hash)
+		return polledRequest{
+			ID: r.ID, ClientID: r.ClientID, OrganizationID: r.OrganizationID, UserID: postgres.ZeroIfNull(r.UserID),
+			Scopes: r.Scopes, Status: r.Status, IntervalSeconds: r.IntervalSeconds,
+			LastPolledAt: r.LastPolledAt, ExpiresAt: r.ExpiresAt, ConsumedAt: r.ConsumedAt,
+		}, err
+	},
+	touch:   func(ctx context.Context, q *dbgen.Queries, id uuid.UUID) error { return q.TouchDevicePollTime(ctx, id) },
+	consume: func(ctx context.Context, q *dbgen.Queries, id uuid.UUID) error { return q.ConsumeDeviceCode(ctx, id) },
+}
+
+// DeviceToken implements the RFC 8628 §3.5 polling exchange (see pollToken).
+// A confidential client authenticates as at the other grants; for a public
+// one the device_code is the proof. ip is the device's address.
 func (s *Service) DeviceToken(ctx context.Context, clientID, clientSecret, rawDeviceCode, ip string) (*TokenResponse, error) {
-	client, err := s.authenticateClient(ctx, clientID, clientSecret)
-	if err != nil {
-		return nil, err
-	}
-	if !contains(client.GrantTypes, grantTypeDeviceCode) {
-		return nil, errs.ErrOIDCGrantTypeNotAllowed
-	}
-	if rawDeviceCode == "" {
-		return nil, oauthErr("invalid_request", "device_code required")
-	}
-	hash := codes.Hash(rawDeviceCode)
-
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
-	q := s.q.WithTx(tx)
-	dc, err := q.LockDeviceByCode(ctx, hash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, oauthErr("invalid_grant", "unknown device_code")
-	}
-	if err != nil {
-		return nil, err
-	}
-	// The device_code is bound to the client it was issued to.
-	if dc.ClientID != clientID {
-		return nil, oauthErr("invalid_grant", "client mismatch")
-	}
-	if dc.ConsumedAt.Valid {
-		return nil, oauthErr("invalid_grant", "device_code already used")
-	}
-
-	now := time.Now()
-
-	// Enforce the poll interval (RFC 8628 §3.5): a poll arriving sooner than
-	// interval seconds after the previous one gets slow_down. We bump
-	// last_polled_at on every poll (even slow_down) and commit so the throttle
-	// reflects the most recent attempt.
-	if dc.LastPolledAt.Valid && now.Sub(dc.LastPolledAt.Time) < time.Duration(dc.IntervalSeconds)*time.Second {
-		if err := q.TouchDevicePollTime(ctx, dc.ID); err != nil {
-			return nil, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
-		}
-		return nil, oauthErr("slow_down", "polling too frequently")
-	}
-	if err := q.TouchDevicePollTime(ctx, dc.ID); err != nil {
-		return nil, err
-	}
-
-	// Expiry takes precedence over a still-pending status.
-	if now.After(dc.ExpiresAt) {
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
-		}
-		return nil, oauthErr("expired_token", "device_code expired")
-	}
-
-	switch dc.Status {
-	case "pending":
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
-		}
-		return nil, oauthErr("authorization_pending", "the user has not yet completed authorization")
-	case "denied":
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
-		}
-		return nil, oauthErr("access_denied", "the user denied the authorization request")
-	case "authorized":
-		// fall through to issue tokens.
-	default:
-		return nil, oauthErr("invalid_grant", "invalid device authorization state")
-	}
-	var userID *uuid.UUID
-	if dc.UserID.Valid {
-		uid := uuid.UUID(dc.UserID.Bytes)
-		userID = &uid
-	}
-	if userID == nil {
-		return nil, oauthErr("invalid_grant", "device authorization has no bound user")
-	}
-
-	// One-time: consume the device_code so a second poll can't re-mint tokens.
-	if err := q.ConsumeDeviceCode(ctx, dc.ID); err != nil {
-		return nil, err
-	}
-	// An approval given before the account was suspended or deleted issues
-	// nothing; the code is spent either way.
-	active, err := accountActive(ctx, q, *userID)
-	if err != nil {
-		return nil, err
-	}
-	if !active {
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
-		}
-		return nil, oauthErr("invalid_grant", "account_suspended")
-	}
-	// A device on an address the organisation doesn't allow gets nothing; the
-	// code is spent, so the flow starts again from an allowed one. The refusal
-	// is recorded in tx and commits with the spent code.
-	if err := s.checkAddressTx(ctx, tx, dc.TenantID, *userID, ip, "device"); err != nil {
-		if !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
-			return nil, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
-		}
-		return nil, oauthErr("access_denied", "address_not_allowed")
-	}
-	// The client's registration tells whether to mint a refresh token, the same
-	// way ExchangeCode does. The grant remembers the device code, so revoking
-	// the device authorization ends it; issuing it here, under the code's lock,
-	// means a revocation can't slip between the two.
-	registered, err := q.GetClientTenantAndScopes(ctx, clientID)
-	if err != nil {
-		return nil, err
-	}
-	tenantID := dc.TenantID
-	scopes := dc.Scopes
-	refresh := ""
-	if issuesRefreshToken(registered.Scopes, registered.GrantTypes, scopes) {
-		// Device grant doesn't collect a resource indicator today (RFC 8707
-		// support there is unscoped work) — issued with no bound resource.
-		refresh, err = s.issueRefreshToken(ctx, q, clientID, *userID, tenantID, scopes, "", pgtype.UUID{}, hash, pgtype.Timestamptz{})
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-	access, _, err := s.issuer.IssueClientAccess(tokens.ClientAccess{
-		UserID: *userID, TenantID: tenantID, SessionID: uuid.New(), Scopes: strings.Join(scopes, " "), ClientID: clientID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	idTok := ""
-	if contains(scopes, "openid") {
-		t, err := s.signIDToken(ctx, idToken{UserID: *userID, TenantID: tenantID, Audience: clientID, Scopes: scopes})
-		if err != nil {
-			return nil, err
-		}
-		idTok = t
-	}
-	return &TokenResponse{
-		AccessToken:  access,
-		IDToken:      idTok,
-		RefreshToken: refresh,
-		TokenType:    "Bearer",
-		ExpiresIn:    int(s.issuer.AccessTTL().Seconds()),
-		Scope:        strings.Join(scopes, " "),
-	}, nil
+	return s.pollToken(ctx, &deviceGrant, clientID, clientSecret, rawDeviceCode, ip)
 }
 
 // normalizeUserCode upper-cases and strips spaces so a user can type the code
@@ -450,9 +308,9 @@ func normalizeUserCode(in string) string {
 	return strings.ToUpper(strings.TrimSpace(in))
 }
 
-// Admin device-authorization visibility (RFC 8628 rows): lets a tenant admin see
+// Admin device-authorization visibility (RFC 8628 rows): lets an organization admin see
 // in-flight/recent device authorizations and revoke one. The device_code (and its
-// hash) are NEVER exposed — only the human user_code and metadata. Tenant-scoped.
+// hash) are NEVER exposed — only the human user_code and metadata. Organization-scoped.
 
 // DeviceAuthorization is the admin-facing view of a device-authorization row.
 // It deliberately omits device_code / device_code_hash.
@@ -472,58 +330,62 @@ type DeviceAuthorization struct {
 	ConsumedAt   *time.Time `json:"consumed_at"`
 }
 
-// ListDevices returns the tenant's device-authorization rows, newest first.
-func (s *Service) ListDevices(ctx context.Context, tenantID uuid.UUID) ([]DeviceAuthorization, error) {
-	rows, err := s.q.ListDevices(ctx, tenantID)
+// ListDevices returns the organization's device-authorization rows, newest first.
+func (s *Service) ListDevices(ctx context.Context, organizationID uuid.UUID) ([]DeviceAuthorization, error) {
+	rows, err := s.q.ListDevices(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]DeviceAuthorization, len(rows))
 	for i, r := range rows {
-		var uid *uuid.UUID
-		if r.UserID.Valid {
-			u := uuid.UUID(r.UserID.Bytes)
-			uid = &u
-		}
 		out[i] = DeviceAuthorization{
 			ID: r.ID, ClientID: r.ClientID, ClientName: r.ClientName, UserCode: r.UserCode, Status: r.Status,
-			UserID: uid, UserEmail: r.UserEmail, Scopes: r.Scopes,
+			UserID: r.UserID, UserEmail: r.UserEmail, Scopes: r.Scopes,
 			CreatedAt: r.CreatedAt, ExpiresAt: r.ExpiresAt,
-			LastPolledAt: timePtr(r.LastPolledAt), ConsumedAt: timePtr(r.ConsumedAt),
+			LastPolledAt: r.LastPolledAt, ConsumedAt: r.ConsumedAt,
 		}
 	}
 	return out, nil
 }
 
-// RevokeDevice marks a tenant's device authorization denied, so any in-flight
+// RevokeDevice marks an organization's device authorization denied, so any in-flight
 // or future token poll fails, and ends the grant an approved one was redeemed
 // for. Access tokens already issued run out on their own. ('denied' is the
-// terminal revoked state.) Returns what the audit row records. Tenant-scoped.
-func (s *Service) RevokeDevice(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (clientID, userCode string, grantEnded bool, err error) {
+// terminal revoked state.) Recorded as actor's. Organization-scoped.
+func (s *Service) RevokeDevice(ctx context.Context, organizationID, id uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
-	row, err := q.RevokeDevice(ctx, dbgen.RevokeDeviceParams{ID: id, TenantID: tenantID})
+	row, err := q.RevokeDevice(ctx, dbgen.RevokeDeviceParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", false, errs.ErrOIDCDeviceNotFound
+		return ErrDeviceNotFound
 	}
 	if err != nil {
-		return "", "", false, err
+		return err
 	}
 	ended, err := q.RevokeDeviceGrant(ctx, dbgen.RevokeDeviceGrantParams{
-		TenantID: tenantID, ClientID: row.ClientID, DeviceCodeHash: &row.DeviceCodeHash,
+		OrganizationID: organizationID, ClientID: row.ClientID, DeviceCodeHash: &row.DeviceCodeHash,
 	})
 	if err != nil {
-		return "", "", false, err
+		return err
 	}
-	return row.ClientID, row.UserCode, ended > 0, nil
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "oauth.device_revoked", "oidc_device_code", id,
+		map[string]any{"client_id": row.ClientID, "user_code": row.UserCode, "grant_ended": ended > 0})); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (h *Handler) listDevices(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.ListDevices(r.Context(), tenantID)
+	out, err := h.Service.ListDevices(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -532,7 +394,7 @@ func (h *Handler) listDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -542,31 +404,7 @@ func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	clientID, userCode, grantEnded, err := h.Service.RevokeDevice(ctx, tx, tenantID, id)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := tenantID
-	resourceID := id
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
-		Action: "oauth.device_revoked", ResourceType: "oidc_device_code", ResourceID: &resourceID,
-		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-		Metadata: map[string]any{"client_id": clientID, "user_code": userCode, "grant_ended": grantEnded},
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := h.Service.RevokeDevice(r.Context(), organizationID, id, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -574,18 +412,14 @@ func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 // deviceAuthorization is the RFC 8628 §3.1 device-authorization endpoint:
-// POST /oauth/device_authorization. It is client-authenticated like the other
-// token endpoints (form/Basic), CSRF-exempt in the router, and returns the
+// POST /oauth/device_authorization. It is client-authenticated like the token
+// endpoint (form/Basic), CSRF-exempt in the router, and returns the
 // (device_code, user_code) pair plus the verification URIs.
 func (h *Handler) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
-	if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
+	clientID, clientSecret, err := h.clientCreds(r)
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
-	}
-	clientID := r.Form.Get("client_id")
-	clientSecret := r.Form.Get("client_secret")
-	if u, p, ok := httpx.ClientBasicAuth(r); ok {
-		clientID, clientSecret = u, p
 	}
 	if _, err := h.Service.authenticateClient(r.Context(), clientID, clientSecret); err != nil {
 		httpx.WriteError(w, r, err)
@@ -628,7 +462,7 @@ func (h *Handler) deviceContext(w http.ResponseWriter, r *http.Request) {
 	}
 	userCode := r.URL.Query().Get("user_code")
 	if userCode == "" {
-		httpx.WriteError(w, r, errs.ErrOIDCUserCodeRequired)
+		httpx.WriteError(w, r, ErrUserCodeRequired)
 		return
 	}
 	out, err := h.Service.LookupDeviceByUserCode(r.Context(), userCode)
@@ -659,10 +493,10 @@ func (h *Handler) deviceDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.UserCode == "" {
-		httpx.WriteError(w, r, errs.ErrOIDCUserCodeRequired)
+		httpx.WriteError(w, r, ErrUserCodeRequired)
 		return
 	}
-	// Approving hands the device tokens for the application's organisation,
+	// Approving hands the device tokens for the application's organization,
 	// so its second-factor requirement applies; denying needs none.
 	if in.Approve {
 		dc, err := h.Service.LookupDeviceByUserCode(r.Context(), in.UserCode)
@@ -670,7 +504,7 @@ func (h *Handler) deviceDecision(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, err)
 			return
 		}
-		if err := h.Sessions.LoginSessionFactorShortfall(r.Context(), loginSessionID, userID, dc.TenantID); err != nil {
+		if err := h.Sessions.LoginSessionFactorShortfall(r.Context(), loginSessionID, userID, dc.OrganizationID); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}

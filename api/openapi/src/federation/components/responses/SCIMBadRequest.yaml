@@ -1,0 +1,10 @@
+description: >-
+  RFC 7644 error: the request or a value in it is invalid, such as a malformed filter
+  or PATCH operation (scimType names which, where RFC 7644 has one).
+headers:
+  X-Request-Id:
+    $ref: ../../../shared/headers/RequestId.yaml
+content:
+  application/scim+json:
+    schema:
+      $ref: ../schemas/SCIMError.yaml

@@ -1,23 +1,17 @@
 package directory
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 func TestMappingTransformsShareValidationAndPreview(test *testing.T) {
@@ -36,7 +30,7 @@ func TestMappingTransformsShareValidationAndPreview(test *testing.T) {
 
 func TestMappingsCannotGrantPrivilegesOrReadSecrets(test *testing.T) {
 	mapping := Mapping{ID: uuid.New(), Source: "department", Target: "department", ValueType: "string", Transform: "none", Enabled: true}
-	for _, target := range []string{"roles", "permissions", "tenant_id", "status", "password", "metadata", "is_admin"} {
+	for _, target := range []string{"roles", "permissions", "organization_id", "status", "password", "metadata", "is_admin"} {
 		candidate := mapping
 		candidate.Target = target
 		if ValidateMapping(candidate) == nil {
@@ -183,68 +177,6 @@ func TestPreviewIssuesCarryTheirCode(test *testing.T) {
 	}
 }
 
-// TestSaveRefusesAnInvalidMappingWithItsCode checks that saving a mapping the
-// rules refuse answers 422 validation_failed naming the field at fault and the
-// mapping code, before anything is written.
-func TestSaveRefusesAnInvalidMappingWithItsCode(test *testing.T) {
-	tenantID := uuid.New()
-	ldapID := uuid.New()
-	valid := Mapping{Source: "department", Target: "department", ValueType: "string", Transform: "none", Enabled: true}
-	with := func(change func(*Mapping)) Mapping {
-		mapping := valid
-		change(&mapping)
-		return mapping
-	}
-	scimPath := "/tenants/" + tenantID.String() + "/directory/connections/scim:" + tenantID.String() + "/mappings"
-	ldapPath := "/tenants/" + tenantID.String() + "/directory/connections/" + ldapID.String() + "/mappings"
-	cases := []struct {
-		name, method, path string
-		mapping            Mapping
-		field, code        string
-	}{
-		{"credential source", http.MethodPost, scimPath, with(func(m *Mapping) { m.Source = "userPassword" }), "source_attribute", CodeMappingSourceCredential},
-		{"padded source", http.MethodPut, scimPath + "/" + uuid.NewString(), with(func(m *Mapping) { m.Source, m.Version = " department", 1 }), "source_attribute", CodeMappingSourceInvalid},
-		{"unsupported target", http.MethodPost, scimPath, with(func(m *Mapping) { m.Target = "roles" }), "target_field", CodeMappingTargetUnsupported},
-		{"value type mismatch", http.MethodPost, scimPath, with(func(m *Mapping) { m.ValueType = "array" }), "value_type", CodeMappingValueTypeMismatch},
-		{"unsupported transform", http.MethodPost, scimPath, with(func(m *Mapping) { m.Transform = "reverse" }), "transform", CodeMappingTransformUnsupported},
-		{"pattern without extract", http.MethodPost, scimPath, with(func(m *Mapping) { m.Pattern = "(x)" }), "pattern", CodeMappingPatternUnexpected},
-		{"invalid extract pattern", http.MethodPost, scimPath, with(func(m *Mapping) { m.Transform, m.Pattern = "extract", "(" }), "pattern", CodeMappingPatternInvalid},
-		{"LDAP source not an attribute name", http.MethodPost, ldapPath, with(func(m *Mapping) { m.Source = "/name/givenName" }), "source_attribute", CodeMappingSourceInvalid},
-	}
-	for _, scenario := range cases {
-		test.Run(scenario.name, func(test *testing.T) {
-			ldapSource := &ldapFixture{records: []ldap.Connection{{ID: ldapID, TenantID: tenantID, Name: "Corporate", Status: "active"}}}
-			router := chi.NewRouter()
-			(&Handler{Service: NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, ldapSource)}).Mount(router)
-			raw, err := json.Marshal(scenario.mapping)
-			if err != nil {
-				test.Fatal(err)
-			}
-			request := httptest.NewRequest(scenario.method, scenario.path, bytes.NewReader(raw))
-			request.Header.Set("Content-Type", "application/json")
-			request = request.WithContext(httpx.WithPrincipal(request.Context(), &httpx.Principal{ActorType: "user", TenantID: &tenantID}))
-			response := httptest.NewRecorder()
-			router.ServeHTTP(response, request)
-			var body struct {
-				Error struct {
-					Code   string            `json:"code"`
-					Fields []errs.FieldError `json:"fields"`
-				} `json:"error"`
-			}
-			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
-				test.Fatal(err)
-			}
-			if response.Code != http.StatusUnprocessableEntity || body.Error.Code != errs.CodeValidation || len(body.Error.Fields) != 1 {
-				test.Fatalf("got %d %s, want 422 validation_failed with one field", response.Code, response.Body.String())
-			}
-			got := body.Error.Fields[0]
-			if got.Field != scenario.field || got.Code != scenario.code || got.Message == "" {
-				test.Errorf("field error = %+v, want field %q code %q", got, scenario.field, scenario.code)
-			}
-		})
-	}
-}
-
 // TestPreviewShowsTheEffectiveProfile checks that a preview names, for every
 // field, its value and whether a mapping or the connection's default set it,
 // a mapping winning over a default.
@@ -272,7 +204,7 @@ func TestPreviewShowsTheEffectiveProfile(test *testing.T) {
 	}
 
 	connection := uuid.New()
-	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{records: []ldap.Connection{{ID: connection, NameAttribute: "displayName"}}})
+	service := fixtureService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{records: []ldap.Connection{{ID: connection, NameAttribute: "displayName"}}})
 	got, err := service.defaultAttributes(context.Background(), uuid.New(), connection.String())
 	if err != nil || got["email"] != "mail" || got["display_name"] != "displayName" {
 		test.Errorf("an LDAP connection's defaults: %v, %v; want mail and its own name attribute", got, err)

@@ -1,0 +1,42 @@
+get:
+  operationId: listDeviceAuthorizations
+  description: >-
+    Lists RFC 8628 device-authorization records for the organization for
+    administrative visibility. Rows never include the device_code or its hash.
+    These records originate at POST /v1/oauth/device_authorization and are
+    completed when the device polls the token endpoint with the device_code
+    grant; revoke a stale one with the delete endpoint.
+  summary: List device authorizations
+  tags:
+    - OIDC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Device authorizations
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/OAuthDeviceAuthorization.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,126 @@
+package authpolicy
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+)
+
+// TestDurationJSON checks that durations are written as strings the console
+// edits and read back from those or from nanoseconds.
+func TestDurationJSON(t *testing.T) {
+	for in, want := range map[time.Duration]string{
+		720 * time.Hour:  `"720h"`,
+		90 * time.Minute: `"90m"`,
+		90 * time.Second: `"1m30s"`,
+	} {
+		got, err := json.Marshal(Duration(in))
+		if err != nil || string(got) != want {
+			t.Errorf("marshal %v = %s, %v; want %s", in, got, err, want)
+		}
+	}
+	for raw, want := range map[string]time.Duration{
+		`"720h"`:           720 * time.Hour,
+		`"30m"`:            30 * time.Minute,
+		`2592000000000000`: 720 * time.Hour,
+	} {
+		var d Duration
+		if err := json.Unmarshal([]byte(raw), &d); err != nil || time.Duration(d) != want {
+			t.Errorf("unmarshal %s = %v, %v; want %v", raw, time.Duration(d), err, want)
+		}
+	}
+	var d Duration
+	if err := json.Unmarshal([]byte(`"a month"`), &d); err == nil {
+		t.Error("an unparseable duration was accepted")
+	}
+}
+
+// TestNormalizeFillsDefaultsAndRefusesOutOfRange checks that omitted session
+// bounds take the platform defaults, with the idle timeout capped at the
+// maximum age, and that out-of-range values are named.
+func TestNormalizeFillsDefaultsAndRefusesOutOfRange(t *testing.T) {
+	r := &SecurityPolicies{sessionMaxAge: 720 * time.Hour, sessionIdle: 24 * time.Hour}
+	p := SecurityPolicy{MFAEnforcement: "optional", SessionMaxAge: Duration(2 * time.Hour)}
+	if bad := r.normalize(&p); len(bad) != 0 {
+		t.Fatalf("valid policy refused: %+v", bad)
+	}
+	if time.Duration(p.SessionIdleTimeout) != 2*time.Hour {
+		t.Errorf("defaults not filled: idle %v", time.Duration(p.SessionIdleTimeout))
+	}
+	p = SecurityPolicy{PasswordMinLength: 4, PasswordComplexity: "basic", MFAEnforcement: "disabled", MFAGraceDays: 91,
+		SessionMaxAge: Duration(30 * time.Minute), SessionIdleTimeout: Duration(time.Hour)}
+	got := map[string]bool{}
+	for _, f := range r.normalize(&p) {
+		got[f.Field] = true
+	}
+	for _, want := range []string{"session_max_age", "session_idle_timeout", "mfa_enforcement", "mfa_grace_days"} {
+		if !got[want] {
+			t.Errorf("%s out of range was not named (named: %v)", want, got)
+		}
+	}
+	if got["password_min_length"] || got["password_complexity"] {
+		t.Errorf("the ignored password fields were judged: %v", got)
+	}
+}
+
+// TestPasswordFieldsAreIgnored checks that a client still sending the old
+// password fields is accepted, and that the policy never returns them: the
+// password rules are the auth policy's.
+func TestPasswordFieldsAreIgnored(t *testing.T) {
+	var p SecurityPolicy
+	if err := json.Unmarshal([]byte(`{"password_min_length": 4, "password_complexity": "basic", "mfa_enforcement": "optional"}`), &p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	r := &SecurityPolicies{sessionMaxAge: 720 * time.Hour, sessionIdle: 24 * time.Hour}
+	if bad := r.normalize(&p); len(bad) != 0 {
+		t.Errorf("a policy carrying the old password fields was refused: %+v", bad)
+	}
+	out, err := json.Marshal(SecurityPolicy{MFAEnforcement: "optional"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "password") {
+		t.Errorf("a policy returned %s; want no password fields", out)
+	}
+}
+
+// TestNormalizeStepUp checks that an omitted step-up window becomes five
+// minutes with every factor type counted, and that a window outside 1m–60m or
+// an unknown or repeated factor type is named.
+func TestNormalizeStepUp(t *testing.T) {
+	r := &SecurityPolicies{sessionMaxAge: 720 * time.Hour, sessionIdle: 24 * time.Hour}
+	base := func() SecurityPolicy {
+		return SecurityPolicy{MFAEnforcement: "optional"}
+	}
+	p := base()
+	p.StepUpMethods = []string{}
+	if bad := r.normalize(&p); len(bad) != 0 {
+		t.Fatalf("valid policy refused: %+v", bad)
+	}
+	if time.Duration(p.StepUpWindow) != 5*time.Minute || p.StepUpMethods != nil {
+		t.Errorf("defaults not filled: window %v methods %v", time.Duration(p.StepUpWindow), p.StepUpMethods)
+	}
+	for name, mutate := range map[string]func(*SecurityPolicy){
+		"window too short": func(p *SecurityPolicy) { p.StepUpWindow = Duration(30 * time.Second) },
+		"window too long":  func(p *SecurityPolicy) { p.StepUpWindow = Duration(61 * time.Minute) },
+		"unknown factor":   func(p *SecurityPolicy) { p.StepUpMethods = []string{"totp", "sms"} },
+		"repeated factor":  func(p *SecurityPolicy) { p.StepUpMethods = []string{"webauthn", "webauthn"} },
+	} {
+		p := base()
+		mutate(&p)
+		named := false
+		for _, f := range r.normalize(&p) {
+			named = named || f.Field == "step_up_window" || f.Field == "step_up_methods"
+		}
+		if !named {
+			t.Errorf("%s: not refused", name)
+		}
+	}
+	p = base()
+	p.StepUpWindow = Duration(time.Hour)
+	p.StepUpMethods = []string{"webauthn", "totp"}
+	if bad := r.normalize(&p); len(bad) != 0 {
+		t.Errorf("a 60m window counting passkeys and the authenticator app was refused: %+v", bad)
+	}
+}

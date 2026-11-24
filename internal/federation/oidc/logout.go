@@ -12,13 +12,16 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
 // When a hosted-login session ends, every application holding a code or grant
@@ -32,11 +35,24 @@ const (
 	logoutConfirmTTL       = 10 * time.Minute
 )
 
-// SetLogoutHTTPClient sets the outbound policy back-channel notices are sent
-// under (the platform's SSRF guard).
-func (s *Service) SetLogoutHTTPClient(p *egress.Policy) {
-	s.logoutEgress = p
-	s.logoutClient = p.HTTPClient(5 * time.Second)
+// LogoutNotices queues the notices of an ended hosted-login session for its
+// applications. The sign-in service ends sessions, so it is built before the
+// provider, which itself needs the sign-in service.
+type LogoutNotices struct {
+	pool   *pgxpool.Pool
+	q      *dbgen.Queries
+	issuer *tokens.Issuer
+}
+
+// NewLogoutNotices returns the notices on pool, signed by issuer.
+func NewLogoutNotices(pool *pgxpool.Pool, issuer *tokens.Issuer) (*LogoutNotices, error) {
+	switch {
+	case pool == nil:
+		return nil, errors.New("oidc: logout notices missing pool")
+	case issuer == nil:
+		return nil, errors.New("oidc: logout notices missing issuer")
+	}
+	return &LogoutNotices{pool: pool, q: dbgen.New(pool), issuer: issuer}, nil
 }
 
 // validLogoutURI is an absolute http(s) URL without a fragment ("" clears).
@@ -48,44 +64,42 @@ func validLogoutURI(raw string) bool {
 	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" && u.Fragment == ""
 }
 
-// NotifySignOut tells the applications in an ended hosted-login session. It
-// queues a back-channel logout token for each, records who was told in each
-// organisation's own audit trail, and returns the front-channel addresses for
-// the signed-out page. initiatedBy is the application that asked for the
-// sign-out ("" for none).
-func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID, initiatedBy string) ([]string, error) {
-	clients, err := s.q.SessionClients(ctx, optionalUUID(sessionID))
+// NotifySignOut tells the applications in an ended hosted-login session: it queues a back-channel
+// logout token for each, records who was told in each organization's audit trail, and returns the
+// front-channel addresses for the signed-out page. initiatedBy is the asking application ("" for none).
+func (ln *LogoutNotices) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID, initiatedBy string) ([]string, error) {
+	clients, err := ln.q.SessionClients(ctx, postgres.NullIfZero(sessionID))
 	if err != nil || len(clients) == 0 {
 		return nil, err
 	}
-	// Each organisation's record names only its own applications.
+	// Each organization's record names only its own applications.
 	type notice struct {
 		backchannel  []string
 		frontchannel int
 	}
 	var frontchannel []string
 	notices := map[uuid.UUID]*notice{}
-	var tenants []uuid.UUID
-	tx, err := s.pool.Begin(ctx)
+	var organizations []uuid.UUID
+	tx, err := ln.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	q := s.q.WithTx(tx)
+	q := ln.q.WithTx(tx)
 	for _, c := range clients {
-		n := notices[c.TenantID]
+		n := notices[c.OrganizationID]
 		if n == nil {
 			n = &notice{}
-			notices[c.TenantID] = n
-			tenants = append(tenants, c.TenantID)
+			notices[c.OrganizationID] = n
+			organizations = append(organizations, c.OrganizationID)
 		}
 		if c.BackchannelLogoutUri != "" {
-			token, err := s.logoutToken(c.ClientID, userID, sessionID)
+			token, err := ln.logoutToken(c.ClientID, userID, sessionID)
 			if err != nil {
 				return nil, err
 			}
 			if err := q.InsertLogoutDelivery(ctx, dbgen.InsertLogoutDeliveryParams{
-				TenantID: c.TenantID, ClientID: c.ClientID, Uri: c.BackchannelLogoutUri, LogoutToken: token,
+				OrganizationID: c.OrganizationID, ClientID: c.ClientID, Uri: c.BackchannelLogoutUri, LogoutToken: token,
 			}); err != nil {
 				return nil, err
 			}
@@ -93,20 +107,16 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 		}
 		if c.FrontchannelLogoutUri != "" {
 			frontchannel = append(frontchannel, appendQuery(c.FrontchannelLogoutUri,
-				"iss", s.issuer.JWTIssuer(), "sid", sessionID.String()))
+				"iss", ln.issuer.JWTIssuer(), "sid", sessionID.String()))
 			n.frontchannel++
 		}
 	}
-	sid := sessionID
-	for _, tenantID := range tenants {
-		n := notices[tenantID]
-		if err := audit.Record(ctx, tx, audit.Event{
-			TenantID: &tenantID, ActorUserID: &userID, ActorType: "user",
-			Action: "oidc.sign_out_notified", ResourceType: "login_session", ResourceID: &sid,
-			Metadata: map[string]any{
-				"initiated_by": initiatedBy, "backchannel": n.backchannel, "frontchannel_clients": n.frontchannel,
-			},
-		}); err != nil {
+	person := audit.Actor{UserID: &userID, Type: "user"}
+	for _, organizationID := range organizations {
+		n := notices[organizationID]
+		if err := audit.Record(ctx, tx, person.Event(organizationID, "oidc.sign_out_notified", "login_session", sessionID, map[string]any{
+			"initiated_by": initiatedBy, "backchannel": n.backchannel, "frontchannel_clients": n.frontchannel,
+		})); err != nil {
 			return nil, err
 		}
 	}
@@ -114,10 +124,10 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 }
 
 // logoutToken is the signed notice a back-channel address receives.
-func (s *Service) logoutToken(clientID string, userID, sessionID uuid.UUID) (string, error) {
+func (ln *LogoutNotices) logoutToken(clientID string, userID, sessionID uuid.UUID) (string, error) {
 	now := time.Now().UTC()
-	return s.issuer.Sign(jwt.MapClaims{
-		"iss":    s.issuer.JWTIssuer(),
+	return ln.issuer.Sign(jwt.MapClaims{
+		"iss":    ln.issuer.JWTIssuer(),
 		"aud":    clientID,
 		"iat":    now.Unix(),
 		"exp":    now.Add(2 * time.Minute).Unix(),
@@ -159,13 +169,13 @@ func (s *Service) DeliverLogoutNotices(ctx context.Context) (int, error) {
 			attempt := int(d.Attempts) + 1
 			final := attempt >= logoutMaxAttempts
 			if merr := s.q.MarkLogoutDeliveryFailed(ctx, dbgen.MarkLogoutDeliveryFailedParams{
-				ID: d.ID, LastError: truncate(err.Error(), 300),
+				ID: d.ID, LastError: strutil.Truncate(err.Error(), 300),
 				RetryInSeconds: (time.Duration(1<<attempt) * 30 * time.Second).Seconds(), Final: final,
 			}); merr != nil {
 				return delivered, merr
 			}
 			if final {
-				s.auditLogoutFailed(ctx, d.TenantID, d.ClientID, d.Uri, err)
+				s.auditLogoutFailed(ctx, d.OrganizationID, d.ClientID, d.Uri, err)
 			}
 			continue
 		}
@@ -178,9 +188,6 @@ func (s *Service) DeliverLogoutNotices(ctx context.Context) (int, error) {
 }
 
 func (s *Service) postLogoutToken(ctx context.Context, uri, token string) error {
-	if s.logoutClient == nil {
-		return errors.New("no outbound client configured")
-	}
 	if _, err := s.logoutEgress.ValidateHTTPURL(uri); err != nil {
 		return err
 	}
@@ -200,25 +207,9 @@ func (s *Service) postLogoutToken(ctx context.Context, uri, token string) error 
 	return nil
 }
 
-func (s *Service) auditLogoutFailed(ctx context.Context, tenantID uuid.UUID, clientID, uri string, cause error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return
-	}
-	defer tx.Rollback(ctx)
-	if audit.Record(ctx, tx, audit.Event{
-		TenantID: &tenantID, ActorType: "system", Action: "oidc.backchannel_logout_failed", ResourceType: "oidc_client",
-		Metadata: map[string]any{"client_id": clientID, "uri": uri, "attempts": logoutMaxAttempts, "error": truncate(cause.Error(), 300)},
-	}) == nil {
-		_ = tx.Commit(ctx)
-	}
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
+func (s *Service) auditLogoutFailed(ctx context.Context, organizationID uuid.UUID, clientID, uri string, cause error) {
+	_ = audit.RecordAlone(ctx, s.pool, audit.Actor{Type: "system"}.Event(organizationID, "oidc.backchannel_logout_failed", "oidc_client", uuid.Nil,
+		map[string]any{"client_id": clientID, "uri": uri, "attempts": logoutMaxAttempts, "error": strutil.Truncate(cause.Error(), 300)}))
 }
 
 // logoutConfirmation is a short-lived ticket naming the hosted-login session a
@@ -274,12 +265,25 @@ type logoutHint struct {
 	ClientID, Subject, SessionID string
 }
 
-// checkLogoutHint verifies an id_token_hint (one of our ID tokens, expired or
-// not) and that it names this session and person, and the application asking.
-func (s *Service) checkLogoutHint(raw, clientID string, sessionID, userID uuid.UUID) (*logoutHint, error) {
+// notIDTokenClaims mark the other tokens this server signs: its own tickets
+// (typ), credentials (vc), logout tokens (events), access tokens (user_id) and
+// service and agent tokens (actor_type). An ID token carries none of them.
+var notIDTokenClaims = []string{"typ", "vc", "events", "user_id", "actor_type"}
+
+// checkLogoutHint verifies an id_token_hint: one of our ID tokens, expired or
+// not, for a person and one registered application, the one asking if it
+// says. With a session it must be that session's person, and its session when
+// it names one. Any other token this server signs is refused.
+func (s *Service) checkLogoutHint(ctx context.Context, raw, clientID string, sessionID, userID uuid.UUID) (*logoutHint, error) {
+	notIDToken := oauthErr("invalid_request", "id_token_hint is not an ID token this server issued")
 	claims, err := s.issuer.VerifySignedAnyTime(raw)
 	if err != nil {
-		return nil, oauthErr("invalid_request", "id_token_hint is not an ID token this server issued")
+		return nil, notIDToken
+	}
+	for _, k := range notIDTokenClaims {
+		if _, ok := claims[k]; ok {
+			return nil, notIDToken
+		}
 	}
 	h := &logoutHint{}
 	h.Subject, _ = claims["sub"].(string)
@@ -288,15 +292,21 @@ func (s *Service) checkLogoutHint(raw, clientID string, sessionID, userID uuid.U
 	case string:
 		h.ClientID = aud
 	case []any:
-		if len(aud) > 0 {
+		if len(aud) == 1 {
 			h.ClientID, _ = aud[0].(string)
 		}
+	}
+	if h.Subject == "" || h.ClientID == "" {
+		return nil, notIDToken
 	}
 	if clientID != "" && h.ClientID != clientID {
 		return nil, oauthErr("invalid_request", "id_token_hint was issued to another application")
 	}
+	if !s.RegisteredClient(ctx, h.ClientID) {
+		return nil, notIDToken
+	}
 	if sessionID != uuid.Nil {
-		if (h.SessionID != "" && h.SessionID != sessionID.String()) || (h.Subject != "" && h.Subject != userID.String()) {
+		if h.Subject != userID.String() || (h.SessionID != "" && h.SessionID != sessionID.String()) {
 			return nil, oauthErr("invalid_request", "id_token_hint names another sign-in")
 		}
 	}
@@ -321,7 +331,7 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case hint != "":
 		// The hint names whose sign-in this is: it must be this one.
-		lh, err := h.Service.checkLogoutHint(hint, clientID, sessionID, userID)
+		lh, err := h.Service.checkLogoutHint(r.Context(), hint, clientID, sessionID, userID)
 		if err != nil {
 			var oe *oauthError
 			if errors.As(err, &oe) {
@@ -353,9 +363,9 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var frontchannel []string
-	if c, err := r.Cookie(auth.LoginSessionCookie); err == nil {
-		in := auth.EndLoginSessionInput{
-			Cookie: c.Value, InitiatedBy: auth.SignOutByApplication,
+	if c, err := r.Cookie(authentication.LoginSessionCookie); err == nil {
+		in := authentication.EndLoginSessionInput{
+			Cookie: c.Value, InitiatedBy: authentication.SignOutByApplication,
 			IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		}
 		if clientID != "" && h.Service.RegisteredClient(r.Context(), clientID) {
@@ -368,7 +378,7 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 		}
 		frontchannel = ended.FrontChannelLogoutURIs
 	}
-	auth.ClearLoginSessionCookie(w, h.CookieSecure)
+	authentication.ClearLoginSessionCookie(w, h.CookieSecure)
 
 	next := ""
 	if redirect != "" && clientID != "" {

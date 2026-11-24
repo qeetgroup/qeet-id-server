@@ -1,0 +1,48 @@
+post:
+  operationId: testLdapConnection
+  summary: Test bind
+  tags:
+    - LDAP
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Binds with the connection's service account to prove its settings, without
+    signing anyone in. A connection that turns off verification of the directory
+    server's certificate (skip_tls_verify) is refused with 422
+    ldap.tls_verify_required, and one saved without TLS (ldap:// with start_tls
+    off) with 422 ldap.tls_required before the directory is asked, recorded in
+    the organization's audit trail (ldap.connection_refused); only a development
+    server (SERVICE_ENV=dev) allows either. Requires connection.write.
+  responses:
+    "200":
+      description: 'The bind succeeded ({"ok": true})'
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - ok
+            properties:
+              ok:
+                type: boolean
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

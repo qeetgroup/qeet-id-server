@@ -1,0 +1,10 @@
+description: >-
+  The change needs payment (`billing.checkout_required`); start a checkout to
+  make it.
+headers:
+  X-Request-Id:
+    $ref: ../headers/RequestId.yaml
+content:
+  application/json:
+    schema:
+      $ref: ../schemas/Error.yaml

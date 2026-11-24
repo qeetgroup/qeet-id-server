@@ -1,0 +1,64 @@
+post:
+  operationId: consumeMagicLink
+  description: >-
+    Completes passwordless email sign-in by redeeming the single-use token
+    delivered by the magic-link start call. On success it returns an access and
+    refresh token pair; the token is invalidated once consumed and cannot be
+    replayed. Tokens are short-lived, so an expired or already-used link must be
+    re-requested from the start call. A link to an account whose organization
+    has since switched magic links off is refused with 403
+    auth.method_disabled and stays unused. A link that proves the account's address for the first time marks it
+    verified, ends every earlier session and removes everything set up on the
+    account before it, its password included (recorded as email.verified and
+    auth.credentials_removed), so whoever registered the address first keeps no
+    way in. The link proves the first factor only: when the account holds a
+    second factor, or must have one, the answer is an MFA challenge instead of
+    tokens, completed at POST /v1/auth/mfa (the session then records the method
+    magic_link_mfa). The link is spent either way, so an abandoned or failed
+    challenge leaves no tokens and no link to use again; an expired or used link
+    is refused before any challenge is raised. A link to an address that must
+    now sign in with single sign-on is refused with 403 auth.sso_required and
+    stays unused (see the SSORequired response).
+  summary: Magic link consume
+  tags:
+    - Auth
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - token
+          properties:
+            token:
+              type: string
+              minLength: 1
+  responses:
+    "200":
+      description: A token pair, or an MFA challenge to complete at POST /v1/auth/mfa
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: ../../../shared/schemas/TokenPair.yaml
+              - $ref: ../../../shared/schemas/MFAChallenge.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SSORequired.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

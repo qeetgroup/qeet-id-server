@@ -8,8 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
 )
 
 type builtinPlan struct {
@@ -20,7 +19,7 @@ type builtinPlan struct {
 }
 
 // Feature lines name only what the product does today: no uptime figure or
-// SLA, customer-held keys, data residency, dedicated tenant, certification,
+// SLA, customer-held keys, data residency, dedicated organization, certification,
 // custom sign-in domain or usage metering until those exist. The yearly plans
 // share their monthly plan's lines.
 var (
@@ -138,7 +137,7 @@ func (s *Service) ListPlans(ctx context.Context) ([]Plan, error) {
 func planByCode(ctx context.Context, q *dbgen.Queries, code string) (uuid.UUID, string, string, error) {
 	row, err := q.GetBillingPlanByCode(ctx, code)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, "", "", errs.ErrBillingPlanNotFound
+		return uuid.Nil, "", "", ErrPlanNotFound
 	}
 	if err != nil {
 		return uuid.Nil, "", "", err
@@ -175,7 +174,7 @@ type planPrice struct {
 func lookupPlanPrice(ctx context.Context, q *dbgen.Queries, code, currency string) (planPrice, error) {
 	cur, ok := normalizeCurrency(currency)
 	if !ok {
-		return planPrice{}, errs.ErrBillingCurrencyInvalid
+		return planPrice{}, ErrCurrencyInvalid
 	}
 	id, interval, name, err := planByCode(ctx, q, code)
 	if err != nil {
@@ -186,7 +185,7 @@ func lookupPlanPrice(ctx context.Context, q *dbgen.Queries, code, currency strin
 		return planPrice{}, err
 	}
 	if !priced {
-		return planPrice{}, errs.ErrBillingPlanNotPriced
+		return planPrice{}, ErrPlanNotPriced
 	}
 	return planPrice{id: id, code: code, name: name, interval: interval, currency: cur, amountMinor: amt}, nil
 }

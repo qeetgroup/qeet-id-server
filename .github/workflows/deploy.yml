@@ -24,10 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write # push the version tag after a successful deploy
-  id-token: write # required for GitHub OIDC → AWS role assumption
-  pull-requests: read # find the merged release or hotfix pull request (version)
-  packages: read # read the tested image from GHCR
+  contents: read
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
@@ -37,6 +34,9 @@ jobs:
     name: Release version
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # find the merged release or hotfix pull request (version)
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       source: ${{ steps.version.outputs.source }}
@@ -87,6 +87,10 @@ jobs:
     needs: version
     if: needs.version.outputs.tag != ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the version tag after a successful deploy
+      id-token: write # GitHub OIDC: assume the AWS role, and sign the image keyless
+      packages: read # read the tested image from GHCR
     environment:
       name: production
       url: https://api.id.qeet.in
@@ -99,8 +103,10 @@ jobs:
 
       # crane copies every platform of an image, with its attestations, from
       # one registry to another without rebuilding it. Pinned, not @latest.
-      - name: Install crane
-        run: go install github.com/google/go-containerregistry/cmd/crane@v0.22.1
+      - name: Install crane and cosign
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.22.1
+          go install github.com/sigstore/cosign/v2/cmd/cosign@v2.6.5
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
@@ -142,16 +148,40 @@ jobs:
           crane tag "$REPO:$VERSION" "$GITHUB_SHA"
           echo "Promoted $src ($want) to $REPO:$VERSION"
 
+      # Keyless: the identity is this workflow on main (GitHub OIDC), so no key is
+      # stored. The host verifies it before running the image (qeet-id-deploy).
+      # ECR tags are immutable, so a re-run leaves a signed image as it is.
+      - name: Sign the release image (cosign, keyless)
+        env:
+          REPO: ${{ vars.ECR_REPOSITORY_URL }}
+          VERSION: ${{ needs.version.outputs.tag }}
+          IDENTITY: https://github.com/qeetgroup/qeet-id-server/.github/workflows/deploy.yml@refs/heads/main
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          image="$REPO@$(crane digest "$REPO:$VERSION")"
+          verify() { cosign verify --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" "$image" > /dev/null 2>&1; }
+          if verify; then
+            echo "$image is already signed by this workflow"
+            exit 0
+          fi
+          cosign sign --yes "$image"
+          if ! verify; then
+            echo "::error::$image was signed but its signature doesn't verify as $IDENTITY"
+            exit 1
+          fi
+          echo "Signed $image as $IDENTITY" | tee -a "$GITHUB_STEP_SUMMARY"
+
       # The host switches to exactly this tag (redeploy.sh <version>), records
       # the version it replaces, and refuses a build that can't run on the
-      # schema; the job then confirms GET /version serves it.
+      # schema; the job then confirms GET /version serves it. Not ready within
+      # 5 minutes, it rolls back to the release before and fails.
       - name: Roll the host (SSM)
         env:
           SSM_PREFIX: /qeet-id/prod
           API_URL: ${{ vars.API_URL || 'https://api.id.qeet.in' }}
           ECR_REPOSITORY_URL: ${{ vars.ECR_REPOSITORY_URL }}
           VERSION: ${{ needs.version.outputs.tag }}
-        run: scripts/deploy/roll-host.sh "$VERSION"
+        run: scripts/deploy/roll-host.sh "$VERSION" --roll-back-on-failure
 
       # Tag + release AFTER a successful deploy so every tag == a live deployed version.
       - name: Push version tag and create GitHub release
@@ -169,13 +199,17 @@ jobs:
             --repo "$GITHUB_REPOSITORY"
 
   # Manual rollback: Actions → deploy → Run workflow on main, with rollback_to.
-  # Builds nothing and tags nothing; switches the host to a version already in
-  # ECR. It stops before touching production when the version isn't retained
-  # or its build can't run on the current schema (restore or roll forward
-  # instead: operations/runbooks/deployment.md in qeet-id-files).
+  # Builds nothing, signs nothing and tags nothing; switches the host to a
+  # version already in ECR. It stops before touching production when the
+  # version isn't retained, isn't signed by the deploy job (the host refuses
+  # it), or its build can't run on the current schema (restore or roll forward
+  # instead: the Deployment Runbook in qeet-id-files/05-engineering/operations.md).
   rollback:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.rollback_to != ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC → AWS role assumption
     environment:
       name: production
       url: https://api.id.qeet.in

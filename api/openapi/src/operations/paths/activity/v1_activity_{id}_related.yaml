@@ -1,0 +1,45 @@
+get:
+  operationId: listRelatedActivity
+  summary: Related activity events
+  description: >-
+    Returns the anchor event plus events correlated with it by request_id and by
+    the same actor within a symmetric time window. The anchor lookup is
+    organization-scoped — an unknown id or a foreign organization's id both return 404. An
+    event never appears in both correlation lists.
+  tags:
+    - Activity
+  parameters:
+    - name: id
+      in: path
+      required: true
+      description: Anchor event UUID (audit.events row id).
+      schema:
+        type: string
+        format: uuid
+    - name: window
+      in: query
+      required: false
+      description: 60 to 3600 (default 300); a larger value is lowered to 3600.
+      schema:
+        type: integer
+        default: 300
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Anchor event and correlated events
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/ActivityRelatedResponse.yaml
+    "400":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

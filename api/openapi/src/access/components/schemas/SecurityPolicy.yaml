@@ -1,0 +1,114 @@
+type: object
+required:
+  - organization_id
+  - session_max_age
+  - session_idle_timeout
+  - max_sessions
+  - session_limit_action
+  - mfa_enforcement
+  - mfa_grace_days
+  - mfa_enforced_since
+  - step_up_window
+  - step_up_methods
+  - settings
+properties:
+  organization_id:
+    type: string
+    format: uuid
+  session_max_age:
+    type: string
+    example: 720h
+    description: >-
+      How long a session lasts after sign-in however active it is, and an
+      application's grant however often it is renewed: a duration such as "720h"
+      or "90m", between 1h and 8760h. Applies to sessions and grants started
+      after it is saved. Omitted or zero on update: the platform default.
+  session_idle_timeout:
+    type: string
+    example: 24h
+    description: >-
+      How long a session may go without being renewed before it ends: a duration
+      of at least 15m and no longer than session_max_age. Applies to sessions
+      started after it is saved. Omitted or zero on update: the platform default
+      (no longer than session_max_age).
+  max_sessions:
+    type:
+      - integer
+      - "null"
+    minimum: 1
+    maximum: 1000
+    description: >-
+      How many live sessions one person may hold in the organization at once;
+      null for no limit (the default). Counted and enforced as a session opens,
+      so simultaneous sign-ins cannot exceed it.
+  session_limit_action:
+    type: string
+    enum:
+      - evict_oldest
+      - refuse
+    description: >-
+      What a sign-in at max_sessions does: evict_oldest ends the person's least
+      recently used session (renewal stops at once; an access token it already
+      issued lasts out its own lifetime, ACCESS_TOKEN_TTL), announced to
+      session.revoked subscribers as session_limit; refuse refuses the sign-in
+      with 403 auth.session_limit. Both are audited.
+  mfa_enforcement:
+    type: string
+    enum:
+      - optional
+      - required
+      - admin_only
+    description: >-
+      Who must use a second factor to sign in, enforced at password sign-in:
+      optional (only people who set one up are challenged), required (everyone),
+      admin_only (anyone holding a role, directly or through a group, that
+      grants an administrative permission: one that changes who signs in or
+      with what authority, such as user.write, user.credentials, user.suspend,
+      session.revoke, member.invite or role.write, the same administrators
+      single sign-on never adopts by address). Separately, an account an administrator marks
+      as requiring MFA must, whatever is set here. An account that must and
+      holds no factor sets up an authenticator app before any session is issued.
+  mfa_grace_days:
+    type: integer
+    minimum: 0
+    maximum: 90
+    description: >-
+      For this many days after the requirement is turned on, the accounts that
+      already existed may put setting up a second factor off (they are prompted
+      at each sign-in). 0, the default: no grace period.
+  mfa_enforced_since:
+    type:
+      - string
+      - "null"
+    format: date-time
+    readOnly: true
+    description: >-
+      When the requirement was turned on (from optional); null while optional.
+      Moving between required and admin_only keeps it.
+  step_up_window:
+    type: string
+    example: 5m
+    description: >-
+      How long a step-up keeps a session's sensitive actions unlocked: a
+      duration between 1m and 60m. A step-up belongs to the session that earned
+      it; it ends with that session, and a changed password or an administrative
+      factor reset clears it. Omitted or zero on update: 5m.
+  step_up_methods:
+    type:
+      - array
+      - "null"
+    items:
+      type: string
+      enum:
+        - totp
+        - recovery_code
+        - otp
+        - webauthn
+        - push
+    description: >-
+      The factor types that count as a step-up (otp: an emailed or text-message
+      code; webauthn: a passkey). Null or empty: every one. A session stepped up
+      by a factor that is not listed is asked again.
+  settings:
+    type: object
+    additionalProperties: true

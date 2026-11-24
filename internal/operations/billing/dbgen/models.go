@@ -10,23 +10,23 @@ import (
 	"github.com/google/uuid"
 )
 
+type OrganizationBillingProfile struct {
+	OrganizationID uuid.UUID
+	LegalName      string
+	BillingEmail   string
+	AddressLine1   string
+	AddressLine2   string
+	City           string
+	State          string
+	PostalCode     string
+	Country        string
+	TaxIDType      string
+	TaxID          string
+	UpdatedAt      time.Time
+}
+
 type PlatformBillingPlanPrice struct {
 	PlanID      uuid.UUID
 	Currency    string
 	AmountMinor int64
-}
-
-type TenantBillingProfile struct {
-	TenantID     uuid.UUID
-	LegalName    string
-	BillingEmail string
-	AddressLine1 string
-	AddressLine2 string
-	City         string
-	State        string
-	PostalCode   string
-	Country      string
-	TaxIDType    string
-	TaxID        string
-	UpdatedAt    time.Time
 }

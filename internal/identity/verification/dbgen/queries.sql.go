@@ -10,12 +10,165 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const addressHolder = `-- name: AddressHolder :one
+SELECT u.email, u.organization_id,
+       ((u.provisioned_via IS NOT DISTINCT FROM 'scim') OR EXISTS (
+           SELECT 1 FROM account.external_identities e
+           WHERE e.user_id = u.id AND e.organization_id = u.organization_id AND e.connection_id IS NOT NULL
+       ))::bool AS provided
+FROM account.users u WHERE u.id = $1
+`
+
+type AddressHolderRow struct {
+	Email          string
+	OrganizationID *uuid.UUID
+	Provided       bool
+}
+
+// AddressHolder returns the account's address and organization, and whether
+// that organization's directory or single sign-on provides the address: SCIM
+// provisioned the account, or it is linked to one of its connections.
+func (q *Queries) AddressHolder(ctx context.Context, userID uuid.UUID) (AddressHolderRow, error) {
+	row := q.db.QueryRow(ctx, addressHolder, userID)
+	var i AddressHolderRow
+	err := row.Scan(&i.Email, &i.OrganizationID, &i.Provided)
+	return i, err
+}
+
+const chargeEmailCodeGuess = `-- name: ChargeEmailCodeGuess :one
+UPDATE account.email_verifications
+SET attempts = attempts + 1,
+    used_at  = CASE WHEN attempts + 1 >= $1::int THEN NOW() ELSE used_at END
+WHERE id = $2
+RETURNING (attempts >= $1::int)::boolean AS exhausted
+`
+
+type ChargeEmailCodeGuessParams struct {
+	MaxAttempts int32
+	ID          uuid.UUID
+}
+
+// ChargeEmailCodeGuess counts one wrong guess at email code id and reports
+// whether that spent its @max_attempts, retiring it on the guess that does.
+func (q *Queries) ChargeEmailCodeGuess(ctx context.Context, arg ChargeEmailCodeGuessParams) (bool, error) {
+	row := q.db.QueryRow(ctx, chargeEmailCodeGuess, arg.MaxAttempts, arg.ID)
+	var exhausted bool
+	err := row.Scan(&exhausted)
+	return exhausted, err
+}
+
+const chargePhoneCodeGuess = `-- name: ChargePhoneCodeGuess :one
+UPDATE account.phone_verifications
+SET attempts = attempts + 1,
+    used_at  = CASE WHEN attempts + 1 >= $1::int THEN NOW() ELSE used_at END
+WHERE id = $2
+RETURNING (attempts >= $1::int)::boolean AS exhausted
+`
+
+type ChargePhoneCodeGuessParams struct {
+	MaxAttempts int32
+	ID          uuid.UUID
+}
+
+// ChargePhoneCodeGuess is ChargeEmailCodeGuess for phone codes.
+func (q *Queries) ChargePhoneCodeGuess(ctx context.Context, arg ChargePhoneCodeGuessParams) (bool, error) {
+	row := q.db.QueryRow(ctx, chargePhoneCodeGuess, arg.MaxAttempts, arg.ID)
+	var exhausted bool
+	err := row.Scan(&exhausted)
+	return exhausted, err
+}
+
+const deleteEmailVerification = `-- name: DeleteEmailVerification :exec
+DELETE FROM account.email_verifications WHERE id = $1
+`
+
+func (q *Queries) DeleteEmailVerification(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteEmailVerification, id)
+	return err
+}
+
+const deletePhoneVerification = `-- name: DeletePhoneVerification :exec
+DELETE FROM account.phone_verifications WHERE id = $1
+`
+
+func (q *Queries) DeletePhoneVerification(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deletePhoneVerification, id)
+	return err
+}
+
+const emailCodeFailures = `-- name: EmailCodeFailures :one
+SELECT COALESCE(sum(attempts), 0)::int AS failures, COALESCE(min(created_at), NOW())::timestamptz AS oldest
+FROM account.email_verifications
+WHERE user_id = $1 AND purpose = $2 AND attempts > 0
+  AND (created_at > NOW() - INTERVAL '1 hour' OR expires_at > NOW())
+`
+
+type EmailCodeFailuresParams struct {
+	UserID  uuid.UUID
+	Purpose string
+}
+
+type EmailCodeFailuresRow struct {
+	Failures int32
+	Oldest   time.Time
+}
+
+// EmailCodeFailures sums the wrong guesses at the user's codes for purpose
+// sent in the last hour or still open, with when the oldest such code went.
+func (q *Queries) EmailCodeFailures(ctx context.Context, arg EmailCodeFailuresParams) (EmailCodeFailuresRow, error) {
+	row := q.db.QueryRow(ctx, emailCodeFailures, arg.UserID, arg.Purpose)
+	var i EmailCodeFailuresRow
+	err := row.Scan(&i.Failures, &i.Oldest)
+	return i, err
+}
+
+const emailCodeSends = `-- name: EmailCodeSends :one
+WITH mine AS (
+    SELECT v.created_at FROM account.email_verifications v
+    WHERE v.user_id = $1 AND v.created_at > NOW() - INTERVAL '1 hour'
+), theirs AS (
+    SELECT v.created_at FROM account.email_verifications v
+    WHERE lower(v.email) = lower($2) AND v.created_at > NOW() - INTERVAL '1 hour'
+)
+SELECT
+    (SELECT count(*) FROM mine)::int AS user_sends,
+    (SELECT COALESCE(min(created_at), NOW()) FROM mine)::timestamptz AS user_oldest,
+    (SELECT count(*) FROM theirs)::int AS address_sends,
+    (SELECT COALESCE(min(created_at), NOW()) FROM theirs)::timestamptz AS address_oldest
+`
+
+type EmailCodeSendsParams struct {
+	UserID uuid.UUID
+	Email  string
+}
+
+type EmailCodeSendsRow struct {
+	UserSends     int32
+	UserOldest    time.Time
+	AddressSends  int32
+	AddressOldest time.Time
+}
+
+// EmailCodeSends counts the email codes of the last hour sent to the user and
+// to the address, by any account and ignoring case, each with when the oldest
+// went (now, when none did).
+func (q *Queries) EmailCodeSends(ctx context.Context, arg EmailCodeSendsParams) (EmailCodeSendsRow, error) {
+	row := q.db.QueryRow(ctx, emailCodeSends, arg.UserID, arg.Email)
+	var i EmailCodeSendsRow
+	err := row.Scan(
+		&i.UserSends,
+		&i.UserOldest,
+		&i.AddressSends,
+		&i.AddressOldest,
+	)
+	return i, err
+}
 
 const emailTakenByOther = `-- name: EmailTakenByOther :one
 SELECT EXISTS(
-    SELECT 1 FROM "user".users WHERE lower(email) = lower($1) AND id <> $2
+    SELECT 1 FROM account.users WHERE lower(email) = lower($1) AND id <> $2
 )::boolean
 `
 
@@ -40,7 +193,7 @@ WITH resets AS (
     WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
 )
 UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
-WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = $1)
+WHERE LOWER(email) = (SELECT LOWER(u.email) FROM account.users u WHERE u.id = $1)
   AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
 `
 
@@ -52,110 +205,13 @@ func (q *Queries) ExpireRecoveryLinksForUser(ctx context.Context, userID uuid.UU
 	return err
 }
 
-const getLatestEmailChange = `-- name: GetLatestEmailChange :one
-SELECT id, email, expires_at, used_at
-FROM "user".email_verifications
-WHERE user_id = $1 AND code_hash = $2
-ORDER BY created_at DESC
-LIMIT 1
-FOR UPDATE
-`
-
-type GetLatestEmailChangeParams struct {
-	UserID   uuid.UUID
-	CodeHash string
-}
-
-type GetLatestEmailChangeRow struct {
-	ID        uuid.UUID
-	Email     string
-	ExpiresAt time.Time
-	UsedAt    pgtype.Timestamptz
-}
-
-// GetLatestEmailChange is like GetLatestEmailVerification but also returns the
-// pending new email so confirm can swap it onto the user.
-func (q *Queries) GetLatestEmailChange(ctx context.Context, arg GetLatestEmailChangeParams) (GetLatestEmailChangeRow, error) {
-	row := q.db.QueryRow(ctx, getLatestEmailChange, arg.UserID, arg.CodeHash)
-	var i GetLatestEmailChangeRow
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.ExpiresAt,
-		&i.UsedAt,
-	)
-	return i, err
-}
-
-const getLatestEmailVerification = `-- name: GetLatestEmailVerification :one
-SELECT id, expires_at, used_at
-FROM "user".email_verifications
-WHERE user_id = $1 AND code_hash = $2
-ORDER BY created_at DESC
-LIMIT 1
-FOR UPDATE
-`
-
-type GetLatestEmailVerificationParams struct {
-	UserID   uuid.UUID
-	CodeHash string
-}
-
-type GetLatestEmailVerificationRow struct {
-	ID        uuid.UUID
-	ExpiresAt time.Time
-	UsedAt    pgtype.Timestamptz
-}
-
-// GetLatestEmailVerification selects the most-recent verification row for the
-// given user + code and locks it for update so concurrent Confirm calls don't race.
-func (q *Queries) GetLatestEmailVerification(ctx context.Context, arg GetLatestEmailVerificationParams) (GetLatestEmailVerificationRow, error) {
-	row := q.db.QueryRow(ctx, getLatestEmailVerification, arg.UserID, arg.CodeHash)
-	var i GetLatestEmailVerificationRow
-	err := row.Scan(&i.ID, &i.ExpiresAt, &i.UsedAt)
-	return i, err
-}
-
-const getLatestPhoneVerification = `-- name: GetLatestPhoneVerification :one
-SELECT id, phone, expires_at, used_at
-FROM "user".phone_verifications
-WHERE user_id = $1 AND code_hash = $2
-ORDER BY created_at DESC
-LIMIT 1
-FOR UPDATE
-`
-
-type GetLatestPhoneVerificationParams struct {
-	UserID   uuid.UUID
-	CodeHash string
-}
-
-type GetLatestPhoneVerificationRow struct {
-	ID        uuid.UUID
-	Phone     string
-	ExpiresAt time.Time
-	UsedAt    pgtype.Timestamptz
-}
-
-func (q *Queries) GetLatestPhoneVerification(ctx context.Context, arg GetLatestPhoneVerificationParams) (GetLatestPhoneVerificationRow, error) {
-	row := q.db.QueryRow(ctx, getLatestPhoneVerification, arg.UserID, arg.CodeHash)
-	var i GetLatestPhoneVerificationRow
-	err := row.Scan(
-		&i.ID,
-		&i.Phone,
-		&i.ExpiresAt,
-		&i.UsedAt,
-	)
-	return i, err
-}
-
 const getUserEmail = `-- name: GetUserEmail :one
 
-SELECT email FROM "user".users WHERE id = $1
+SELECT email FROM account.users WHERE id = $1
 `
 
 // Queries for the verification domain.
-// All queries are static. Queries that touch "user".users are cross-schema reads
+// All queries are static. Queries that touch account.users are cross-schema reads
 // that are acceptable here (verification is a "user" subdomain and needs the address
 // on file). audit/outbox are not involved in this domain.
 // GetUserEmail fetches the email address for the given user (used by StartEmail
@@ -168,7 +224,7 @@ func (q *Queries) GetUserEmail(ctx context.Context, id uuid.UUID) (string, error
 }
 
 const getUserPhone = `-- name: GetUserPhone :one
-SELECT phone FROM "user".users WHERE id = $1
+SELECT phone FROM account.users WHERE id = $1
 `
 
 // GetUserPhone fetches the phone number for the given user (used by StartPhone
@@ -180,14 +236,15 @@ func (q *Queries) GetUserPhone(ctx context.Context, id uuid.UUID) (*string, erro
 	return phone, err
 }
 
-const insertEmailVerification = `-- name: InsertEmailVerification :exec
+const insertEmailVerification = `-- name: InsertEmailVerification :one
 WITH retired AS (
-    UPDATE "user".email_verifications
+    UPDATE account.email_verifications
     SET expires_at = LEAST(expires_at, NOW())
-    WHERE user_id = $1 AND purpose <> $5 AND used_at IS NULL
+    WHERE user_id = $1 AND used_at IS NULL
 )
-INSERT INTO "user".email_verifications (user_id, email, code_hash, expires_at, purpose)
+INSERT INTO account.email_verifications (user_id, email, code_hash, expires_at, purpose)
 VALUES ($1, $2, $3, $4, $5)
+RETURNING id
 `
 
 type InsertEmailVerificationParams struct {
@@ -199,22 +256,31 @@ type InsertEmailVerificationParams struct {
 }
 
 // InsertEmailVerification issues a code for one purpose (verify_email or
-// change_email) and expires the user's open codes for the other, so the two
-// flows can't both be pending; each confirm reads only codes of its own purpose.
-func (q *Queries) InsertEmailVerification(ctx context.Context, arg InsertEmailVerificationParams) error {
-	_, err := q.db.Exec(ctx, insertEmailVerification,
+// change_email) and expires the user's open codes, so a resend replaces the
+// code before it even if it is then withdrawn, and the two flows can't both be
+// pending; each confirm reads only codes of its own purpose.
+func (q *Queries) InsertEmailVerification(ctx context.Context, arg InsertEmailVerificationParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertEmailVerification,
 		arg.UserID,
 		arg.Email,
 		arg.CodeHash,
 		arg.ExpiresAt,
 		arg.Purpose,
 	)
-	return err
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
-const insertPhoneVerification = `-- name: InsertPhoneVerification :exec
-INSERT INTO "user".phone_verifications (user_id, phone, code_hash, expires_at)
+const insertPhoneVerification = `-- name: InsertPhoneVerification :one
+WITH retired AS (
+    UPDATE account.phone_verifications
+    SET expires_at = LEAST(expires_at, NOW())
+    WHERE user_id = $1 AND used_at IS NULL
+)
+INSERT INTO account.phone_verifications (user_id, phone, code_hash, expires_at)
 VALUES ($1, $2, $3, $4)
+RETURNING id
 `
 
 type InsertPhoneVerificationParams struct {
@@ -224,18 +290,33 @@ type InsertPhoneVerificationParams struct {
 	ExpiresAt time.Time
 }
 
-func (q *Queries) InsertPhoneVerification(ctx context.Context, arg InsertPhoneVerificationParams) error {
-	_, err := q.db.Exec(ctx, insertPhoneVerification,
+// InsertPhoneVerification issues a phone code and expires the user's open
+// ones, so a resend replaces the code before it even if it is then withdrawn.
+func (q *Queries) InsertPhoneVerification(ctx context.Context, arg InsertPhoneVerificationParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertPhoneVerification,
 		arg.UserID,
 		arg.Phone,
 		arg.CodeHash,
 		arg.ExpiresAt,
 	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockAccountForCodeSend = `-- name: LockAccountForCodeSend :exec
+SELECT 1 FROM account.users WHERE id = $1 FOR NO KEY UPDATE
+`
+
+// LockAccountForCodeSend holds the account while a code is counted against
+// the sending limits and stored, so two sends can't both pass them.
+func (q *Queries) LockAccountForCodeSend(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockAccountForCodeSend, userID)
 	return err
 }
 
 const markEmailVerificationUsed = `-- name: MarkEmailVerificationUsed :exec
-UPDATE "user".email_verifications SET used_at = NOW() WHERE id = $1
+UPDATE account.email_verifications SET used_at = NOW() WHERE id = $1
 `
 
 func (q *Queries) MarkEmailVerificationUsed(ctx context.Context, id uuid.UUID) error {
@@ -244,7 +325,7 @@ func (q *Queries) MarkEmailVerificationUsed(ctx context.Context, id uuid.UUID) e
 }
 
 const markPhoneVerificationUsed = `-- name: MarkPhoneVerificationUsed :exec
-UPDATE "user".phone_verifications SET used_at = NOW() WHERE id = $1
+UPDATE account.phone_verifications SET used_at = NOW() WHERE id = $1
 `
 
 func (q *Queries) MarkPhoneVerificationUsed(ctx context.Context, id uuid.UUID) error {
@@ -253,7 +334,7 @@ func (q *Queries) MarkPhoneVerificationUsed(ctx context.Context, id uuid.UUID) e
 }
 
 const markUserEmailVerified = `-- name: MarkUserEmailVerified :execrows
-UPDATE "user".users
+UPDATE account.users
 SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()
 WHERE id = $1 AND lower(email) = lower($2)
 `
@@ -273,19 +354,145 @@ func (q *Queries) MarkUserEmailVerified(ctx context.Context, arg MarkUserEmailVe
 	return result.RowsAffected(), nil
 }
 
-const markUserPhoneVerified = `-- name: MarkUserPhoneVerified :exec
-UPDATE "user".users
-SET phone_verified_at = COALESCE(phone_verified_at, NOW()), updated_at = NOW()
-WHERE id = $1
+const newestEmailCode = `-- name: NewestEmailCode :one
+SELECT id, code_hash, email, expires_at, used_at, attempts
+FROM account.email_verifications
+WHERE user_id = $1 AND purpose = $2
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE
 `
 
-func (q *Queries) MarkUserPhoneVerified(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markUserPhoneVerified, id)
-	return err
+type NewestEmailCodeParams struct {
+	UserID  uuid.UUID
+	Purpose string
+}
+
+type NewestEmailCodeRow struct {
+	ID        uuid.UUID
+	CodeHash  string
+	Email     string
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	Attempts  int32
+}
+
+// NewestEmailCode locks and returns the user's most recent email code for
+// purpose. It doesn't filter on the submitted code, so only the newest code
+// can match: a resend supersedes the code before it.
+func (q *Queries) NewestEmailCode(ctx context.Context, arg NewestEmailCodeParams) (NewestEmailCodeRow, error) {
+	row := q.db.QueryRow(ctx, newestEmailCode, arg.UserID, arg.Purpose)
+	var i NewestEmailCodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.CodeHash,
+		&i.Email,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.Attempts,
+	)
+	return i, err
+}
+
+const newestPhoneCode = `-- name: NewestPhoneCode :one
+SELECT id, code_hash, phone, expires_at, used_at, attempts
+FROM account.phone_verifications
+WHERE user_id = $1
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE
+`
+
+type NewestPhoneCodeRow struct {
+	ID        uuid.UUID
+	CodeHash  string
+	Phone     string
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	Attempts  int32
+}
+
+// NewestPhoneCode is NewestEmailCode for phone codes.
+func (q *Queries) NewestPhoneCode(ctx context.Context, userID uuid.UUID) (NewestPhoneCodeRow, error) {
+	row := q.db.QueryRow(ctx, newestPhoneCode, userID)
+	var i NewestPhoneCodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.CodeHash,
+		&i.Phone,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.Attempts,
+	)
+	return i, err
+}
+
+const phoneCodeFailures = `-- name: PhoneCodeFailures :one
+SELECT COALESCE(sum(attempts), 0)::int AS failures, COALESCE(min(created_at), NOW())::timestamptz AS oldest
+FROM account.phone_verifications
+WHERE user_id = $1 AND attempts > 0
+  AND (created_at > NOW() - INTERVAL '1 hour' OR expires_at > NOW())
+`
+
+type PhoneCodeFailuresRow struct {
+	Failures int32
+	Oldest   time.Time
+}
+
+// PhoneCodeFailures is EmailCodeFailures for phone codes.
+func (q *Queries) PhoneCodeFailures(ctx context.Context, userID uuid.UUID) (PhoneCodeFailuresRow, error) {
+	row := q.db.QueryRow(ctx, phoneCodeFailures, userID)
+	var i PhoneCodeFailuresRow
+	err := row.Scan(&i.Failures, &i.Oldest)
+	return i, err
+}
+
+const phoneCodeSends = `-- name: PhoneCodeSends :one
+WITH mine AS (
+    SELECT v.created_at FROM account.phone_verifications v
+    WHERE v.user_id = $1 AND v.created_at > NOW() - INTERVAL '1 hour'
+), theirs AS (
+    SELECT v.created_at FROM account.phone_verifications v
+    WHERE v.phone = $2 AND v.created_at > NOW() - INTERVAL '1 hour'
+)
+SELECT
+    (SELECT count(*) FROM mine)::int AS user_sends,
+    (SELECT COALESCE(min(created_at), NOW()) FROM mine)::timestamptz AS user_oldest,
+    (SELECT COALESCE(max(created_at), NOW() - INTERVAL '1 hour') FROM mine)::timestamptz AS user_last,
+    (SELECT count(*) FROM theirs)::int AS number_sends,
+    (SELECT COALESCE(min(created_at), NOW()) FROM theirs)::timestamptz AS number_oldest
+`
+
+type PhoneCodeSendsParams struct {
+	UserID uuid.UUID
+	Phone  string
+}
+
+type PhoneCodeSendsRow struct {
+	UserSends    int32
+	UserOldest   time.Time
+	UserLast     time.Time
+	NumberSends  int32
+	NumberOldest time.Time
+}
+
+// PhoneCodeSends is EmailCodeSends for phone codes, by user and by number,
+// with when the user's last code of the hour went (an hour ago, when none did).
+func (q *Queries) PhoneCodeSends(ctx context.Context, arg PhoneCodeSendsParams) (PhoneCodeSendsRow, error) {
+	row := q.db.QueryRow(ctx, phoneCodeSends, arg.UserID, arg.Phone)
+	var i PhoneCodeSendsRow
+	err := row.Scan(
+		&i.UserSends,
+		&i.UserOldest,
+		&i.UserLast,
+		&i.NumberSends,
+		&i.NumberOldest,
+	)
+	return i, err
 }
 
 const setUserVerifiedPhone = `-- name: SetUserVerifiedPhone :exec
-UPDATE "user".users
+UPDATE account.users
 SET phone = $1, phone_verified_at = NOW(), updated_at = NOW()
 WHERE id = $2
 `
@@ -295,16 +502,16 @@ type SetUserVerifiedPhoneParams struct {
 	UserID uuid.UUID
 }
 
-// SetUserVerifiedPhone persists the just-verified number AND stamps the verified
-// time. Unlike MarkUserPhoneVerified it writes users.phone and re-stamps the time
-// (no COALESCE) — the number just changed, so its prior verification is void.
+// SetUserVerifiedPhone persists the just-verified number and stamps the
+// verified time afresh: the number may have changed, voiding any earlier
+// verification.
 func (q *Queries) SetUserVerifiedPhone(ctx context.Context, arg SetUserVerifiedPhoneParams) error {
 	_, err := q.db.Exec(ctx, setUserVerifiedPhone, arg.Phone, arg.UserID)
 	return err
 }
 
 const updateUserEmail = `-- name: UpdateUserEmail :execrows
-UPDATE "user".users
+UPDATE account.users
 SET email = $1, email_verified_at = NOW(), updated_at = NOW()
 WHERE id = $2
 `

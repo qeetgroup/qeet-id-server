@@ -1,0 +1,82 @@
+-- Queries for the access/passkeys domain.
+-- All queries are static and compiled by sqlc into ./dbgen.
+
+-- name: ListPasskeyCredentials :many
+SELECT id, user_id, name, transports, last_used_at, created_at
+FROM auth.passkey_credentials WHERE user_id = $1 ORDER BY created_at DESC;
+
+-- DeletePasskeyCredential returns the removed passkey's name; another user's
+-- passkey matches no row.
+-- name: DeletePasskeyCredential :one
+DELETE FROM auth.passkey_credentials WHERE id = $1 AND user_id = $2
+RETURNING name;
+
+-- LockPasskeyCredentialName locks one of the user's passkeys for a rename and
+-- returns its current name.
+-- name: LockPasskeyCredentialName :one
+SELECT name FROM auth.passkey_credentials WHERE id = $1 AND user_id = $2 FOR UPDATE;
+
+-- RenamePasskeyCredential is scoped to the owner like the delete: another
+-- user's passkey matches no row.
+
+-- name: RenamePasskeyCredential :one
+UPDATE auth.passkey_credentials SET name = $1
+WHERE id = $2 AND user_id = $3
+RETURNING id, user_id, name, transports, last_used_at, created_at;
+
+-- name: GetUserForWebAuthn :one
+SELECT email, display_name, organization_id FROM account.users
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: GetUserIDByEmail :one
+SELECT id FROM account.users
+WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL;
+
+-- name: GetPasskeyCredentialsForCeremony :many
+SELECT credential_id, public_key, sign_count, aaguid, transports, backup_eligible, backup_state
+FROM auth.passkey_credentials WHERE user_id = $1;
+
+-- name: InsertWebAuthnSession :one
+INSERT INTO auth.webauthn_sessions (user_id, kind, data, expires_at)
+VALUES ($1, $2, $3, $4) RETURNING id;
+
+-- TakeWebAuthnSession atomically removes a session and returns its data (single-use).
+
+-- name: TakeWebAuthnSession :one
+DELETE FROM auth.webauthn_sessions WHERE id = $1
+RETURNING kind, user_id, data, expires_at;
+
+-- InsertSignupWebAuthnSession stores a pending passkey sign-up; invite_id names
+-- the invitation it accepts (NULL for an ordinary sign-up).
+-- name: InsertSignupWebAuthnSession :one
+INSERT INTO auth.webauthn_sessions (kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_organization_id, pending_invite_id)
+VALUES ('signup', @data, @expires_at, @subject_id, @pending_email, @pending_display_name, @pending_organization_id, sqlc.narg('invite_id')) RETURNING id;
+
+-- DeleteInviteWebAuthnSessions drops the earlier passkey ceremonies accepting
+-- an invitation, so starting again replaces an abandoned one.
+-- name: DeleteInviteWebAuthnSessions :exec
+DELETE FROM auth.webauthn_sessions WHERE pending_invite_id = @invite_id;
+
+-- TakeSignupWebAuthnSession atomically removes a signup session and returns its data.
+
+-- name: TakeSignupWebAuthnSession :one
+DELETE FROM auth.webauthn_sessions WHERE id = $1
+RETURNING kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_organization_id, pending_invite_id;
+
+-- name: InsertUserFromSignup :one
+-- The id is the WebAuthn user ID the signup passkey was registered under: the
+-- authenticator returns it as the user handle on every sign-in.
+INSERT INTO account.users (id, organization_id, email, display_name)
+VALUES ($1, $2, $3, $4)
+RETURNING id;
+
+-- name: InsertPasskeyCredential :one
+INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, aaguid, transports, name, backup_eligible, backup_state)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id;
+
+-- name: UpdatePasskeySignCount :exec
+-- After a verified assertion: the new counter and the current backup state
+-- (backup eligibility never changes, so it is not updated).
+UPDATE auth.passkey_credentials SET sign_count = $1, backup_state = $2, last_used_at = NOW()
+WHERE credential_id = $3;

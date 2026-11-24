@@ -5,25 +5,27 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
 // Client is a registered OAuth client, without its secret.
 type Client struct {
 	ID             uuid.UUID `json:"id"`
-	TenantID       uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
 	ClientID       string    `json:"client_id"`
 	Type           string    `json:"type"`
 	Name           string    `json:"name"`
@@ -51,7 +53,7 @@ type Client struct {
 
 // CreateClientInput is what RegisterClient takes.
 type CreateClientInput struct {
-	TenantID       uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
 	Name           string    `json:"name"`
 	Type           string    `json:"type"`
 	RedirectURIs   []string  `json:"redirect_uris"`
@@ -68,39 +70,22 @@ type CreateClientInput struct {
 	WebOrigins []string `json:"web_origins"`
 }
 
-// PlanLimiter returns the numeric cap for a plan-gated resource (negative =
-// unlimited). Satisfied by operations/entitlements.Service, injected via
-// SetPlanLimiter.
-type PlanLimiter interface {
-	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error)
-}
-
-// SetPlanLimiter wires the plan-limit checker (nil disables the gate).
-func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
-
-// CountClients returns the tenant's number of registered applications (relying
+// CountClients returns the organization's number of registered applications (relying
 // parties) — the "apps" limit value, surfaced as usage in billing.
-func (s *Service) CountClients(ctx context.Context, tenantID uuid.UUID) (int, error) {
-	n, err := s.q.CountOIDCClientsByTenant(ctx, tenantID)
+func (s *Service) CountClients(ctx context.Context, organizationID uuid.UUID) (int, error) {
+	n, err := s.q.CountOIDCClientsByOrganization(ctx, organizationID)
 	return int(n), err
 }
 
-// Pool exposes the connection pool so handlers can begin their own
-// transactions that wrap an OIDC mutation and its audit row.
-func (s *Service) Pool() *pgxpool.Pool { return s.pool }
-
-// checkClientLimit refuses with ErrPlanLimit once the tenant's plan cap for
-// applications is reached. It reads on the pool, so the handlers run it before
-// they open the transaction RegisterClient joins.
-func (s *Service) checkClientLimit(ctx context.Context, tenantID uuid.UUID) error {
-	if s.limits == nil {
-		return nil
-	}
-	lim, err := s.limits.Limit(ctx, tenantID, "apps")
+// checkClientLimit refuses with ErrPlanLimit once the organization's plan cap for
+// applications is reached. It reads on the pool, so it runs before the
+// transaction RegisterClient joins opens.
+func (s *Service) checkClientLimit(ctx context.Context, organizationID uuid.UUID) error {
+	lim, err := s.limits.Limit(ctx, organizationID, "apps")
 	if err != nil || lim < 0 {
 		return err
 	}
-	n, err := s.q.CountOIDCClientsByTenant(ctx, tenantID)
+	n, err := s.q.CountOIDCClientsByOrganization(ctx, organizationID)
 	if err != nil {
 		return err
 	}
@@ -108,6 +93,38 @@ func (s *Service) checkClientLimit(ctx context.Context, tenantID uuid.UUID) erro
 		return errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "apps", "limit": lim})
 	}
 	return nil
+}
+
+// CreateClient registers an application, within the organization's plan cap,
+// recorded as actor's, and returns it with its secret (shown only now; "" for
+// a public client).
+func (s *Service) CreateClient(ctx context.Context, in CreateClientInput, actor audit.Actor) (*Client, string, error) {
+	if err := s.checkClientLimit(ctx, in.OrganizationID); err != nil {
+		return nil, "", err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer tx.Rollback(ctx)
+	c, secret, err := s.RegisterClient(ctx, tx, in)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := recordClientChange(ctx, tx, actor, c, "oidc.client_registered", map[string]any{
+		"client_id": c.ClientID, "type": c.Type, "name": c.Name, "grant_types": c.GrantTypes, "scopes": c.Scopes,
+	}); err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, "", err
+	}
+	return c, secret, nil
+}
+
+// recordClientChange audits, in tx, actor's change to client c.
+func recordClientChange(ctx context.Context, tx pgx.Tx, actor audit.Actor, c *Client, action string, meta map[string]any) error {
+	return audit.Record(ctx, tx, actor.Event(c.OrganizationID, action, "oidc_client", c.ID, meta))
 }
 
 // RegisterClient registers an application in tx. Callers check the plan cap
@@ -147,7 +164,7 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 	}
 	q := s.q.WithTx(tx)
 	row, err := q.InsertOIDCClient(ctx, dbgen.InsertOIDCClientParams{
-		TenantID:              in.TenantID,
+		OrganizationID:        in.OrganizationID,
 		ClientID:              clientID,
 		ClientSecretHash:      secretHash,
 		Type:                  in.Type,
@@ -160,27 +177,28 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		FrontchannelLogoutUri: in.FrontchannelLogoutURI,
 		LogoUri:               in.LogoURI,
 		ClientUri:             in.ClientURI,
+		CreatedBy:             httpx.PrincipalUserID(ctx),
 	})
 	if err != nil {
 		return nil, "", err
 	}
 	c := Client{
-		ID: row.ID, TenantID: row.TenantID, ClientID: row.ClientID,
+		ID: row.ID, OrganizationID: row.OrganizationID, ClientID: row.ClientID,
 		Type: row.Type, Name: row.Name,
 		RedirectURIs: row.RedirectUris, PostLogoutURIs: row.PostLogoutUris,
 		GrantTypes: row.GrantTypes, Scopes: row.Scopes, CreatedAt: row.CreatedAt,
-		PKCEExemptUntil:      timePtr(row.PkceExemptUntil),
-		BackchannelLogoutURI: derefStr(row.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(row.FrontchannelLogoutUri),
-		LogoURI: derefStr(row.LogoUri), ClientURI: derefStr(row.ClientUri),
+		PKCEExemptUntil:      row.PkceExemptUntil,
+		BackchannelLogoutURI: strutil.Deref(row.BackchannelLogoutUri), FrontchannelLogoutURI: strutil.Deref(row.FrontchannelLogoutUri),
+		LogoURI: strutil.Deref(row.LogoUri), ClientURI: strutil.Deref(row.ClientUri),
 	}
 	if in.WebOrigins != nil {
-		if err := s.setWebOrigins(ctx, tx, row.TenantID, row.ID, in.WebOrigins); err != nil {
+		if err := s.setWebOrigins(ctx, tx, row.OrganizationID, row.ID, in.WebOrigins); err != nil {
 			return nil, "", err
 		}
 	} else {
 		s.webOrigins.forget()
 	}
-	stored, err := s.q.WithTx(tx).GetClientWebOrigins(ctx, dbgen.GetClientWebOriginsParams{ID: row.ID, TenantID: row.TenantID})
+	stored, err := s.q.WithTx(tx).GetClientWebOrigins(ctx, dbgen.GetClientWebOriginsParams{ID: row.ID, OrganizationID: row.OrganizationID})
 	if err != nil {
 		return nil, "", err
 	}
@@ -205,14 +223,14 @@ func validateClientInput(in CreateClientInput) error {
 		if grantType == "client_credentials" {
 			// The application token endpoint never serves it; a machine caller is
 			// a service principal, with its own token endpoint.
-			return errs.ErrOIDCGrantTypeUnsupported.WithDetail("client_credentials is for machine identities: create a service principal and use POST /v1/oauth/token")
+			return ErrGrantTypeUnsupported.WithDetail("client_credentials is for machine identities: create a service principal and use POST /v1/oauth/token")
 		}
 		if _, ok := supportedClientGrantTypes[grantType]; !ok {
-			return errs.ErrOIDCGrantTypeUnsupported.WithDetail("unsupported grant_type: " + grantType)
+			return ErrGrantTypeUnsupported.WithDetail("unsupported grant_type: " + grantType)
 		}
 	}
 	if in.Type == "public" && containsAny(in.GrantTypes, "token_exchange", grantTypeTokenExchange, grantTypeCIBA) {
-		return errs.ErrOIDCUnsupportedFlow
+		return ErrUnsupportedFlow
 	}
 	if !validLogoutURI(in.BackchannelLogoutURI) || !validLogoutURI(in.FrontchannelLogoutURI) {
 		return errs.ErrBadRequest.WithDetail("logout URIs must be absolute http(s) URLs without a fragment")
@@ -220,8 +238,8 @@ func validateClientInput(in CreateClientInput) error {
 	if !validPresentationURI(in.LogoURI) || !validPresentationURI(in.ClientURI) {
 		return errs.ErrBadRequest.WithDetail(presentationURIRule)
 	}
-	if contains(in.GrantTypes, "authorization_code") && len(in.RedirectURIs) == 0 {
-		return errs.ErrOIDCRedirectURIInvalid.WithDetail("authorization_code clients require a redirect URI")
+	if slices.Contains(in.GrantTypes, "authorization_code") && len(in.RedirectURIs) == 0 {
+		return ErrRedirectURIInvalid.WithDetail("authorization_code clients require a redirect URI")
 	}
 	for _, raw := range append(append([]string(nil), in.RedirectURIs...), in.PostLogoutURIs...) {
 		if err := validateRegisteredRedirectURI(raw); err != nil {
@@ -237,7 +255,7 @@ func validateClientInput(in CreateClientInput) error {
 func validateRegisteredRedirectURI(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || !u.IsAbs() || u.User != nil || u.Fragment != "" {
-		return errs.ErrOIDCRedirectURIInvalid.WithDetail("redirect URI must be an absolute URI without userinfo or fragment")
+		return ErrRedirectURIInvalid.WithDetail("redirect URI must be an absolute URI without userinfo or fragment")
 	}
 	switch scheme := strings.ToLower(u.Scheme); scheme {
 	case "https":
@@ -261,7 +279,7 @@ func validateRegisteredRedirectURI(raw string) error {
 			return nil
 		}
 	}
-	return errs.ErrOIDCRedirectURIInvalid.WithDetail(
+	return ErrRedirectURIInvalid.WithDetail(
 		"redirect URI must use HTTPS, an HTTP loopback IP, or a reverse-DNS private-use scheme")
 }
 
@@ -308,12 +326,12 @@ type ShadowAICandidate struct {
 // without a human present in the loop: token exchange, under either name.
 var machineGrantTypes = []string{"token_exchange", grantTypeTokenExchange}
 
-// ShadowAICandidates lists tenantID's unreviewed OIDC clients whose
+// ShadowAICandidates lists organizationID's unreviewed OIDC clients whose
 // grant_types include a machine grant type, ordered by live-grant count so
 // the ones actually in active use surface first.
-func (s *Service) ShadowAICandidates(ctx context.Context, tenantID uuid.UUID) ([]ShadowAICandidate, error) {
+func (s *Service) ShadowAICandidates(ctx context.Context, organizationID uuid.UUID) ([]ShadowAICandidate, error) {
 	rows, err := s.q.ListShadowAICandidates(ctx, dbgen.ListShadowAICandidatesParams{
-		TenantID:          tenantID,
+		OrganizationID:    organizationID,
 		MachineGrantTypes: machineGrantTypes,
 	})
 	if err != nil {
@@ -332,17 +350,17 @@ func (s *Service) ShadowAICandidates(ctx context.Context, tenantID uuid.UUID) ([
 
 // ReviewShadowAIClient acknowledges a shadow-AI candidate, dropping it off
 // ShadowAICandidates until/unless its grant_types change again.
-func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, reviewerUserID uuid.UUID) error {
+func (s *Service) ReviewShadowAIClient(ctx context.Context, organizationID, id, reviewerUserID uuid.UUID) error {
 	n, err := s.q.ReviewOIDCClient(ctx, dbgen.ReviewOIDCClientParams{
-		ReviewedBy: pgtype.UUID{Bytes: reviewerUserID, Valid: true},
-		ID:         id,
-		TenantID:   tenantID,
+		ReviewedBy:     &reviewerUserID,
+		ID:             id,
+		OrganizationID: organizationID,
 	})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
-		return errs.ErrOIDCClientNotFound
+		return ErrClientNotFound
 	}
 	return nil
 }
@@ -358,16 +376,18 @@ func (s *Service) RegisteredRedirect(ctx context.Context, clientID, redirectURI 
 	if err != nil {
 		return false
 	}
-	return redirectRegistered(info.RedirectUris, redirectURI)
+	return redirectRegistered(info.RedirectUris, redirectURI, info.Type)
 }
 
-// redirectRegistered reports whether redirectURI is one of registered: the same
-// string or, for an http redirect to a loopback IP literal, the same but for
-// its port, as a native app listens on whatever port it is given (RFC 8252
-// §7.3). "localhost" is not a literal and must match exactly.
-func redirectRegistered(registered []string, redirectURI string) bool {
-	if contains(registered, redirectURI) {
+// redirectRegistered reports whether redirectURI is one of registered: the same string or, for a
+// public client's http redirect to a loopback IP literal, the same but for its port, since a native
+// app listens where it can (RFC 8252 §7.3). Confidential clients and "localhost" must match exactly.
+func redirectRegistered(registered []string, redirectURI, clientType string) bool {
+	if slices.Contains(registered, redirectURI) {
 		return true
+	}
+	if clientType != "public" {
+		return false
 	}
 	want, ok := withoutLoopbackPort(redirectURI)
 	if !ok {
@@ -413,25 +433,25 @@ func withoutLoopbackPort(raw string) (string, bool) {
 	return "http://" + host + tail, true
 }
 
-// ClientName resolves a client's display name and tenant from its client_id —
+// ClientName resolves a client's display name and organization from its client_id —
 // used to render the hosted login/consent screens. Returns ErrNotFound for an
 // unknown client.
-func (s *Service) ClientName(ctx context.Context, clientID string) (name string, tenantID uuid.UUID, err error) {
+func (s *Service) ClientName(ctx context.Context, clientID string) (name string, organizationID uuid.UUID, err error) {
 	b, err := s.ClientBrand(ctx, clientID)
 	if err != nil {
 		return "", uuid.Nil, err
 	}
-	return b.Name, b.TenantID, nil
+	return b.Name, b.OrganizationID, nil
 }
 
 // ClientBrand is how the hosted sign-in page presents an application: its
-// organisation and the name, logo and home page registered for it.
+// organization and the name, logo and home page registered for it.
 type ClientBrand struct {
-	Name       string
-	TenantID   uuid.UUID
-	LogoURI    string
-	ClientURI  string
-	TenantName string
+	Name             string
+	OrganizationID   uuid.UUID
+	LogoURI          string
+	ClientURI        string
+	OrganizationName string
 }
 
 // ClientBrand returns the application's registered presentation, never anything
@@ -439,12 +459,12 @@ type ClientBrand struct {
 func (s *Service) ClientBrand(ctx context.Context, clientID string) (*ClientBrand, error) {
 	row, err := s.q.GetClientName(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrOIDCClientNotFound
+		return nil, ErrClientNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &ClientBrand{Name: row.Name, TenantID: row.TenantID, LogoURI: derefStr(row.LogoUri), ClientURI: derefStr(row.ClientUri), TenantName: derefStr(row.TenantName)}, nil
+	return &ClientBrand{Name: row.Name, OrganizationID: row.OrganizationID, LogoURI: strutil.Deref(row.LogoUri), ClientURI: strutil.Deref(row.ClientUri), OrganizationName: strutil.Deref(row.OrganizationName)}, nil
 }
 
 // presentationURIRule is what logo_uri and client_uri must be.
@@ -474,20 +494,20 @@ func (s *Service) ValidatePostLogoutRedirect(ctx context.Context, clientID, uri 
 	if err != nil {
 		return false, err
 	}
-	return contains(uris, uri), nil
+	return slices.Contains(uris, uri), nil
 }
 
-// ClientTenant is the organisation that owns the application clientID;
+// ClientOrganization is the organization that owns the application clientID;
 // ErrOIDCClientUnknown when none does.
-func (s *Service) ClientTenant(ctx context.Context, clientID string) (uuid.UUID, error) {
+func (s *Service) ClientOrganization(ctx context.Context, clientID string) (uuid.UUID, error) {
 	info, err := s.q.GetClientRedirectInfo(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, errs.ErrOIDCClientUnknown
+		return uuid.Nil, ErrClientUnknown
 	}
 	if err != nil {
 		return uuid.Nil, err
 	}
-	return info.TenantID, nil
+	return info.OrganizationID, nil
 }
 
 // RegisteredClient reports whether clientID names a registered application.

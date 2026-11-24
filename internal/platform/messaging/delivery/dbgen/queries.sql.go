@@ -13,17 +13,17 @@ import (
 )
 
 const activeSuppression = `-- name: ActiveSuppression :one
-SELECT id, tenant_id, reason, detail, created_at
+SELECT id, organization_id, reason, detail, created_at
 FROM platform.email_suppressions
 WHERE address_hash = $1 AND cleared_at IS NULL
 `
 
 type ActiveSuppressionRow struct {
-	ID        uuid.UUID
-	TenantID  uuid.NullUUID
-	Reason    string
-	Detail    string
-	CreatedAt time.Time
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
+	Reason         string
+	Detail         string
+	CreatedAt      time.Time
 }
 
 func (q *Queries) ActiveSuppression(ctx context.Context, addressHash string) (ActiveSuppressionRow, error) {
@@ -31,7 +31,7 @@ func (q *Queries) ActiveSuppression(ctx context.Context, addressHash string) (Ac
 	var i ActiveSuppressionRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Reason,
 		&i.Detail,
 		&i.CreatedAt,
@@ -42,14 +42,14 @@ func (q *Queries) ActiveSuppression(ctx context.Context, addressHash string) (Ac
 const clearSuppression = `-- name: ClearSuppression :one
 UPDATE platform.email_suppressions
 SET cleared_at = now(), cleared_by = $1
-WHERE id = $2 AND tenant_id = $3 AND cleared_at IS NULL
+WHERE id = $2 AND organization_id = $3 AND cleared_at IS NULL
 RETURNING address_hint, reason
 `
 
 type ClearSuppressionParams struct {
-	ClearedBy uuid.NullUUID
-	ID        uuid.UUID
-	TenantID  uuid.NullUUID
+	ClearedBy      *uuid.UUID
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
 }
 
 type ClearSuppressionRow struct {
@@ -58,7 +58,7 @@ type ClearSuppressionRow struct {
 }
 
 func (q *Queries) ClearSuppression(ctx context.Context, arg ClearSuppressionParams) (ClearSuppressionRow, error) {
-	row := q.db.QueryRow(ctx, clearSuppression, arg.ClearedBy, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, clearSuppression, arg.ClearedBy, arg.ID, arg.OrganizationID)
 	var i ClearSuppressionRow
 	err := row.Scan(&i.AddressHint, &i.Reason)
 	return i, err
@@ -87,13 +87,13 @@ func (q *Queries) DeleteMessagesBefore(ctx context.Context, arg DeleteMessagesBe
 const insertMessage = `-- name: InsertMessage :one
 
 INSERT INTO platform.email_messages
-    (tenant_id, to_hash, to_hint, template, provider, provider_message_id, status, status_reason)
+    (organization_id, to_hash, to_hint, template, provider, provider_message_id, status, status_reason)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id
 `
 
 type InsertMessageParams struct {
-	TenantID          uuid.NullUUID
+	OrganizationID    *uuid.UUID
 	ToHash            string
 	ToHint            string
 	Template          string
@@ -106,7 +106,7 @@ type InsertMessageParams struct {
 // Queries for email delivery records and the suppression list.
 func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertMessage,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ToHash,
 		arg.ToHint,
 		arg.Template,
@@ -123,15 +123,19 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (u
 const listMessagesTo = `-- name: ListMessagesTo :many
 SELECT id, template, status, status_reason, sent_at, updated_at
 FROM platform.email_messages
-WHERE tenant_id = $1 AND to_hash = $2
-ORDER BY sent_at DESC
-LIMIT $3
+WHERE organization_id = $1 AND to_hash = $2
+  AND ($3::timestamptz IS NULL OR sent_at < $3
+       OR (sent_at = $3 AND id < $4::uuid))
+ORDER BY sent_at DESC, id DESC
+LIMIT $5
 `
 
 type ListMessagesToParams struct {
-	TenantID uuid.NullUUID
-	ToHash   string
-	Lim      int32
+	OrganizationID *uuid.UUID
+	ToHash         string
+	BeforeTs       *time.Time
+	BeforeID       *uuid.UUID
+	Lim            int32
 }
 
 type ListMessagesToRow struct {
@@ -144,7 +148,13 @@ type ListMessagesToRow struct {
 }
 
 func (q *Queries) ListMessagesTo(ctx context.Context, arg ListMessagesToParams) ([]ListMessagesToRow, error) {
-	rows, err := q.db.Query(ctx, listMessagesTo, arg.TenantID, arg.ToHash, arg.Lim)
+	rows, err := q.db.Query(ctx, listMessagesTo,
+		arg.OrganizationID,
+		arg.ToHash,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -173,14 +183,18 @@ func (q *Queries) ListMessagesTo(ctx context.Context, arg ListMessagesToParams) 
 const listSuppressions = `-- name: ListSuppressions :many
 SELECT id, address_hint, reason, detail, created_at
 FROM platform.email_suppressions
-WHERE tenant_id = $1 AND cleared_at IS NULL
-ORDER BY created_at DESC
-LIMIT $2
+WHERE organization_id = $1 AND cleared_at IS NULL
+  AND ($2::timestamptz IS NULL OR created_at < $2
+       OR (created_at = $2 AND id < $3::uuid))
+ORDER BY created_at DESC, id DESC
+LIMIT $4
 `
 
 type ListSuppressionsParams struct {
-	TenantID uuid.NullUUID
-	Lim      int32
+	OrganizationID *uuid.UUID
+	BeforeTs       *time.Time
+	BeforeID       *uuid.UUID
+	Lim            int32
 }
 
 type ListSuppressionsRow struct {
@@ -192,7 +206,12 @@ type ListSuppressionsRow struct {
 }
 
 func (q *Queries) ListSuppressions(ctx context.Context, arg ListSuppressionsParams) ([]ListSuppressionsRow, error) {
-	rows, err := q.db.Query(ctx, listSuppressions, arg.TenantID, arg.Lim)
+	rows, err := q.db.Query(ctx, listSuppressions,
+		arg.OrganizationID,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +237,7 @@ func (q *Queries) ListSuppressions(ctx context.Context, arg ListSuppressionsPara
 }
 
 const messageByProviderID = `-- name: MessageByProviderID :one
-SELECT id, tenant_id, template, status
+SELECT id, organization_id, template, status
 FROM platform.email_messages
 WHERE provider = $1 AND provider_message_id = $2
 `
@@ -229,10 +248,10 @@ type MessageByProviderIDParams struct {
 }
 
 type MessageByProviderIDRow struct {
-	ID       uuid.UUID
-	TenantID uuid.NullUUID
-	Template string
-	Status   string
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
+	Template       string
+	Status         string
 }
 
 func (q *Queries) MessageByProviderID(ctx context.Context, arg MessageByProviderIDParams) (MessageByProviderIDRow, error) {
@@ -240,7 +259,7 @@ func (q *Queries) MessageByProviderID(ctx context.Context, arg MessageByProvider
 	var i MessageByProviderIDRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Template,
 		&i.Status,
 	)
@@ -265,25 +284,25 @@ func (q *Queries) SetMessageStatus(ctx context.Context, arg SetMessageStatusPara
 }
 
 const suppress = `-- name: Suppress :exec
-INSERT INTO platform.email_suppressions (tenant_id, address_hash, address_hint, reason, detail, message_id)
+INSERT INTO platform.email_suppressions (organization_id, address_hash, address_hint, reason, detail, message_id)
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (address_hash) WHERE cleared_at IS NULL DO NOTHING
 `
 
 type SuppressParams struct {
-	TenantID    uuid.NullUUID
-	AddressHash string
-	AddressHint string
-	Reason      string
-	Detail      string
-	MessageID   uuid.NullUUID
+	OrganizationID *uuid.UUID
+	AddressHash    string
+	AddressHint    string
+	Reason         string
+	Detail         string
+	MessageID      *uuid.UUID
 }
 
 // A second hard bounce or complaint for an address already suppressed keeps
 // the first suppression.
 func (q *Queries) Suppress(ctx context.Context, arg SuppressParams) error {
 	_, err := q.db.Exec(ctx, suppress,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.AddressHash,
 		arg.AddressHint,
 		arg.Reason,

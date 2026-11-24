@@ -9,8 +9,15 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
-	if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
+// token is the OAuth token endpoint (RFC 6749 §3.2) for every grant: it reads
+// the client's credentials once, from the form or HTTP Basic, runs the grant
+// grant_type names and answers a refusal in the RFC 6749 §5.2 shape.
+func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
+	var grantType string
+	outcome := "refused"
+	defer func() { tokenRequests.WithLabelValues(grantLabel(grantType), outcome).Inc() }()
+	clientID, clientSecret, err := h.clientCreds(r)
+	if err != nil {
 		writeTokenError(w, r, err)
 		return
 	}
@@ -25,19 +32,17 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	clientID := r.Form.Get("client_id")
-	clientSecret := r.Form.Get("client_secret")
-	if u, p, ok := httpx.ClientBasicAuth(r); ok {
-		clientID, clientSecret = u, p
-	}
-	grantType := r.Form.Get("grant_type")
+	grantType = r.Form.Get("grant_type")
+	// Explicitly refused, never silently dropped: these grants bind no resource.
 	if resource != "" && (grantType == grantTypeDeviceCode || grantType == grantTypeCIBA) {
-		// Explicitly refused, never silently dropped: these flows bind no resource.
 		writeTokenError(w, r, oauthErr("invalid_target", "resource indicators aren't supported on the device and backchannel flows"))
 		return
 	}
+	if resource != "" && grantType == grantTypeClientCredentials {
+		writeTokenError(w, r, oauthErr("invalid_target", "resource indicators aren't supported on the client_credentials grant"))
+		return
+	}
 	var resp *TokenResponse
-	var err error
 	switch grantType {
 	case "authorization_code":
 		resp, err = h.Service.ExchangeCode(r.Context(),
@@ -59,45 +64,55 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	case grantTypeCIBA:
 		// OpenID CIBA §10 polling, answered like device_code polling.
 		resp, err = h.Service.BackchannelToken(r.Context(), clientID, clientSecret, r.Form.Get("auth_req_id"))
+	case grantTypeClientCredentials:
+		// A machine identity's own token; scope is ignored, as it gets every
+		// scope it holds.
+		resp, err = h.Service.ClientCredentials(r.Context(), clientID, clientSecret)
 	case "":
 		err = oauthErr("invalid_request", "grant_type is required")
 	default:
-		err = errs.ErrOIDCGrantTypeUnsupported
+		err = ErrGrantTypeUnsupported
 	}
 	if err != nil {
+		outcome = tokenOutcome(err)
 		writeTokenError(w, r, err)
 		return
 	}
+	outcome = "issued"
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // tokenErrorCodes are the RFC 6749 §5.2 codes of the grants' own errors; any
 // other client error is invalid_request.
 var tokenErrorCodes = map[string]string{
-	errs.CodeOIDCClientAuthFailed:               "invalid_client",
-	errs.CodeOIDCGrantTypeUnsupported:           "unsupported_grant_type",
-	errs.CodeOIDCGrantTypeNotAllowed:            "unauthorized_client",
-	errs.CodeOIDCAuthCodeInvalid:                "invalid_grant",
-	errs.CodeOIDCAuthCodeUsed:                   "invalid_grant",
-	errs.CodeOIDCAuthCodeExpired:                "invalid_grant",
-	errs.CodeOIDCRedirectURIMismatch:            "invalid_grant",
-	errs.CodeOIDCCodeChallengeRequired:          "invalid_grant",
-	errs.CodeOIDCCodeChallengeMethodUnsupported: "invalid_grant",
-	errs.CodeOIDCCodeVerifierRequired:           "invalid_grant",
-	errs.CodeOIDCCodeVerifierInvalid:            "invalid_grant",
-	errs.CodeOIDCRefreshTokenInvalid:            "invalid_grant",
-	errs.CodeOIDCRefreshTokenClientMismatch:     "invalid_grant",
-	errs.CodeOIDCRefreshTokenRevoked:            "invalid_grant",
-	errs.CodeOIDCRefreshTokenExpired:            "invalid_grant",
-	errs.CodeOIDCRefreshTokenReuse:              "invalid_grant",
-	errs.CodeAuthAccountSuspended:               "invalid_grant",
-	errs.CodeOIDCUserTenantMismatch:             "invalid_grant",
-	errs.CodeOIDCScopeExceedsSubject:            "invalid_scope",
+	errs.CodeOIDCClientAuthFailed:        "invalid_client",
+	CodeGrantTypeUnsupported:             "unsupported_grant_type",
+	CodeGrantTypeNotAllowed:              "unauthorized_client",
+	CodeAuthCodeInvalid:                  "invalid_grant",
+	CodeAuthCodeUsed:                     "invalid_grant",
+	CodeAuthCodeExpired:                  "invalid_grant",
+	CodeRedirectURIMismatch:              "invalid_grant",
+	CodeCodeChallengeRequired:            "invalid_grant",
+	CodeCodeChallengeMethodUnsupported:   "invalid_grant",
+	CodeCodeVerifierRequired:             "invalid_grant",
+	CodeCodeVerifierInvalid:              "invalid_grant",
+	CodeRefreshTokenInvalid:              "invalid_grant",
+	CodeRefreshTokenClientMismatch:       "invalid_grant",
+	CodeRefreshTokenRevoked:              "invalid_grant",
+	CodeRefreshTokenExpired:              "invalid_grant",
+	CodeRefreshTokenReuse:                "invalid_grant",
+	errs.CodeAuthAccountSuspended:        "invalid_grant",
+	CodeUserOrganizationMismatch:         "invalid_grant",
+	CodeScopeExceedsSubject:              "invalid_scope",
+	errs.CodePrincipalInvalidCredentials: "invalid_client",
+	errs.CodePrincipalDisabled:           "unauthorized_client",
+	errs.CodeAgentTokenInvalid:           "invalid_client",
+	errs.CodeAgentInactive:               "unauthorized_client",
 }
 
-// writeTokenError answers a failed token request in the RFC 6749 §5.2 shape,
-// with a Basic challenge on invalid_client when the client sent Basic
-// credentials. An internal error keeps the generic answer.
+// writeTokenError answers a failed token request in the RFC 6749 §5.2 shape, with a Basic challenge on
+// invalid_client when the client sent Basic credentials. Every invalid_client reads the same, so the
+// answer doesn't tell what client, if any, the id names; an internal error keeps the generic answer.
 func writeTokenError(w http.ResponseWriter, r *http.Request, err error) {
 	var oe *oauthError
 	if !errors.As(err, &oe) {
@@ -110,7 +125,11 @@ func writeTokenError(w http.ResponseWriter, r *http.Request, err error) {
 		if !ok {
 			code = "invalid_request"
 		}
-		oe = oauthErr(code, e.Message)
+		description := e.Message
+		if code == "invalid_client" {
+			description = errs.ErrOIDCClientAuthFailed.Message
+		}
+		oe = oauthErr(code, description)
 	}
 	if _, _, basic := r.BasicAuth(); basic && oe.Code == "invalid_client" {
 		w.Header().Set("WWW-Authenticate", `Basic realm="qeet"`)
@@ -118,8 +137,9 @@ func writeTokenError(w http.ResponseWriter, r *http.Request, err error) {
 	writeOAuthError(w, oe)
 }
 
-// clientCreds parses OAuth client credentials from the form body or HTTP Basic
-// auth (the two RFC 6749 §2.3.1 mechanisms). Shared by revoke + introspect.
+// clientCreds parses the form and the OAuth client credentials in it or in
+// HTTP Basic auth (the two RFC 6749 §2.3.1 mechanisms), Basic first. Every
+// client-authenticated endpoint reads them here.
 func (h *Handler) clientCreds(r *http.Request) (id, secret string, err error) {
 	if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
 		return "", "", err

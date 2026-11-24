@@ -1,0 +1,34 @@
+delete:
+  operationId: revokeScimToken
+  summary: Revoke a SCIM token
+  tags:
+    - SCIM
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Revokes one of the organization's SCIM tokens at once, including a rotated
+    one still in its overlap; the organization's other tokens keep working. 404
+    scim.token_not_found when the token is not the organization's or is already
+    revoked. Requires connection.write. Needs a recent step-up.
+  responses:
+    "204":
+      description: Revoked
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

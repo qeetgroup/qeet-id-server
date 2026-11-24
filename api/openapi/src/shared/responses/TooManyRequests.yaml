@@ -1,0 +1,23 @@
+description: Rate limit exceeded
+headers:
+  Retry-After:
+    description: >-
+      Seconds to wait before trying again, sent when a rate limit refused the
+      request; error.metadata.retry_after gives the same number.
+    schema:
+      type: integer
+  X-Request-Id:
+    $ref: ../headers/RequestId.yaml
+content:
+  application/json:
+    example:
+      error:
+        code: too_many_requests
+        message: Too many attempts. Please wait and try again.
+        translation_key: too_many_requests
+        retryable: true
+        metadata:
+          retry_after: 30
+        request_id: api-1/Kx9fQ2mW7a-000131
+    schema:
+      $ref: ../schemas/Error.yaml

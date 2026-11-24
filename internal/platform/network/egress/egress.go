@@ -1,4 +1,4 @@
-// Package egress provides the shared outbound network boundary for tenant-
+// Package egress provides the shared outbound network boundary for organization-
 // configured integrations. It rejects destinations that can reach the local
 // host, private networks, link-local services, or other non-public addresses.
 package egress
@@ -92,15 +92,16 @@ func DevelopmentPolicy() *Policy {
 // absolute, without userinfo or a fragment, not a local or ambiguous numeric
 // host, and not a disallowed IP literal. Host names are not resolved here.
 func (p *Policy) ValidateHTTPURL(raw string) (*url.URL, error) {
-	return p.validateURL(raw, map[string]struct{}{"https": {}, "http": {}})
+	return p.validateURL(raw, map[string]struct{}{"https": {}, "http": {}}, false)
 }
 
-// ValidateLDAPURL is ValidateHTTPURL for ldap and ldaps URLs.
-func (p *Policy) ValidateLDAPURL(raw string) (*url.URL, error) {
-	return p.validateURL(raw, map[string]struct{}{"ldaps": {}, "ldap": {}})
+// ValidateLDAPURL is ValidateHTTPURL for ldap and ldaps URLs. An ldap URL
+// upgraded with StartTLS (startTLS) isn't cleartext.
+func (p *Policy) ValidateLDAPURL(raw string, startTLS bool) (*url.URL, error) {
+	return p.validateURL(raw, map[string]struct{}{"ldaps": {}, "ldap": {}}, startTLS)
 }
 
-func (p *Policy) validateURL(raw string, schemes map[string]struct{}) (*url.URL, error) {
+func (p *Policy) validateURL(raw string, schemes map[string]struct{}, upgraded bool) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || !u.IsAbs() || u.Hostname() == "" {
 		return nil, errors.New("outbound destination must be an absolute URL")
@@ -112,7 +113,8 @@ func (p *Policy) validateURL(raw string, schemes map[string]struct{}) (*url.URL,
 	if _, ok := schemes[scheme]; !ok {
 		return nil, fmt.Errorf("outbound destination scheme %q is not allowed", scheme)
 	}
-	if (scheme == "http" || scheme == "ldap") && !p.allowInsecure {
+	cleartext := scheme == "http" || (scheme == "ldap" && !upgraded)
+	if cleartext && !p.allowInsecure {
 		return nil, fmt.Errorf("outbound destination scheme %q is disabled", scheme)
 	}
 	if port := u.Port(); port != "" {
@@ -324,7 +326,19 @@ func (p *Policy) CheckRedirect(req *http.Request, via []*http.Request) error {
 // or sends everything through Options.ProxyURL when set; ambient proxy
 // variables are ignored.
 func (p *Policy) HTTPClient(timeout time.Duration) *http.Client {
+	return p.client(timeout, 0)
+}
+
+// StreamingHTTPClient is HTTPClient for a response that streams for as long as its request's
+// context allows: no whole-request timeout, but the headers must arrive within headerTimeout.
+func (p *Policy) StreamingHTTPClient(headerTimeout time.Duration) *http.Client {
+	return p.client(0, headerTimeout)
+}
+
+// client builds the egress-guarded client both constructors return; a zero headerTimeout sets none.
+func (p *Policy) client(timeout, headerTimeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = headerTimeout
 	if p.proxyURL != nil {
 		// The proxy opens the destination connection, so pinning here would only
 		// check the proxy's own, usually private, address. URLs are still validated;
@@ -336,7 +350,7 @@ func (p *Policy) HTTPClient(timeout time.Duration) *http.Client {
 	}
 	return &http.Client{
 		Timeout:       timeout,
-		Transport:     transport,
+		Transport:     tracedTransport{next: transport},
 		CheckRedirect: p.CheckRedirect,
 	}
 }

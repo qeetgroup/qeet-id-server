@@ -10,87 +10,172 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimLdapSync = `-- name: ClaimLdapSync :one
+UPDATE organization.ldap_connections SET sync_started_at = NOW()
+WHERE id = $1 AND organization_id = $2 AND status = 'active'
+  AND (sync_started_at IS NULL OR sync_started_at <= NOW() - make_interval(mins => sync_interval_minutes))
+RETURNING (full_sync_at IS NULL OR sync_cursor IS NULL OR full_sync_at <= NOW() - INTERVAL '1 day')::bool AS full_run,
+          COALESCE(sync_cursor, '')::text AS cursor, sync_people, sync_failing
+`
+
+type ClaimLdapSyncParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+type ClaimLdapSyncRow struct {
+	FullRun     bool
+	Cursor      string
+	SyncPeople  *int32
+	SyncFailing bool
+}
+
+func (q *Queries) ClaimLdapSync(ctx context.Context, arg ClaimLdapSyncParams) (ClaimLdapSyncRow, error) {
+	row := q.db.QueryRow(ctx, claimLdapSync, arg.ID, arg.OrganizationID)
+	var i ClaimLdapSyncRow
+	err := row.Scan(
+		&i.FullRun,
+		&i.Cursor,
+		&i.SyncPeople,
+		&i.SyncFailing,
+	)
+	return i, err
+}
+
 const deleteLdapConnection = `-- name: DeleteLdapConnection :execrows
-DELETE FROM tenant.ldap_connections WHERE id = $1 AND tenant_id = $2
+DELETE FROM organization.ldap_connections WHERE id = $1 AND organization_id = $2
 `
 
 type DeleteLdapConnectionParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteLdapConnection(ctx context.Context, arg DeleteLdapConnectionParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteLdapConnection, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, deleteLdapConnection, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
 }
 
-const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
-SELECT user_id FROM "user".external_identities
-WHERE tenant_id = $1 AND provider = $2 AND connection_id = $3::uuid
-  AND subject = $4
+const dueLdapSyncs = `-- name: DueLdapSyncs :many
+SELECT id, organization_id FROM organization.ldap_connections
+WHERE status = 'active'
+  AND (sync_started_at IS NULL OR sync_started_at <= NOW() - make_interval(mins => sync_interval_minutes))
+ORDER BY sync_started_at NULLS FIRST, id
+LIMIT $1
 `
 
-type GetExternalIdentityUserParams struct {
-	TenantID     uuid.UUID
-	Provider     string
-	ConnectionID uuid.UUID
-	Subject      string
+type DueLdapSyncsRow struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalIdentityUserParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getExternalIdentityUser,
-		arg.TenantID,
-		arg.Provider,
-		arg.ConnectionID,
-		arg.Subject,
+// Across organizations: the scheduled sync's job.
+func (q *Queries) DueLdapSyncs(ctx context.Context, maxConnections int32) ([]DueLdapSyncsRow, error) {
+	rows, err := q.db.Query(ctx, dueLdapSyncs, maxConnections)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DueLdapSyncsRow{}
+	for rows.Next() {
+		var i DueLdapSyncsRow
+		if err := rows.Scan(&i.ID, &i.OrganizationID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const failLdapSync = `-- name: FailLdapSync :exec
+UPDATE organization.ldap_connections SET sync_failing = TRUE
+WHERE id = $1 AND organization_id = $2
+`
+
+type FailLdapSyncParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) FailLdapSync(ctx context.Context, arg FailLdapSyncParams) error {
+	_, err := q.db.Exec(ctx, failLdapSync, arg.ID, arg.OrganizationID)
+	return err
+}
+
+const finishLdapSync = `-- name: FinishLdapSync :exec
+UPDATE organization.ldap_connections SET
+    sync_succeeded_at = NOW(),
+    sync_cursor       = COALESCE(NULLIF($1::text, ''), sync_cursor),
+    full_sync_at      = CASE WHEN $2::bool THEN NOW() ELSE full_sync_at END,
+    sync_people       = CASE WHEN $2::bool THEN $3::int ELSE sync_people END,
+    sync_failing      = FALSE
+WHERE id = $4 AND organization_id = $5
+`
+
+type FinishLdapSyncParams struct {
+	Cursor         string
+	FullRun        bool
+	People         int32
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) FinishLdapSync(ctx context.Context, arg FinishLdapSyncParams) error {
+	_, err := q.db.Exec(ctx, finishLdapSync,
+		arg.Cursor,
+		arg.FullRun,
+		arg.People,
+		arg.ID,
+		arg.OrganizationID,
 	)
-	var user_id uuid.UUID
-	err := row.Scan(&user_id)
-	return user_id, err
+	return err
 }
 
 const getLdapConnection = `-- name: GetLdapConnection :one
-SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+SELECT id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
        base_dn, user_filter, email_attribute, name_attribute, status,
-       created_at, updated_at, last_login_at
-FROM tenant.ldap_connections WHERE id = $1 AND tenant_id = $2
+       created_at, updated_at, last_login_at, sync_interval_minutes
+FROM organization.ldap_connections WHERE id = $1 AND organization_id = $2
 `
 
 type GetLdapConnectionParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type GetLdapConnectionRow struct {
-	ID             uuid.UUID
-	TenantID       uuid.UUID
-	Name           string
-	ServerUrl      string
-	StartTls       bool
-	SkipTlsVerify  bool
-	BindDn         string
-	BaseDn         string
-	UserFilter     string
-	EmailAttribute string
-	NameAttribute  string
-	Status         string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
+	ID                  uuid.UUID
+	OrganizationID      uuid.UUID
+	Name                string
+	ServerUrl           string
+	StartTls            bool
+	SkipTlsVerify       bool
+	BindDn              string
+	BaseDn              string
+	UserFilter          string
+	EmailAttribute      string
+	NameAttribute       string
+	Status              string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	LastLoginAt         *time.Time
+	SyncIntervalMinutes int32
 }
 
 func (q *Queries) GetLdapConnection(ctx context.Context, arg GetLdapConnectionParams) (GetLdapConnectionRow, error) {
-	row := q.db.QueryRow(ctx, getLdapConnection, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getLdapConnection, arg.ID, arg.OrganizationID)
 	var i GetLdapConnectionRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.ServerUrl,
 		&i.StartTls,
@@ -104,98 +189,296 @@ func (q *Queries) GetLdapConnection(ctx context.Context, arg GetLdapConnectionPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastLoginAt,
+		&i.SyncIntervalMinutes,
 	)
 	return i, err
 }
 
-const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
+const getLdapConnectionWithSecret = `-- name: GetLdapConnectionWithSecret :one
+SELECT id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+       base_dn, user_filter, email_attribute, name_attribute, status,
+       created_at, updated_at, last_login_at, sync_interval_minutes,
+       bind_password_ct, bind_password_nonce
+FROM organization.ldap_connections
+WHERE id = $1 AND ($2::uuid IS NULL OR organization_id = $2)
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getUserByEmail, email)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
+type GetLdapConnectionWithSecretParams struct {
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
 }
 
-const insertUserWithEmail = `-- name: InsertUserWithEmail :one
-INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
-VALUES ($1, $2, NOW(), $3, 'active')
-RETURNING id
-`
-
-type InsertUserWithEmailParams struct {
-	TenantID    pgtype.UUID
-	Email       string
-	DisplayName *string
+type GetLdapConnectionWithSecretRow struct {
+	ID                  uuid.UUID
+	OrganizationID      uuid.UUID
+	Name                string
+	ServerUrl           string
+	StartTls            bool
+	SkipTlsVerify       bool
+	BindDn              string
+	BaseDn              string
+	UserFilter          string
+	EmailAttribute      string
+	NameAttribute       string
+	Status              string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	LastLoginAt         *time.Time
+	SyncIntervalMinutes int32
+	BindPasswordCt      []byte
+	BindPasswordNonce   []byte
 }
 
-func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEmailParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, insertUserWithEmail, arg.TenantID, arg.Email, arg.DisplayName)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
-const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
-INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email)
-VALUES ($1, $2, $3, $4::uuid, $5, $6)
-ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING
-`
-
-type LinkExternalIdentityParams struct {
-	UserID       uuid.UUID
-	TenantID     uuid.UUID
-	Provider     string
-	ConnectionID uuid.UUID
-	Subject      string
-	Email        *string
-}
-
-func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIdentityParams) error {
-	_, err := q.db.Exec(ctx, linkExternalIdentity,
-		arg.UserID,
-		arg.TenantID,
-		arg.Provider,
-		arg.ConnectionID,
-		arg.Subject,
-		arg.Email,
+// A connection with its sealed bind password. A NULL organization_id reads it
+// by ID alone, for the public sign-in routes, whose path names the connection.
+func (q *Queries) GetLdapConnectionWithSecret(ctx context.Context, arg GetLdapConnectionWithSecretParams) (GetLdapConnectionWithSecretRow, error) {
+	row := q.db.QueryRow(ctx, getLdapConnectionWithSecret, arg.ID, arg.OrganizationID)
+	var i GetLdapConnectionWithSecretRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.ServerUrl,
+		&i.StartTls,
+		&i.SkipTlsVerify,
+		&i.BindDn,
+		&i.BaseDn,
+		&i.UserFilter,
+		&i.EmailAttribute,
+		&i.NameAttribute,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastLoginAt,
+		&i.SyncIntervalMinutes,
+		&i.BindPasswordCt,
+		&i.BindPasswordNonce,
 	)
-	return err
+	return i, err
+}
+
+const insertLdapConnection = `-- name: InsertLdapConnection :one
+INSERT INTO organization.ldap_connections
+    (id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+     bind_password_ct, bind_password_nonce,
+     base_dn, user_filter, email_attribute, name_attribute, status, sync_interval_minutes)
+VALUES ($1, $2, $3, $4, $5, $6, $7,
+        $8, $9,
+        $10, $11, $12, $13, $14, $15)
+RETURNING id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+          base_dn, user_filter, email_attribute, name_attribute, status,
+          created_at, updated_at, last_login_at, sync_interval_minutes
+`
+
+type InsertLdapConnectionParams struct {
+	ID                  uuid.UUID
+	OrganizationID      uuid.UUID
+	Name                string
+	ServerUrl           string
+	StartTls            bool
+	SkipTlsVerify       bool
+	BindDn              string
+	BindPasswordCt      []byte
+	BindPasswordNonce   []byte
+	BaseDn              string
+	UserFilter          string
+	EmailAttribute      string
+	NameAttribute       string
+	Status              string
+	SyncIntervalMinutes int32
+}
+
+type InsertLdapConnectionRow struct {
+	ID                  uuid.UUID
+	OrganizationID      uuid.UUID
+	Name                string
+	ServerUrl           string
+	StartTls            bool
+	SkipTlsVerify       bool
+	BindDn              string
+	BaseDn              string
+	UserFilter          string
+	EmailAttribute      string
+	NameAttribute       string
+	Status              string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	LastLoginAt         *time.Time
+	SyncIntervalMinutes int32
+}
+
+func (q *Queries) InsertLdapConnection(ctx context.Context, arg InsertLdapConnectionParams) (InsertLdapConnectionRow, error) {
+	row := q.db.QueryRow(ctx, insertLdapConnection,
+		arg.ID,
+		arg.OrganizationID,
+		arg.Name,
+		arg.ServerUrl,
+		arg.StartTls,
+		arg.SkipTlsVerify,
+		arg.BindDn,
+		arg.BindPasswordCt,
+		arg.BindPasswordNonce,
+		arg.BaseDn,
+		arg.UserFilter,
+		arg.EmailAttribute,
+		arg.NameAttribute,
+		arg.Status,
+		arg.SyncIntervalMinutes,
+	)
+	var i InsertLdapConnectionRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.ServerUrl,
+		&i.StartTls,
+		&i.SkipTlsVerify,
+		&i.BindDn,
+		&i.BaseDn,
+		&i.UserFilter,
+		&i.EmailAttribute,
+		&i.NameAttribute,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastLoginAt,
+		&i.SyncIntervalMinutes,
+	)
+	return i, err
+}
+
+const ldapConnectionManagers = `-- name: LdapConnectionManagers :many
+SELECT u.id FROM account.users u
+WHERE u.status = 'active' AND u.deleted_at IS NULL AND u.id IN (
+    SELECT ur.user_id FROM rbac.user_roles ur
+    JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+    JOIN rbac.permissions p ON p.id = rp.permission_id
+    WHERE ur.organization_id = $1 AND p.key = 'connection.write'
+    UNION
+    SELECT gm.user_id FROM organization.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+    JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+    JOIN rbac.permissions p ON p.id = rp.permission_id
+    WHERE gm.organization_id = $1 AND p.key = 'connection.write'
+)
+ORDER BY u.id
+`
+
+func (q *Queries) LdapConnectionManagers(ctx context.Context, organizationID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, ldapConnectionManagers, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const ldapLinkedPeople = `-- name: LdapLinkedPeople :many
+SELECT ei.user_id, ei.subject, COALESCE(ei.email, '')::text AS link_email, u.email, u.status,
+       COALESCE(u.suspension_source, '')::text AS suspension_source,
+       EXISTS (
+           SELECT 1 FROM rbac.user_roles ur
+           JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.organization_id = ur.organization_id AND ro.is_system AND ro.name = 'owner'
+           WHERE ur.user_id = u.id AND ur.organization_id = $1
+           UNION ALL
+           SELECT 1 FROM organization.group_members gm
+           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+           JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id AND ro.is_system AND ro.name = 'owner'
+           WHERE gm.user_id = u.id AND gm.organization_id = $1
+       )::bool AS owner
+FROM account.external_identities ei
+JOIN account.users u ON u.id = ei.user_id AND u.organization_id = ei.organization_id AND u.deleted_at IS NULL
+WHERE ei.organization_id = $1 AND ei.provider = 'ldap' AND ei.connection_id = $2::uuid
+ORDER BY ei.user_id, ei.subject
+`
+
+type LdapLinkedPeopleParams struct {
+	OrganizationID uuid.UUID
+	ConnectionID   uuid.UUID
+}
+
+type LdapLinkedPeopleRow struct {
+	UserID           uuid.UUID
+	Subject          string
+	LinkEmail        string
+	Email            string
+	Status           string
+	SuspensionSource string
+	Owner            bool
+}
+
+// Only accounts at home in the organization: a sync never touches another's.
+func (q *Queries) LdapLinkedPeople(ctx context.Context, arg LdapLinkedPeopleParams) ([]LdapLinkedPeopleRow, error) {
+	rows, err := q.db.Query(ctx, ldapLinkedPeople, arg.OrganizationID, arg.ConnectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LdapLinkedPeopleRow{}
+	for rows.Next() {
+		var i LdapLinkedPeopleRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Subject,
+			&i.LinkEmail,
+			&i.Email,
+			&i.Status,
+			&i.SuspensionSource,
+			&i.Owner,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listLdapConnections = `-- name: ListLdapConnections :many
 
-SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+SELECT id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
        base_dn, user_filter, email_attribute, name_attribute, status,
-       created_at, updated_at, last_login_at
-FROM tenant.ldap_connections WHERE tenant_id = $1 ORDER BY created_at DESC
+       created_at, updated_at, last_login_at, sync_interval_minutes
+FROM organization.ldap_connections WHERE organization_id = $1 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListLdapConnectionsRow struct {
-	ID             uuid.UUID
-	TenantID       uuid.UUID
-	Name           string
-	ServerUrl      string
-	StartTls       bool
-	SkipTlsVerify  bool
-	BindDn         string
-	BaseDn         string
-	UserFilter     string
-	EmailAttribute string
-	NameAttribute  string
-	Status         string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
+	ID                  uuid.UUID
+	OrganizationID      uuid.UUID
+	Name                string
+	ServerUrl           string
+	StartTls            bool
+	SkipTlsVerify       bool
+	BindDn              string
+	BaseDn              string
+	UserFilter          string
+	EmailAttribute      string
+	NameAttribute       string
+	Status              string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	LastLoginAt         *time.Time
+	SyncIntervalMinutes int32
 }
 
-// Queries for the ldap domain.
-// All queries below are STATIC and compiled by sqlc into ./dbgen.
-// getFull (conditional WHERE tenant_id) stays hand-written in ldap.go.
-func (q *Queries) ListLdapConnections(ctx context.Context, tenantID uuid.UUID) ([]ListLdapConnectionsRow, error) {
-	rows, err := q.db.Query(ctx, listLdapConnections, tenantID)
+// Queries for the ldap domain, compiled by sqlc into ./dbgen.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
+func (q *Queries) ListLdapConnections(ctx context.Context, organizationID uuid.UUID) ([]ListLdapConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, listLdapConnections, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +488,7 @@ func (q *Queries) ListLdapConnections(ctx context.Context, tenantID uuid.UUID) (
 		var i ListLdapConnectionsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Name,
 			&i.ServerUrl,
 			&i.StartTls,
@@ -219,6 +502,7 @@ func (q *Queries) ListLdapConnections(ctx context.Context, tenantID uuid.UUID) (
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LastLoginAt,
+			&i.SyncIntervalMinutes,
 		); err != nil {
 			return nil, err
 		}
@@ -230,8 +514,67 @@ func (q *Queries) ListLdapConnections(ctx context.Context, tenantID uuid.UUID) (
 	return items, nil
 }
 
+const reactivateLdapSuspension = `-- name: ReactivateLdapSuspension :execrows
+UPDATE account.users SET status = 'active', updated_at = NOW()
+WHERE id = $1 AND organization_id = $2::uuid AND deleted_at IS NULL
+  AND status = 'suspended' AND suspension_source = 'ldap'
+`
+
+type ReactivateLdapSuspensionParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) ReactivateLdapSuspension(ctx context.Context, arg ReactivateLdapSuspensionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reactivateLdapSuspension, arg.ID, arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetLdapSync = `-- name: ResetLdapSync :exec
+
+UPDATE organization.ldap_connections SET sync_cursor = NULL, full_sync_at = NULL, sync_people = NULL
+WHERE id = $1 AND organization_id = $2
+`
+
+type ResetLdapSyncParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// ---- Scheduled sync (sync.go) ----
+func (q *Queries) ResetLdapSync(ctx context.Context, arg ResetLdapSyncParams) error {
+	_, err := q.db.Exec(ctx, resetLdapSync, arg.ID, arg.OrganizationID)
+	return err
+}
+
+const setLdapBindPassword = `-- name: SetLdapBindPassword :exec
+UPDATE organization.ldap_connections
+SET bind_password_ct = $1, bind_password_nonce = $2, updated_at = NOW()
+WHERE id = $3 AND organization_id = $4
+`
+
+type SetLdapBindPasswordParams struct {
+	BindPasswordCt    []byte
+	BindPasswordNonce []byte
+	ID                uuid.UUID
+	OrganizationID    uuid.UUID
+}
+
+func (q *Queries) SetLdapBindPassword(ctx context.Context, arg SetLdapBindPasswordParams) error {
+	_, err := q.db.Exec(ctx, setLdapBindPassword,
+		arg.BindPasswordCt,
+		arg.BindPasswordNonce,
+		arg.ID,
+		arg.OrganizationID,
+	)
+	return err
+}
+
 const touchLdapLastLogin = `-- name: TouchLdapLastLogin :exec
-UPDATE tenant.ldap_connections SET last_login_at = NOW() WHERE id = $1
+UPDATE organization.ldap_connections SET last_login_at = NOW() WHERE id = $1
 `
 
 func (q *Queries) TouchLdapLastLogin(ctx context.Context, id uuid.UUID) error {
@@ -240,7 +583,7 @@ func (q *Queries) TouchLdapLastLogin(ctx context.Context, id uuid.UUID) error {
 }
 
 const updateLdapConnection = `-- name: UpdateLdapConnection :one
-UPDATE tenant.ldap_connections SET
+UPDATE organization.ldap_connections SET
     name            = COALESCE($1, name),
     server_url      = COALESCE($2, server_url),
     start_tls       = COALESCE($3, start_tls),
@@ -251,44 +594,47 @@ UPDATE tenant.ldap_connections SET
     email_attribute = COALESCE($8, email_attribute),
     name_attribute  = COALESCE($9, name_attribute),
     status          = COALESCE($10, status),
+    sync_interval_minutes = COALESCE($11, sync_interval_minutes),
     updated_at      = NOW()
-WHERE id = $11 AND tenant_id = $12
-RETURNING id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+WHERE id = $12 AND organization_id = $13
+RETURNING id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
           base_dn, user_filter, email_attribute, name_attribute, status,
-          created_at, updated_at, last_login_at
+          created_at, updated_at, last_login_at, sync_interval_minutes
 `
 
 type UpdateLdapConnectionParams struct {
-	Name           *string
-	ServerUrl      *string
-	StartTls       *bool
-	SkipTlsVerify  *bool
-	BindDn         *string
-	BaseDn         *string
-	UserFilter     *string
-	EmailAttribute *string
-	NameAttribute  *string
-	Status         *string
-	ID             uuid.UUID
-	TenantID       uuid.UUID
+	Name                *string
+	ServerUrl           *string
+	StartTls            *bool
+	SkipTlsVerify       *bool
+	BindDn              *string
+	BaseDn              *string
+	UserFilter          *string
+	EmailAttribute      *string
+	NameAttribute       *string
+	Status              *string
+	SyncIntervalMinutes *int32
+	ID                  uuid.UUID
+	OrganizationID      uuid.UUID
 }
 
 type UpdateLdapConnectionRow struct {
-	ID             uuid.UUID
-	TenantID       uuid.UUID
-	Name           string
-	ServerUrl      string
-	StartTls       bool
-	SkipTlsVerify  bool
-	BindDn         string
-	BaseDn         string
-	UserFilter     string
-	EmailAttribute string
-	NameAttribute  string
-	Status         string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
+	ID                  uuid.UUID
+	OrganizationID      uuid.UUID
+	Name                string
+	ServerUrl           string
+	StartTls            bool
+	SkipTlsVerify       bool
+	BindDn              string
+	BaseDn              string
+	UserFilter          string
+	EmailAttribute      string
+	NameAttribute       string
+	Status              string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	LastLoginAt         *time.Time
+	SyncIntervalMinutes int32
 }
 
 func (q *Queries) UpdateLdapConnection(ctx context.Context, arg UpdateLdapConnectionParams) (UpdateLdapConnectionRow, error) {
@@ -303,13 +649,14 @@ func (q *Queries) UpdateLdapConnection(ctx context.Context, arg UpdateLdapConnec
 		arg.EmailAttribute,
 		arg.NameAttribute,
 		arg.Status,
+		arg.SyncIntervalMinutes,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	var i UpdateLdapConnectionRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.ServerUrl,
 		&i.StartTls,
@@ -323,6 +670,7 @@ func (q *Queries) UpdateLdapConnection(ctx context.Context, arg UpdateLdapConnec
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastLoginAt,
+		&i.SyncIntervalMinutes,
 	)
 	return i, err
 }

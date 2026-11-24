@@ -1,12 +1,16 @@
 package billing
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
 )
 
 func TestNormalizeCurrency(t *testing.T) {
@@ -74,7 +78,7 @@ func TestPeriodEnd(t *testing.T) {
 }
 
 func TestBuiltinPlansArePricedConsistently(t *testing.T) {
-	// Every builtin plan must price every currency the others do, so a tenant
+	// Every builtin plan must price every currency the others do, so an organization
 	// can pick any seeded currency on any plan.
 	var currencies map[string]bool
 	for _, b := range builtins {
@@ -126,10 +130,10 @@ func TestCostsNoMore(t *testing.T) {
 // TestBuiltinPlansPromiseOnlyWhatShips keeps the catalogue the console and the
 // website show to what the product actually does. Each phrase below names
 // something that isn't built or committed to: an uptime figure or SLA, keys
-// the customer brings, data residency, a dedicated tenant, a certification,
+// the customer brings, data residency, a dedicated organization, a certification,
 // a custom sign-in domain, or usage metering.
 func TestBuiltinPlansPromiseOnlyWhatShips(t *testing.T) {
-	unsupported := []string{"uptime", "SLA", "BYOK", "residency", "Dedicated tenant", "HIPAA", "& domain", "metered"}
+	unsupported := []string{"uptime", "SLA", "BYOK", "residency", "Dedicated organization", "HIPAA", "& domain", "metered"}
 	for _, p := range builtins {
 		for _, line := range p.features {
 			for _, phrase := range unsupported {
@@ -160,5 +164,34 @@ func TestYearlyPlansMatchMonthlyFeatures(t *testing.T) {
 		if !slices.Equal(p.features, monthly.features) {
 			t.Errorf("plan %s features differ from %s", p.code, monthly.code)
 		}
+	}
+}
+
+type noProvisioner struct{}
+
+func (noProvisioner) ProvisionOrg(context.Context, uuid.UUID, string, string, string, string) (uuid.UUID, error) {
+	return uuid.Nil, nil
+}
+
+// TestNewServiceNeedsPaymentsAndAProvisioner checks that billing is not built
+// without its card providers, or without what creates the organization a
+// signup checkout pays for (which would take the payment and create nothing),
+// and that invoice emails are not built without a mailer.
+func TestNewServiceNeedsPaymentsAndAProvisioner(t *testing.T) {
+	full := Config{Payments: NewPayments("", "", "", "", ""), OrgProvisioner: noProvisioner{}}
+	svc, err := NewService(new(pgxpool.Pool), full)
+	if err != nil {
+		t.Fatalf("built with both: %v", err)
+	}
+	noPayments, noOrgs := full, full
+	noPayments.Payments, noOrgs.OrgProvisioner = nil, nil
+	if _, err := NewService(new(pgxpool.Pool), noPayments); err == nil {
+		t.Error("built without payment providers")
+	}
+	if _, err := NewService(new(pgxpool.Pool), noOrgs); err == nil {
+		t.Error("built without an organization provisioner")
+	}
+	if _, err := NewInvoiceEmails(svc, nil, ""); err == nil {
+		t.Error("invoice emails built without a mailer")
 	}
 }

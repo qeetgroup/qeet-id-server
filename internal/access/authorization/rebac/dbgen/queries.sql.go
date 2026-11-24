@@ -9,34 +9,33 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countRelationObjects = `-- name: CountRelationObjects :one
 SELECT count(DISTINCT object_id)::int FROM auth.relation_tuples
-WHERE tenant_id = $1 AND object_type = $2
+WHERE organization_id = $1 AND object_type = $2
 `
 
 type CountRelationObjectsParams struct {
-	TenantID   uuid.UUID
-	ObjectType string
+	OrganizationID uuid.UUID
+	ObjectType     string
 }
 
 func (q *Queries) CountRelationObjects(ctx context.Context, arg CountRelationObjectsParams) (int32, error) {
-	row := q.db.QueryRow(ctx, countRelationObjects, arg.TenantID, arg.ObjectType)
+	row := q.db.QueryRow(ctx, countRelationObjects, arg.OrganizationID, arg.ObjectType)
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
 }
 
 const deleteRelationTuple = `-- name: DeleteRelationTuple :one
-DELETE FROM auth.relation_tuples WHERE id = $1 AND tenant_id = $2
+DELETE FROM auth.relation_tuples WHERE id = $1 AND organization_id = $2
 RETURNING object_type, object_id, relation, subject_type, subject_id, subject_relation
 `
 
 type DeleteRelationTupleParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type DeleteRelationTupleRow struct {
@@ -50,7 +49,7 @@ type DeleteRelationTupleRow struct {
 
 // Returns the tuple removed, for its audit entry.
 func (q *Queries) DeleteRelationTuple(ctx context.Context, arg DeleteRelationTupleParams) (DeleteRelationTupleRow, error) {
-	row := q.db.QueryRow(ctx, deleteRelationTuple, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, deleteRelationTuple, arg.ID, arg.OrganizationID)
 	var i DeleteRelationTupleRow
 	err := row.Scan(
 		&i.ObjectType,
@@ -66,14 +65,14 @@ func (q *Queries) DeleteRelationTuple(ctx context.Context, arg DeleteRelationTup
 const fetchSubjects = `-- name: FetchSubjects :many
 SELECT subject_type, subject_id, subject_relation
 FROM auth.relation_tuples
-WHERE tenant_id = $1 AND object_type = $2 AND object_id = $3 AND relation = $4
+WHERE organization_id = $1 AND object_type = $2 AND object_id = $3 AND relation = $4
 `
 
 type FetchSubjectsParams struct {
-	TenantID   uuid.UUID
-	ObjectType string
-	ObjectID   string
-	Relation   string
+	OrganizationID uuid.UUID
+	ObjectType     string
+	ObjectID       string
+	Relation       string
 }
 
 type FetchSubjectsRow struct {
@@ -85,7 +84,7 @@ type FetchSubjectsRow struct {
 // Hot path for Check/Explain/Expand: fetch every subject granted relation on one object.
 func (q *Queries) FetchSubjects(ctx context.Context, arg FetchSubjectsParams) ([]FetchSubjectsRow, error) {
 	rows, err := q.db.Query(ctx, fetchSubjects,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ObjectType,
 		arg.ObjectID,
 		arg.Relation,
@@ -111,15 +110,15 @@ func (q *Queries) FetchSubjects(ctx context.Context, arg FetchSubjectsParams) ([
 const insertRelationTuple = `-- name: InsertRelationTuple :one
 
 INSERT INTO auth.relation_tuples
-    (tenant_id, object_type, object_id, relation, subject_type, subject_id, subject_relation)
+    (organization_id, object_type, object_id, relation, subject_type, subject_id, subject_relation)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (tenant_id, object_type, object_id, relation, subject_type, subject_id, subject_relation)
-DO UPDATE SET tenant_id = EXCLUDED.tenant_id
+ON CONFLICT (organization_id, object_type, object_id, relation, subject_type, subject_id, subject_relation)
+DO UPDATE SET organization_id = EXCLUDED.organization_id
 RETURNING id
 `
 
 type InsertRelationTupleParams struct {
-	TenantID        uuid.UUID
+	OrganizationID  uuid.UUID
 	ObjectType      string
 	ObjectID        string
 	Relation        string
@@ -133,7 +132,7 @@ type InsertRelationTupleParams struct {
 // lives in Go, not SQL), so all are converted.
 func (q *Queries) InsertRelationTuple(ctx context.Context, arg InsertRelationTupleParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertRelationTuple,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ObjectType,
 		arg.ObjectID,
 		arg.Relation,
@@ -149,10 +148,10 @@ func (q *Queries) InsertRelationTuple(ctx context.Context, arg InsertRelationTup
 const listRelationObjectTypes = `-- name: ListRelationObjectTypes :many
 SELECT object_type, count(DISTINCT object_id)::int AS objects, count(*)::int AS tuples
 FROM auth.relation_tuples
-WHERE tenant_id = $1
+WHERE organization_id = $1
 GROUP BY object_type
 ORDER BY object_type
-LIMIT 500
+LIMIT 1001
 `
 
 type ListRelationObjectTypesRow struct {
@@ -161,10 +160,11 @@ type ListRelationObjectTypesRow struct {
 	Tuples     int32
 }
 
-// ListRelationObjectTypes counts, for each type of object the tenant's tuples
+// ListRelationObjectTypes counts, for each type of object the organization's tuples
 // name, its objects and tuples.
-func (q *Queries) ListRelationObjectTypes(ctx context.Context, tenantID uuid.UUID) ([]ListRelationObjectTypesRow, error) {
-	rows, err := q.db.Query(ctx, listRelationObjectTypes, tenantID)
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
+func (q *Queries) ListRelationObjectTypes(ctx context.Context, organizationID uuid.UUID) ([]ListRelationObjectTypesRow, error) {
+	rows, err := q.db.Query(ctx, listRelationObjectTypes, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -186,17 +186,17 @@ func (q *Queries) ListRelationObjectTypes(ctx context.Context, tenantID uuid.UUI
 const listRelationObjects = `-- name: ListRelationObjects :many
 SELECT object_id, count(*)::int AS tuples
 FROM auth.relation_tuples
-WHERE tenant_id = $1 AND object_type = $2 AND object_id > $3
+WHERE organization_id = $1 AND object_type = $2 AND object_id > $3
 GROUP BY object_id
 ORDER BY object_id
 LIMIT $4
 `
 
 type ListRelationObjectsParams struct {
-	TenantID   uuid.UUID
-	ObjectType string
-	After      string
-	RowLimit   int32
+	OrganizationID uuid.UUID
+	ObjectType     string
+	After          string
+	RowLimit       int32
 }
 
 type ListRelationObjectsRow struct {
@@ -204,11 +204,11 @@ type ListRelationObjectsRow struct {
 	Tuples   int32
 }
 
-// ListRelationObjects returns a page of the objects of one type the tenant's
+// ListRelationObjects returns a page of the objects of one type the organization's
 // tuples name, by id, after the cursor, with how many tuples each has.
 func (q *Queries) ListRelationObjects(ctx context.Context, arg ListRelationObjectsParams) ([]ListRelationObjectsRow, error) {
 	rows, err := q.db.Query(ctx, listRelationObjects,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ObjectType,
 		arg.After,
 		arg.RowLimit,
@@ -234,15 +234,15 @@ func (q *Queries) ListRelationObjects(ctx context.Context, arg ListRelationObjec
 const listRelationTuplesByObject = `-- name: ListRelationTuplesByObject :many
 SELECT id, relation, subject_type, subject_id, subject_relation
 FROM auth.relation_tuples
-WHERE tenant_id = $1 AND object_type = $2 AND object_id = $3
+WHERE organization_id = $1 AND object_type = $2 AND object_id = $3
 ORDER BY relation, subject_type, subject_id
 LIMIT 1001
 `
 
 type ListRelationTuplesByObjectParams struct {
-	TenantID   uuid.UUID
-	ObjectType string
-	ObjectID   string
+	OrganizationID uuid.UUID
+	ObjectType     string
+	ObjectID       string
 }
 
 type ListRelationTuplesByObjectRow struct {
@@ -255,7 +255,7 @@ type ListRelationTuplesByObjectRow struct {
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListRelationTuplesByObject(ctx context.Context, arg ListRelationTuplesByObjectParams) ([]ListRelationTuplesByObjectRow, error) {
-	rows, err := q.db.Query(ctx, listRelationTuplesByObject, arg.TenantID, arg.ObjectType, arg.ObjectID)
+	rows, err := q.db.Query(ctx, listRelationTuplesByObject, arg.OrganizationID, arg.ObjectType, arg.ObjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -283,15 +283,15 @@ func (q *Queries) ListRelationTuplesByObject(ctx context.Context, arg ListRelati
 const listRelationTuplesBySubject = `-- name: ListRelationTuplesBySubject :many
 SELECT id, object_type, object_id, relation, subject_relation
 FROM auth.relation_tuples
-WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
+WHERE organization_id = $1 AND subject_type = $2 AND subject_id = $3
 ORDER BY object_type, object_id, relation
 LIMIT 1001
 `
 
 type ListRelationTuplesBySubjectParams struct {
-	TenantID    uuid.UUID
-	SubjectType string
-	SubjectID   string
+	OrganizationID uuid.UUID
+	SubjectType    string
+	SubjectID      string
 }
 
 type ListRelationTuplesBySubjectRow struct {
@@ -304,7 +304,7 @@ type ListRelationTuplesBySubjectRow struct {
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListRelationTuplesBySubject(ctx context.Context, arg ListRelationTuplesBySubjectParams) ([]ListRelationTuplesBySubjectRow, error) {
-	rows, err := q.db.Query(ctx, listRelationTuplesBySubject, arg.TenantID, arg.SubjectType, arg.SubjectID)
+	rows, err := q.db.Query(ctx, listRelationTuplesBySubject, arg.OrganizationID, arg.SubjectType, arg.SubjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -331,15 +331,15 @@ func (q *Queries) ListRelationTuplesBySubject(ctx context.Context, arg ListRelat
 
 const namePeople = `-- name: NamePeople :many
 SELECT u.id, COALESCE(NULLIF(u.display_name, ''), u.email)::text AS name
-FROM "user".users u
+FROM account.users u
 WHERE u.id = ANY($1::uuid[]) AND u.deleted_at IS NULL
-  AND (u.tenant_id = $2 OR EXISTS (
-      SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2))
+  AND (u.organization_id = $2 OR EXISTS (
+      SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.organization_id = $2))
 `
 
 type NamePeopleParams struct {
-	Ids      []uuid.UUID
-	TenantID pgtype.UUID
+	Ids            []uuid.UUID
+	OrganizationID *uuid.UUID
 }
 
 type NamePeopleRow struct {
@@ -348,9 +348,9 @@ type NamePeopleRow struct {
 }
 
 // NamePeople names, by display name or else address, those of ids who belong
-// to the organisation: their home, or one they hold a role in.
+// to the organization: their home, or one they hold a role in.
 func (q *Queries) NamePeople(ctx context.Context, arg NamePeopleParams) ([]NamePeopleRow, error) {
-	rows, err := q.db.Query(ctx, namePeople, arg.Ids, arg.TenantID)
+	rows, err := q.db.Query(ctx, namePeople, arg.Ids, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}

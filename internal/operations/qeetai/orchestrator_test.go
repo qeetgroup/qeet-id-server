@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/sse"
 )
 
 // fakeStream is a provider stream that sends events, then, unless it is
@@ -52,7 +53,7 @@ func collectOf(t *testing.T, events []ai.Event, endless bool, maxOutput int) (st
 	defer cancel()
 	stream, errC, stopped := fakeStream(ctx, events, endless)
 	rec := httptest.NewRecorder()
-	text, tools, ok := collect(stream, errC, cancel, newSSEWriter(rec), maxOutput, &usage{})
+	text, tools, ok := collect(stream, errC, cancel, sse.Open(rec, time.Minute), maxOutput, &usage{})
 	select {
 	case <-stopped:
 	case <-time.After(5 * time.Second):
@@ -77,7 +78,7 @@ func TestCollectTakesSeveralToolCalls(t *testing.T) {
 		start(0, "a"), input(0, `{"q":`), start(1, "b"), input(0, `"x"}`), input(1, `{}`),
 		start(2, "c"),
 		{Type: ai.EventStop, StopReason: "tool_use"},
-	}, false, DefaultLimits.OutputBytes)
+	}, false, maxOutputBytes)
 	if !ok || text != "Looking" || len(tools) != 3 {
 		t.Fatalf("collect = %q, %d calls, %v; frames %s", text, len(tools), ok, frames)
 	}
@@ -109,7 +110,7 @@ func TestCollectRefusesAToolCallOutOfBounds(t *testing.T) {
 		"an input too large":   {start(0, "a"), input(0, big), input(0, big)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, tools, ok, frames := collectOf(t, events, true, DefaultLimits.OutputBytes)
+			_, tools, ok, frames := collectOf(t, events, true, maxOutputBytes)
 			if ok || tools != nil {
 				t.Fatalf("collect accepted it: %d calls", len(tools))
 			}

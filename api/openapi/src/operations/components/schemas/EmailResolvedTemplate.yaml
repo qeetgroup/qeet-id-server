@@ -1,0 +1,32 @@
+allOf:
+  - $ref: ./EmailEditorInput.yaml
+  - type: object
+    required:
+      - key
+      - name
+      - description
+      - variables
+      - custom
+      - delivery_scope
+    properties:
+      key:
+        type: string
+      name:
+        type: string
+      description:
+        type: string
+      variables:
+        type: array
+        items:
+          type: string
+      custom:
+        type: boolean
+      delivery_scope:
+        type: string
+        description: >-
+          Whose version of the template is sent. Every template answers
+          organization: the organization's saved version is sent, else the
+          default. platform stays in the enumeration for compatibility.
+        enum:
+          - organization
+          - platform

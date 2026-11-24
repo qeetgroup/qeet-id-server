@@ -1,0 +1,9 @@
+type: object
+required:
+  - delta_pct
+  - value
+properties:
+  delta_pct:
+    type: number
+  value:
+    type: number

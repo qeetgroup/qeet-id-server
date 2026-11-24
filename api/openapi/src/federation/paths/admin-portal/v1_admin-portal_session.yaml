@@ -1,0 +1,59 @@
+post:
+  operationId: createPortalSession
+  summary: Exchange a one-time portal link
+  description: >-
+    Consumes the link token from `Authorization: Bearer <token>` and sets a
+    short-lived HttpOnly portal session cookie. The link token cannot be
+    exchanged again.
+  tags:
+    - Admin Portal
+  security:
+    - adminPortalLink: []
+  responses:
+    "201":
+      description: Portal session created
+      headers:
+        Set-Cookie:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - context
+              - expires_at
+              - redirect_url
+            properties:
+              context:
+                $ref: ../../components/schemas/PortalContext.yaml
+              expires_at:
+                type: string
+                format: date-time
+              redirect_url:
+                type: string
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+delete:
+  operationId: deletePortalSession
+  description: >-
+    Revokes the current admin-portal session and clears its session cookie,
+    ending the external IT admin's portal access. Authenticated by the portal
+    session cookie. A new session requires exchanging a fresh link token at POST
+    /v1/admin-portal/session.
+  summary: Revoke the current portal session
+  tags:
+    - Admin Portal
+  security:
+    - adminPortalCookie: []
+  responses:
+    "204":
+      description: Session revoked
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

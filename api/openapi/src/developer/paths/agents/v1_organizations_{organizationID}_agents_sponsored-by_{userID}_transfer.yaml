@@ -1,0 +1,56 @@
+post:
+  operationId: transferAgentSponsorship
+  summary: Transfer sponsorship
+  description: >-
+    Reassigns every agent userID sponsors to to_user_id in one call — the
+    offboarding operation, so no agent is left with an owner who no longer has
+    access.
+  tags:
+    - Agents
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: userID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - to_user_id
+          properties:
+            to_user_id:
+              type: string
+              format: uuid
+              description: Must be a member of this organization.
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              transferred:
+                type: integer
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

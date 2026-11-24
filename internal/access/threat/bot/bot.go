@@ -8,20 +8,16 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/bot/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
@@ -30,7 +26,7 @@ import (
 const recordFloor = 0.30
 
 // challengeFloor is the score at/above which a verdict is "challenged" (below
-// the tenant's block threshold). Below it the verdict is "allowed".
+// the organization's block threshold). Below it the verdict is "allowed".
 const challengeFloor = 0.50
 
 // botSignatures are case-insensitive User-Agent substrings typical of scripts,
@@ -63,7 +59,7 @@ func Score(ua string) float64 {
 	return 0
 }
 
-// Settings is a tenant's bot-detection config. Only UACheck and ScoreThreshold
+// Settings is an organization's bot-detection config. Only UACheck and ScoreThreshold
 // affect Evaluate; Honeypot, Captcha and Signature are stored but not enforced.
 type Settings struct {
 	UACheck        bool    `json:"ua_check"`
@@ -73,7 +69,7 @@ type Settings struct {
 	ScoreThreshold float64 `json:"score_threshold"`
 }
 
-// DefaultSettings mirrors the column defaults — used when a tenant has no row.
+// DefaultSettings mirrors the column defaults — used when an organization has no row.
 func DefaultSettings() Settings {
 	return Settings{UACheck: true, Honeypot: true, Captcha: false, Signature: false, ScoreThreshold: 0.70}
 }
@@ -100,12 +96,18 @@ const outcomeWindow = 5 * time.Minute
 
 // Page is a page of detections, newest first, with how many there are.
 type Page struct {
-	Items      []Event `json:"items"`
-	NextCursor string  `json:"next_cursor,omitempty"`
-	Total      int     `json:"total"`
+	paging.Result[Event]
+	Total int `json:"total"`
 }
 
-// Stats counts the tenant's blocked and challenged requests over the last
+// Overview is the bot-detection screen's body: a page of detections and the
+// counts above them.
+type Overview struct {
+	*Page
+	Stats *Stats `json:"stats"`
+}
+
+// Stats counts the organization's blocked and challenged requests over the last
 // day.
 type Stats struct {
 	Blocked24h    int     `json:"blocked_24h"`
@@ -125,24 +127,24 @@ func NewService(pool *pgxpool.Pool) *Service {
 }
 
 // Evaluate scores a sign-in's User-Agent and, when it looks suspicious, records
-// a verdict in the tenant the email belongs to. Best effort: it never blocks or
+// a verdict in the organization the email belongs to. Best effort: it never blocks or
 // fails the sign-in.
 func (s *Service) Evaluate(ctx context.Context, email, ip, ua string) {
 	score := Score(ua)
 	if score < recordFloor {
 		return // clearly human — don't log
 	}
-	row, err := s.q.GetUserTenantByEmail(ctx, email)
+	row, err := s.q.GetUserOrganizationByEmail(ctx, email)
 	if err != nil {
-		return // no tenant to scope the verdict to
+		return // no organization to scope the verdict to
 	}
-	if !row.TenantID.Valid {
+	if row.OrganizationID == nil {
 		return
 	}
-	tenantID, userID := uuid.UUID(row.TenantID.Bytes), row.ID
-	settings, err := s.GetSettings(ctx, tenantID)
+	organizationID, userID := *row.OrganizationID, row.ID
+	settings, err := s.GetSettings(ctx, organizationID)
 	if err != nil || !settings.UACheck {
-		return // UA scoring disabled for this tenant
+		return // UA scoring disabled for this organization
 	}
 	verdict := "allowed"
 	switch {
@@ -151,79 +153,51 @@ func (s *Service) Evaluate(ctx context.Context, email, ip, ua string) {
 	case score >= challengeFloor:
 		verdict = "challenged"
 	}
-	// InsertBotEvent left raw: NULLIF($2,'')::inet causes sqlc parameter-type
-	// ambiguity for the inet cast.
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.bot_events (tenant_id, ip, user_agent, score, verdict, user_id)
-		VALUES ($1, NULLIF($2,'')::inet, $3, $4, $5, $6)
-	`, tenantID, ip, ua, score, verdict, userID); err != nil {
+	if err := s.q.InsertBotEvent(ctx, dbgen.InsertBotEventParams{
+		OrganizationID: organizationID, Ip: ip, UserAgent: ua, Score: float32(score), Verdict: verdict, UserID: &userID,
+	}); err != nil {
 		slog.Warn("record bot event", "err", err)
 	}
 }
 
-// List returns a page of up to limit of the tenant's detections (50 when not
-// in 1..200), newest first, after cursor, of verdict when given, and how many
-// there are.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int, cursor, verdict string) (*Page, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	page := &Page{Items: []Event{}}
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM auth.bot_events WHERE tenant_id = $1 AND ($2 = '' OR verdict = $2)`,
-		tenantID, verdict).Scan(&page.Total); err != nil {
-		return nil, err
-	}
-	afterTs, afterID := time.Now().Add(time.Hour), uuid.Max
-	if cursor != "" {
-		var err error
-		if afterTs, afterID, err = paging.DecodeTimeUUID(cursor); err != nil {
-			return nil, errs.ErrBadRequest.WithDetail("invalid cursor")
-		}
-	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT b.id, host(b.ip), b.user_agent, b.score, b.verdict, b.created_at, b.user_id, u.email,
-		       COALESCE((
-				SELECT CASE e.action WHEN 'auth.login_succeeded' THEN 'signed_in' ELSE 'failed' END
-				FROM audit.events e
-				WHERE e.tenant_id = b.tenant_id AND e.actor_user_id = b.user_id
-				  AND e.action IN ('auth.login_succeeded', 'auth.sign_in_failed')
-				  AND e.ip IS NOT DISTINCT FROM b.ip
-				  AND e.created_at >= b.created_at AND e.created_at < b.created_at + $5::interval
-				ORDER BY e.created_at LIMIT 1), 'unknown') AS outcome
-		FROM auth.bot_events b
-		LEFT JOIN "user".users u ON u.id = b.user_id
-		WHERE b.tenant_id = $1 AND ($2 = '' OR b.verdict = $2) AND (b.created_at, b.id) < ($3, $4)
-		ORDER BY b.created_at DESC, b.id DESC LIMIT $6
-	`, tenantID, verdict, afterTs, afterID, outcomeWindow.String(), limit+1)
+// List returns a page of up to limit of the organization's detections (50 when
+// unset, at most 200), newest first, after the cursor, of verdict when given,
+// and how many there are.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID, limit int, after paging.Cursor, verdict string) (*Page, error) {
+	limit = paging.Clamp(limit, 50, 200)
+	total, err := s.q.CountBotEvents(ctx, dbgen.CountBotEventsParams{OrganizationID: organizationID, Verdict: verdict})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var e Event
-		if err := rows.Scan(&e.ID, &e.IP, &e.UserAgent, &e.Score, &e.Verdict, &e.CreatedAt, &e.UserID, &e.UserEmail, &e.Outcome); err != nil {
-			return nil, err
-		}
-		page.Items = append(page.Items, e)
+	params := dbgen.ListBotEventsParams{
+		OrganizationID: organizationID, Verdict: verdict, OutcomeWindow: outcomeWindow.String(),
+		Lim: int32(limit + 1), // #nosec G115 -- at most 201
 	}
-	if err := rows.Err(); err != nil {
+	params.BeforeTs, params.BeforeID = after.Before()
+	rows, err := s.q.ListBotEvents(ctx, params)
+	if err != nil {
 		return nil, err
 	}
-	if len(page.Items) > limit {
-		page.Items = page.Items[:limit]
-		last := page.Items[limit-1]
-		page.NextCursor = paging.EncodeTimeUUID(last.CreatedAt, last.ID)
+	items := make([]Event, len(rows))
+	for i, row := range rows {
+		items[i] = Event{
+			ID: row.ID, IP: postgres.NullIfZero(row.Ip), UserAgent: row.UserAgent, Score: float64(row.Score),
+			Verdict: row.Verdict, CreatedAt: row.CreatedAt, UserID: row.UserID, UserEmail: row.UserEmail, Outcome: row.Outcome,
+		}
 	}
-	return page, nil
+	return &Page{
+		Result: paging.Page(paging.Next(items, limit, func(e Event) (time.Time, uuid.UUID) { return e.CreatedAt, e.ID })),
+		Total:  int(total),
+	}, nil
 }
 
-// Stats returns the tenant's bot-detection counts.
-func (s *Service) Stats(ctx context.Context, tenantID uuid.UUID) (*Stats, error) {
-	row, err := s.q.GetBotEventStats(ctx, tenantID)
+// Stats returns the organization's bot-detection counts.
+func (s *Service) Stats(ctx context.Context, organizationID uuid.UUID) (*Stats, error) {
+	row, err := s.q.GetBotEventStats(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	settings, err := s.GetSettings(ctx, tenantID)
+	settings, err := s.GetSettings(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -234,9 +208,9 @@ func (s *Service) Stats(ctx context.Context, tenantID uuid.UUID) (*Stats, error)
 	}, nil
 }
 
-// GetSettings returns the tenant's bot-detection settings.
-func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings, error) {
-	row, err := s.q.GetBotSettings(ctx, tenantID)
+// GetSettings returns the organization's bot-detection settings.
+func (s *Service) GetSettings(ctx context.Context, organizationID uuid.UUID) (Settings, error) {
+	row, err := s.q.GetBotSettings(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DefaultSettings(), nil
 	}
@@ -252,9 +226,9 @@ func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings
 	}, nil
 }
 
-// UpdateSettings stores the tenant's bot-detection settings, recorded as
+// UpdateSettings stores the organization's bot-detection settings, recorded as
 // actor's with each setting it changed.
-func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings, actor audit.Actor) (Settings, error) {
+func (s *Service) UpdateSettings(ctx context.Context, organizationID uuid.UUID, in Settings, actor audit.Actor) (Settings, error) {
 	if in.ScoreThreshold < 0.1 {
 		in.ScoreThreshold = 0.1
 	}
@@ -268,7 +242,7 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	before := DefaultSettings()
-	row, err := q.LockBotSettings(ctx, tenantID)
+	row, err := q.LockBotSettings(ctx, organizationID)
 	switch {
 	case err == nil:
 		before = Settings{UACheck: row.UaCheck, Honeypot: row.Honeypot, Captcha: row.Captcha,
@@ -277,7 +251,7 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 		return Settings{}, err
 	}
 	if err := q.UpsertBotSettings(ctx, dbgen.UpsertBotSettingsParams{
-		TenantID:       tenantID,
+		OrganizationID: organizationID,
 		UaCheck:        in.UACheck,
 		Honeypot:       in.Honeypot,
 		Captcha:        in.Captcha,
@@ -286,7 +260,7 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	}); err != nil {
 		return Settings{}, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "bot.settings_updated", "tenant", tenantID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "bot.settings_updated", "organization", organizationID,
 		map[string]any{"changes": audit.Changes(before.audited(), in.audited()), "settings": in.audited()})); err != nil {
 		return Settings{}, err
 	}
@@ -303,77 +277,4 @@ func (st Settings) audited() map[string]any {
 		"ua_check": st.UACheck, "honeypot": st.Honeypot, "captcha": st.Captcha,
 		"signature": st.Signature, "score_threshold": float32(st.ScoreThreshold),
 	}
-}
-
-// Handler serves the bot detection HTTP API.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers the bot detection routes on r.
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/security/bots", h.overview)
-	r.Get("/tenants/{tenantID}/security/bots/settings", h.getSettings)
-	r.Put("/tenants/{tenantID}/security/bots/settings", h.putSettings)
-}
-
-func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	query := r.URL.Query()
-	limit, _ := strconv.Atoi(query.Get("limit"))
-	verdict := query.Get("verdict")
-	if verdict != "" && verdict != "allowed" && verdict != "challenged" && verdict != "blocked" {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid verdict"))
-		return
-	}
-	page, err := h.Service.List(r.Context(), tenantID, limit, query.Get("cursor"), verdict)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	stats, err := h.Service.Stats(r.Context(), tenantID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"recent": page.Items, "next_cursor": page.NextCursor, "total": page.Total, "stats": stats,
-	})
-}
-
-func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	st, err := h.Service.GetSettings(r.Context(), tenantID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, st)
-}
-
-func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var in Settings
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	st, err := h.Service.UpdateSettings(r.Context(), tenantID, in, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, st)
 }

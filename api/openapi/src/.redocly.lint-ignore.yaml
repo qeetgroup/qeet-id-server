@@ -1,0 +1,12 @@
+# Reviewed exceptions to the lint rules in redocly.yaml. Add one only with a reason.
+#
+# The health probes have no rate limit or authentication, so they never answer 4XX.
+operations/paths/health/healthz.yaml:
+  operation-4xx-response:
+    - "#/get/responses"
+operations/paths/health/readyz.yaml:
+  operation-4xx-response:
+    - "#/get/responses"
+operations/paths/health/version.yaml:
+  operation-4xx-response:
+    - "#/get/responses"

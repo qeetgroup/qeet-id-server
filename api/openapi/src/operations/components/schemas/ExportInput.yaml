@@ -1,0 +1,14 @@
+type: object
+additionalProperties: false
+required:
+  - user_id
+properties:
+  organization_id:
+    type:
+      - string
+      - "null"
+    format: uuid
+    description: Accepted and ignored; the export is always in the caller's organization.
+  user_id:
+    type: string
+    format: uuid

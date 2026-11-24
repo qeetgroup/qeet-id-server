@@ -3,14 +3,9 @@
 package config
 
 import (
-	"fmt"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
-
-	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/tracing"
 )
 
 // Recognised SERVICE_ENV values. Load rejects anything else, so Validate's
@@ -75,39 +70,43 @@ type Config struct {
 	// OTelSampleRatio is the head sampling ratio for root spans (0..1). 1 keeps
 	// every trace (sensible in dev); lower it in prod to bound export volume.
 	OTelSampleRatio float64 `envconfig:"OTEL_TRACES_SAMPLER_RATIO" default:"1"`
+	// PprofAddr, when set, serves Go's runtime profiles on this address, on a listener of its own and
+	// never on the API's router, for a continuous profiler (Grafana Alloy into Pyroscope) to scrape.
+	// Outside development it must be a loopback address such as 127.0.0.1:6060.
+	PprofAddr string `envconfig:"PPROF_ADDR" default:""`
 
 	DBURL      string `envconfig:"DB_URL" required:"true"`
 	DBMinConns int32  `envconfig:"DB_MIN_CONNS" default:"2"`
 	DBMaxConns int32  `envconfig:"DB_MAX_CONNS" default:"10"`
-	// EmbeddedWorkers runs background dispatchers inside the API process. Set
-	// false when cmd/worker is deployed separately; database leases remain the
-	// correctness backstop during rollout and mixed-version overlap.
-	EmbeddedWorkers bool `envconfig:"EMBEDDED_WORKERS" default:"true"`
 
-	JWTSecret   string `envconfig:"JWT_SECRET" required:"true"`
 	JWTIssuer   string `envconfig:"JWT_ISSUER" default:"qeet-id"`
 	JWTAudience string `envconfig:"JWT_AUDIENCE" default:"qeet-id"`
 	// AccessTokenTTL caps how long a revoked access token stays usable to a
 	// verifier that checks it offline. Introspection (POST /oauth/introspect) and
 	// the session.revoked and token.claims_change signals report revocation at once.
-	AccessTokenTTL  time.Duration `envconfig:"ACCESS_TOKEN_TTL" default:"10m"`
-	RefreshTokenTTL time.Duration `envconfig:"REFRESH_TOKEN_TTL" default:"720h"`
+	AccessTokenTTL time.Duration `envconfig:"ACCESS_TOKEN_TTL" default:"10m"`
+	// RefreshTokenTTL is how long a refresh token lasts unused. Each renewal
+	// issues a new one that lasts this long again, never past its session or
+	// grant. An application's grant has no other idle bound, so this is how
+	// long an application can go unused and stay signed in; API and console
+	// sessions also end after SessionIdleTimeout without renewal.
+	RefreshTokenTTL time.Duration `envconfig:"REFRESH_TOKEN_TTL" default:"168h"`
 	// RefreshTokenReuseGrace is how long after a refresh token's rotation the
 	// same token gets the rotation's pair again, for a client that raced itself
 	// or lost the answer, rather than ending the session as theft. 0 turns it
 	// off; at most RefreshTokenReuseGraceMax.
 	RefreshTokenReuseGrace time.Duration `envconfig:"REFRESH_TOKEN_REUSE_GRACE" default:"30s"`
 	// SessionMaxAge and SessionIdleTimeout bound API and console sessions when the
-	// organisation's policy sets none (or there is no organisation): a session ends
+	// organization's policy sets none (or there is no organization): a session ends
 	// SessionMaxAge after sign-in, or after SessionIdleTimeout without renewal.
 	// SessionMaxAge also bounds an application's grant. See checkSessionLifetime.
 	SessionMaxAge      time.Duration `envconfig:"SESSION_MAX_AGE" default:"720h"`
 	SessionIdleTimeout time.Duration `envconfig:"SESSION_IDLE_TIMEOUT" default:"24h"`
 
-	// JWTSigningKey is the PEM-encoded EC P-256 private key (PKCS#8 or SEC1)
-	// used to sign access & ID tokens with ES256. Empty is allowed only in
-	// dev, where an ephemeral key is generated at startup (tokens won't
-	// survive a restart). Required outside dev (enforced in config gates).
+	// JWTSigningKey is the PEM private key that signs access & ID tokens: an EC
+	// P-256 key signs ES256, an RSA key of 2048 bits or more RS256. Empty is
+	// allowed only in dev, which uses the database's key or makes its first.
+	// Required outside dev (enforced in config gates).
 	JWTSigningKey string `envconfig:"JWT_SIGNING_KEY" default:""`
 	// JWTRetiredKeys holds concatenated PEM public keys (SPKI or certificate) of
 	// retired signing keys: they verify tokens during the rotation grace window but
@@ -129,24 +128,10 @@ type Config struct {
 	SAMLIdPKey  string `envconfig:"SAML_IDP_KEY" default:""`
 	SAMLIdPCert string `envconfig:"SAML_IDP_CERT" default:""`
 
-	// SecretsKey is the base64-encoded AES key (16/24/32 bytes) that encrypts
-	// every stored secret — independent of JWT_SECRET. Required outside dev
-	// when SECRETS_PROVIDER=static; in dev an ephemeral key is generated if
-	// unset. Generate with `openssl rand -base64 32`.
-	//
-	// Every stored value names the key that sealed it, so the key can be
-	// rotated without making anything unreadable:
-	//  1. With several instances, first add the new key to SECRETS_PREVIOUS_KEYS
-	//     on all of them, so each can read what the others will seal with it.
-	//  2. Make the new key SECRETS_KEY and move the old one to
-	//     SECRETS_PREVIOUS_KEYS. New values are sealed with the new key, and the
-	//     secrets-reencrypt job re-seals the stored ones in the background.
-	//  3. When envelope_rows_on_old_keys is 0 for every column, remove the old
-	//     key from SECRETS_PREVIOUS_KEYS.
-	//
-	// With aws-kms the steps are the same with SECRETS_WRAPPED_DEK and
-	// SECRETS_PREVIOUS_WRAPPED_DEKS; a key moved from static to aws-kms stays
-	// readable in SECRETS_PREVIOUS_KEYS.
+	// SecretsKey is the base64 AES key (16/24/32 bytes) that encrypts every stored secret: required
+	// outside dev with SECRETS_PROVIDER=static; in dev an ephemeral key is generated if unset
+	// (`openssl rand -base64 32`). Every stored value names its key, so the key rotates without losing
+	// anything: the steps are in .env.example, at SECRETS_PREVIOUS_KEYS.
 	SecretsKey string `envconfig:"SECRETS_KEY" default:""`
 	// SecretsPreviousKeysRaw lists earlier data keys, base64 and comma-separated:
 	// they decrypt what they sealed but never encrypt (see SecretsKey).
@@ -179,7 +164,7 @@ type Config struct {
 	// no load balancer in front.
 	ShutdownDrainDelay time.Duration `envconfig:"SHUTDOWN_DRAIN_DELAY" default:"5s"`
 
-	// EgressProxyURL routes tenant-configured outbound HTTP (webhooks, auth
+	// EgressProxyURL routes organization-configured outbound HTTP (webhooks, auth
 	// hooks, SIEM sinks, social/token-vault calls) through a forward proxy.
 	// Ambient HTTPS_PROXY is ignored on purpose — see egress.Options.ProxyURL.
 	// When set, the proxy resolves destinations, so it owns address filtering.
@@ -211,7 +196,7 @@ type Config struct {
 	SalesEmail string `envconfig:"SALES_EMAIL" default:"sales@qeet.in"`
 
 	// Platform social login (Google, Microsoft, GitHub, Apple) for the console's
-	// own Qeet ID accounts, distinct from the per-tenant providers admins set up
+	// own Qeet ID accounts, distinct from the per-organization providers admins set up
 	// for their users. Each provider is off until its credentials are set.
 	GoogleClientID        string `envconfig:"GOOGLE_CLIENT_ID" default:""`
 	GoogleClientSecret    string `envconfig:"GOOGLE_CLIENT_SECRET" default:""`
@@ -236,19 +221,17 @@ type Config struct {
 	// (e.g. CloudFront-Viewer-City), recorded on audit events and sessions.
 	GeoCityHeader string `envconfig:"GEO_CITY_HEADER" default:""`
 
-	// EmailProvider selects the email transport: "smtp" (default) or "ses-api".
-	// Use "ses-api" in regions that offer the SES API but no SMTP endpoint
-	// (e.g. ap-south-2). The SES API path uses the AWS credential chain +
-	// AWS_REGION and only needs SMTP_FROM (SMTP host/creds are ignored).
-	// Outside dev one of the two must be configured (see Validate).
+	// EmailProvider selects the email transport: "smtp" (default) or "ses-api", for regions with the SES
+	// API but no SMTP endpoint (e.g. ap-south-2); it uses the AWS credential chain and AWS_REGION, and of
+	// the SMTP settings only SMTP_FROM. Outside dev one of the two must be configured (see Validate).
 	EmailProvider string `envconfig:"EMAIL_PROVIDER" default:"smtp"`
 	// AWSRegion is used by the SES-API email provider (and any other AWS SDK
 	// client) so endpoint resolution never fails on a missing region.
 	AWSRegion string `envconfig:"AWS_REGION" default:""`
 	// HostingRegion is the region this deployment runs in, which every
-	// organisation is created in and shows as its region; empty means
+	// organization is created in and shows as its region; empty means
 	// AWS_REGION, else us-east-1. One deployment holds its data in one region,
-	// so an organisation can't choose another.
+	// so an organization can't choose another.
 	HostingRegion string `envconfig:"HOSTING_REGION" default:""`
 
 	// Email (SMTP) — provider-agnostic (Amazon SES, SendGrid, Mailgun, Postmark).
@@ -341,64 +324,12 @@ type Config struct {
 	// self-hosted mirrors). Empty uses the public api.pwnedpasswords.com.
 	BreachedPasswordAPIURL string `envconfig:"BREACHED_PASSWORD_API_URL" default:""`
 
-	// TokenExchangeMaxDepth is how many token exchanges deep a token may still
-	// be exchanged (an exchanged token's exchange is depth 2).
-	TokenExchangeMaxDepth int `envconfig:"TOKEN_EXCHANGE_MAX_DEPTH" default:"2"`
-
-	// Application secret lockout: after CLIENT_AUTH_LOCKOUT_THRESHOLD wrong
-	// secrets for one confidential application within CLIENT_AUTH_LOCKOUT_WINDOW,
-	// on any endpoint that takes one, it is refused for CLIENT_AUTH_LOCKOUT_DURATION.
-	ClientAuthLockoutThreshold int           `envconfig:"CLIENT_AUTH_LOCKOUT_THRESHOLD" default:"10"`
-	ClientAuthLockoutWindow    time.Duration `envconfig:"CLIENT_AUTH_LOCKOUT_WINDOW" default:"15m"`
-	ClientAuthLockoutDuration  time.Duration `envconfig:"CLIENT_AUTH_LOCKOUT_DURATION" default:"15m"`
-
-	// Sign-in lockout defaults: LOGIN_LOCKOUT_THRESHOLD failed password sign-ins to
-	// one account from one network, each within LOGIN_LOCKOUT_WINDOW of the last,
-	// lock it there for LOGIN_LOCKOUT_DURATION. A tenant policy may override them
-	// within the _MIN/_MAX bounds. Windows and durations are whole minutes.
-	LoginLockoutThreshold    int           `envconfig:"LOGIN_LOCKOUT_THRESHOLD" default:"5"`
-	LoginLockoutWindow       time.Duration `envconfig:"LOGIN_LOCKOUT_WINDOW" default:"15m"`
-	LoginLockoutDuration     time.Duration `envconfig:"LOGIN_LOCKOUT_DURATION" default:"15m"`
-	LoginLockoutThresholdMin int           `envconfig:"LOGIN_LOCKOUT_THRESHOLD_MIN" default:"3"`
-	LoginLockoutThresholdMax int           `envconfig:"LOGIN_LOCKOUT_THRESHOLD_MAX" default:"20"`
-	LoginLockoutWindowMin    time.Duration `envconfig:"LOGIN_LOCKOUT_WINDOW_MIN" default:"1m"`
-	LoginLockoutWindowMax    time.Duration `envconfig:"LOGIN_LOCKOUT_WINDOW_MAX" default:"24h"`
-	LoginLockoutDurationMin  time.Duration `envconfig:"LOGIN_LOCKOUT_DURATION_MIN" default:"1m"`
-	LoginLockoutDurationMax  time.Duration `envconfig:"LOGIN_LOCKOUT_DURATION_MAX" default:"24h"`
-	// LoginLockoutAccountMultiplier sets the looser per-account cap: threshold
-	// × multiplier failures from any mix of networks lock the account
-	// everywhere, so an attack spread over many networks stays bounded.
-	// At least 2, or one network could lock the owner out again.
-	LoginLockoutAccountMultiplier int `envconfig:"LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER" default:"4"`
-	// A source network that fails password sign-in against LOGIN_SPRAY_ACCOUNTS
-	// distinct accounts within LOGIN_SPRAY_WINDOW is refused password sign-in
-	// for LOGIN_SPRAY_BLOCK (broad-and-shallow spraying). Raise the count for a
-	// deployment whose users share one address (a large NAT).
-	LoginSprayAccounts int           `envconfig:"LOGIN_SPRAY_ACCOUNTS" default:"30"`
-	LoginSprayWindow   time.Duration `envconfig:"LOGIN_SPRAY_WINDOW" default:"15m"`
-	LoginSprayBlock    time.Duration `envconfig:"LOGIN_SPRAY_BLOCK" default:"15m"`
-
-	// Password hashing, the server's costliest work, is bounded so an overload
-	// is turned away rather than slowing everyone: so many hashes at once (0:
-	// GOMAXPROCS), so many more waiting (0: twice that), each at most
-	// PasswordHashMaxWait. Beyond that a request is answered 503 server.overloaded.
-	PasswordHashConcurrency int           `envconfig:"PASSWORD_HASH_CONCURRENCY" default:"0"`
-	PasswordHashQueue       int           `envconfig:"PASSWORD_HASH_QUEUE" default:"0"`
-	PasswordHashMaxWait     time.Duration `envconfig:"PASSWORD_HASH_MAX_WAIT" default:"1s"`
-
 	// WebAuthn Relying Party config. Empty values default from AppBaseURL /
 	// ServiceName (see WebAuthnRP). RP_ID is the effective domain (no scheme/
 	// port); RP_ORIGINS is a comma-separated allow-list of full origins.
 	WebAuthnRPID          string `envconfig:"WEBAUTHN_RP_ID" default:""`
 	WebAuthnRPDisplayName string `envconfig:"WEBAUTHN_RP_DISPLAY_NAME" default:""`
 	WebAuthnRPOriginsRaw  string `envconfig:"WEBAUTHN_RP_ORIGINS" default:""`
-
-	// ExpoPushURL is the Expo push notification API endpoint. Defaults to the
-	// public Expo push service. Override for self-hosted / proxied deployments.
-	ExpoPushURL string `envconfig:"EXPO_PUSH_URL" default:"https://exp.host/--/api/v2/push/send"`
-	// ExpoAccessToken is sent with every push when set; Expo requires it once
-	// enhanced push security is turned on for the mobile app's project.
-	ExpoAccessToken string `envconfig:"EXPO_ACCESS_TOKEN" default:""`
 
 	// Native push for the Qeet ID apps. Each service is off until its credentials are set.
 	// APNsAuthKey is the token-signing key (.p8, PEM text) from the Apple Developer account.
@@ -412,8 +343,8 @@ type Config struct {
 	// Android app.
 	FCMServiceAccount string `envconfig:"FCM_SERVICE_ACCOUNT" default:""`
 
-	// Qeet AI platform provider, used by organisations without their own key; with
-	// QeetaiProvider empty there is none and such organisations get 409
+	// Qeet AI platform provider, used by organizations without their own key; with
+	// QeetaiProvider empty there is none and such organizations get 409
 	// qeetai_unconfigured. QeetaiProvider is "anthropic", "openai" (or any compatible
 	// API via QeetaiBaseURL) or "azure"; QeetaiAPIKey never leaves the server.
 	QeetaiProvider  string `envconfig:"QEETAI_PROVIDER" default:""`
@@ -421,19 +352,11 @@ type Config struct {
 	QeetaiModel     string `envconfig:"QEETAI_MODEL" default:"claude-sonnet-5"`
 	QeetaiMaxTokens int    `envconfig:"QEETAI_MAX_TOKENS" default:"4096"`
 	QeetaiBaseURL   string `envconfig:"QEETAI_BASE_URL" default:""`
-	// Bounds on one Qeet AI turn, whoever pays the provider: the most recent
-	// messages of the conversation sent to the model and their total size (a
-	// turn whose own messages are larger is refused), and the reply's text, cut
-	// there as at the model's own token limit.
-	QeetaiHistoryMessages int `envconfig:"QEETAI_HISTORY_MESSAGES" default:"40"`
-	QeetaiHistoryBytes    int `envconfig:"QEETAI_HISTORY_BYTES" default:"262144"`
-	QeetaiMaxOutputBytes  int `envconfig:"QEETAI_MAX_OUTPUT_BYTES" default:"65536"`
 }
 
 // Load reads the Config from the environment and rejects an unknown SERVICE_ENV
-// or SERVICE_PROFILE and unsafe sign-in lockout, session lifetime, password
-// hashing or Qeet AI limits.
-// Validate applies the production gates.
+// or SERVICE_PROFILE and unsafe session lifetime limits. Validate applies the
+// production gates.
 func Load() (*Config, error) {
 	var c Config
 	if err := envconfig.Process("", &c); err != nil {
@@ -442,429 +365,8 @@ func Load() (*Config, error) {
 	if err := c.checkEnvironment(); err != nil {
 		return nil, err
 	}
-	if err := c.checkSignInLockout(); err != nil {
-		return nil, err
-	}
 	if err := c.checkSessionLifetime(); err != nil {
 		return nil, err
 	}
-	if err := c.checkPasswordHashing(); err != nil {
-		return nil, err
-	}
-	if c.QeetaiHistoryMessages < 1 || c.QeetaiHistoryBytes < 1 || c.QeetaiMaxOutputBytes < 1 {
-		return nil, fmt.Errorf("invalid Qeet AI limits: QEETAI_HISTORY_MESSAGES, QEETAI_HISTORY_BYTES and QEETAI_MAX_OUTPUT_BYTES must be positive")
-	}
 	return &c, nil
-}
-
-// checkPasswordHashing rejects a negative hashing limit, and a longest wait
-// for a hashing slot that is not positive or above PasswordHashMaxWaitMax.
-func (c *Config) checkPasswordHashing() error {
-	if c.PasswordHashConcurrency < 0 || c.PasswordHashQueue < 0 || c.PasswordHashMaxWait <= 0 || c.PasswordHashMaxWait > PasswordHashMaxWaitMax {
-		return fmt.Errorf("invalid password hashing limits: PASSWORD_HASH_CONCURRENCY and PASSWORD_HASH_QUEUE must not be negative, and PASSWORD_HASH_MAX_WAIT must lie within (0, %v]", PasswordHashMaxWaitMax)
-	}
-	return nil
-}
-
-// Session lifetime limits, for the platform defaults here and for an
-// organisation's own policy alike. The idle timeout must outlast an access
-// token: a client renews when its access token runs out, and a renewal is what
-// keeps a session from going idle.
-const (
-	SessionMaxAgeMin      = time.Hour
-	SessionMaxAgeMax      = 365 * 24 * time.Hour
-	SessionIdleTimeoutMin = 15 * time.Minute
-)
-
-// PasswordHashMaxWaitMax bounds PASSWORD_HASH_MAX_WAIT: a longer wait for a
-// hashing slot is the queueing the limit is there to stop.
-const PasswordHashMaxWaitMax = 10 * time.Second
-
-// RefreshTokenReuseGraceMax bounds the refresh reuse grace: a token used again
-// later than this is treated as stolen.
-const RefreshTokenReuseGraceMax = time.Minute
-
-// checkSessionLifetime rejects session bounds outside the limits above, an
-// idle timeout longer than the maximum age, access tokens that outlive the
-// shortest idle timeout an organisation may set, and a refresh reuse grace,
-// shutdown timeout or shutdown drain delay out of range.
-func (c *Config) checkSessionLifetime() error {
-	var problems []string
-	if c.SessionMaxAge < SessionMaxAgeMin || c.SessionMaxAge > SessionMaxAgeMax {
-		problems = append(problems, "SESSION_MAX_AGE must lie within 1h..8760h")
-	}
-	if c.SessionIdleTimeout < SessionIdleTimeoutMin || c.SessionIdleTimeout > c.SessionMaxAge {
-		problems = append(problems, "SESSION_IDLE_TIMEOUT must be at least 15m and at most SESSION_MAX_AGE")
-	}
-	if c.AccessTokenTTL <= 0 || c.AccessTokenTTL >= SessionIdleTimeoutMin {
-		problems = append(problems, "ACCESS_TOKEN_TTL must be positive and shorter than 15m, the shortest session idle timeout")
-	}
-	if c.RefreshTokenReuseGrace < 0 || c.RefreshTokenReuseGrace > RefreshTokenReuseGraceMax {
-		problems = append(problems, "REFRESH_TOKEN_REUSE_GRACE must lie within 0..1m")
-	}
-	if c.ShutdownTimeout < 5*time.Second || c.ShutdownTimeout > 2*time.Minute {
-		problems = append(problems, "SHUTDOWN_TIMEOUT must lie within 5s..2m")
-	}
-	if c.ShutdownDrainDelay < 0 || c.ShutdownDrainDelay > 30*time.Second || c.ShutdownDrainDelay > c.ShutdownTimeout/2 {
-		problems = append(problems, "SHUTDOWN_DRAIN_DELAY must lie within 0..30s and be at most half of SHUTDOWN_TIMEOUT")
-	}
-	if len(problems) > 0 {
-		return fmt.Errorf("invalid session and timing configuration:\n  - %s", strings.Join(problems, "\n  - "))
-	}
-	return nil
-}
-
-// checkSignInLockout rejects lockout settings that would not protect sign-in:
-// a bound that is not positive or not whole minutes, a minimum above its
-// maximum, a default outside its bounds, an account multiplier below 2, or a
-// spraying limit that is not positive.
-func (c *Config) checkSignInLockout() error {
-	var problems []string
-	minutes := func(name string, d time.Duration) {
-		if d < time.Minute || d%time.Minute != 0 {
-			problems = append(problems, name+" must be a whole number of minutes, at least 1m")
-		}
-	}
-	minutes("LOGIN_LOCKOUT_WINDOW", c.LoginLockoutWindow)
-	minutes("LOGIN_LOCKOUT_DURATION", c.LoginLockoutDuration)
-	minutes("LOGIN_LOCKOUT_WINDOW_MIN", c.LoginLockoutWindowMin)
-	minutes("LOGIN_LOCKOUT_WINDOW_MAX", c.LoginLockoutWindowMax)
-	minutes("LOGIN_LOCKOUT_DURATION_MIN", c.LoginLockoutDurationMin)
-	minutes("LOGIN_LOCKOUT_DURATION_MAX", c.LoginLockoutDurationMax)
-	if c.LoginLockoutThresholdMin < 1 {
-		problems = append(problems, "LOGIN_LOCKOUT_THRESHOLD_MIN must be at least 1")
-	}
-	if c.LoginLockoutThreshold < c.LoginLockoutThresholdMin || c.LoginLockoutThreshold > c.LoginLockoutThresholdMax {
-		problems = append(problems, "LOGIN_LOCKOUT_THRESHOLD must lie within LOGIN_LOCKOUT_THRESHOLD_MIN..LOGIN_LOCKOUT_THRESHOLD_MAX")
-	}
-	if c.LoginLockoutWindow < c.LoginLockoutWindowMin || c.LoginLockoutWindow > c.LoginLockoutWindowMax {
-		problems = append(problems, "LOGIN_LOCKOUT_WINDOW must lie within LOGIN_LOCKOUT_WINDOW_MIN..LOGIN_LOCKOUT_WINDOW_MAX")
-	}
-	if c.LoginLockoutDuration < c.LoginLockoutDurationMin || c.LoginLockoutDuration > c.LoginLockoutDurationMax {
-		problems = append(problems, "LOGIN_LOCKOUT_DURATION must lie within LOGIN_LOCKOUT_DURATION_MIN..LOGIN_LOCKOUT_DURATION_MAX")
-	}
-	if c.LoginLockoutAccountMultiplier < 2 {
-		problems = append(problems, "LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER must be at least 2")
-	}
-	if c.LoginSprayAccounts < 2 || c.LoginSprayWindow <= 0 || c.LoginSprayBlock <= 0 {
-		problems = append(problems, "LOGIN_SPRAY_ACCOUNTS must be at least 2, and LOGIN_SPRAY_WINDOW and LOGIN_SPRAY_BLOCK positive")
-	}
-	if c.ClientAuthLockoutThreshold < 1 || c.ClientAuthLockoutWindow < time.Minute || c.ClientAuthLockoutDuration < time.Minute {
-		problems = append(problems, "CLIENT_AUTH_LOCKOUT_THRESHOLD must be at least 1, and CLIENT_AUTH_LOCKOUT_WINDOW and CLIENT_AUTH_LOCKOUT_DURATION at least 1m")
-	}
-	if len(problems) > 0 {
-		return fmt.Errorf("invalid sign-in lockout configuration:\n  - %s", strings.Join(problems, "\n  - "))
-	}
-	return nil
-}
-
-// IsDev reports whether this is a developer workstation (SERVICE_ENV=dev), the
-// only environment in which the production gates and Secure cookies are off.
-func (c *Config) IsDev() bool { return c.ServiceEnv == EnvDev }
-
-// checkEnvironment rejects a missing or unrecognised SERVICE_ENV, and a
-// SERVICE_PROFILE that is unknown or used outside SERVICE_ENV=local.
-func (c *Config) checkEnvironment() error {
-	switch c.ServiceEnv {
-	case EnvDev, EnvLocal, EnvProd:
-	case "":
-		return fmt.Errorf("SERVICE_ENV is not set: set it to %q (a developer workstation), %q (the Qeet ID Kit) or %q", EnvDev, EnvLocal, EnvProd)
-	default:
-		return fmt.Errorf("SERVICE_ENV %q is not recognised (want %q, %q or %q)", c.ServiceEnv, EnvDev, EnvLocal, EnvProd)
-	}
-	if c.ServiceProfile == "" {
-		return nil
-	}
-	if c.ServiceEnv != EnvLocal {
-		return fmt.Errorf("SERVICE_PROFILE is only valid with SERVICE_ENV=%q (got SERVICE_ENV=%q)", EnvLocal, c.ServiceEnv)
-	}
-	if !serviceProfiles[c.ServiceProfile] {
-		return fmt.Errorf("SERVICE_PROFILE %q is not recognised (want \"dev\", \"test\" or \"staging\")", c.ServiceProfile)
-	}
-	return nil
-}
-
-// Validate refuses, outside SERVICE_ENV=dev, any dev-only convenience or
-// insecure default still in place, such as CSRF off, dev trust headers, the
-// payment sandbox, weak or missing keys, wildcard origins, hosts wrong for
-// the environment, or no email provider. In dev it only checks SERVICE_ENV and
-// SERVICE_PROFILE.
-func (c *Config) Validate() error {
-	if err := c.checkEnvironment(); err != nil {
-		return err
-	}
-	if c.IsDev() {
-		return nil
-	}
-	var problems []string
-	if c.CSRFDisabled {
-		problems = append(problems, "CSRF_DISABLED must not be set outside dev")
-	}
-	if c.AuthDevTrustHeaders {
-		problems = append(problems, "AUTH_DEV_TRUST_HEADERS must not be set outside dev")
-	}
-	if c.PaymentSandbox {
-		problems = append(problems, "PAYMENT_SANDBOX must not be set outside dev (it takes payments without charging)")
-	}
-	if isWeakSecret(c.JWTSecret) {
-		problems = append(problems, "JWT_SECRET is missing, shorter than 32 chars, or a known placeholder")
-	}
-	if strings.TrimSpace(c.JWTSigningKey) == "" {
-		problems = append(problems, "JWT_SIGNING_KEY is required (PEM EC P-256 private key for ES256 token signing)")
-	}
-	if c.JWTSigningKeyRetireGrace < c.AccessTokenTTL || c.JWTSigningKeyRetireGrace < time.Hour {
-		problems = append(problems, "JWT_SIGNING_KEY_RETIRE_GRACE must cover ACCESS_TOKEN_TTL and be at least 1h")
-	}
-	if c.JWTSigningKeyRefreshInterval <= 0 {
-		problems = append(problems, "JWT_SIGNING_KEY_REFRESH_INTERVAL must be positive")
-	}
-	if raw := strings.TrimSpace(c.EgressProxyURL); raw != "" {
-		u, err := url.Parse(raw)
-		if err != nil || !u.IsAbs() || u.Host == "" {
-			problems = append(problems, "EGRESS_PROXY_URL must be an absolute URL with a host")
-		}
-	}
-	switch c.SecretsProvider {
-	case "", "static":
-		if strings.TrimSpace(c.SecretsKey) == "" {
-			problems = append(problems, "SECRETS_KEY is required with SECRETS_PROVIDER=static (base64 AES key; `openssl rand -base64 32`)")
-		}
-	case "aws-kms":
-		if strings.TrimSpace(c.KMSKeyID) == "" {
-			problems = append(problems, "KMS_KEY_ID is required with SECRETS_PROVIDER=aws-kms (the KMS key ARN/id)")
-		}
-		if strings.TrimSpace(c.SecretsWrappedDEK) == "" {
-			problems = append(problems, "SECRETS_WRAPPED_DEK is required with SECRETS_PROVIDER=aws-kms (base64 KMS CiphertextBlob of the wrapped data key)")
-		}
-	default:
-		problems = append(problems, fmt.Sprintf("SECRETS_PROVIDER %q is invalid (want \"static\" or \"aws-kms\")", c.SecretsProvider))
-	}
-	for _, k := range c.RelayKeys() {
-		if isWeakSecret(k) {
-			problems = append(problems, "RELAY_KEYS: every key must be at least 32 characters and not a placeholder (`openssl rand -base64 32`)")
-			break
-		}
-	}
-	// Without an email provider, password resets, invitations and verification
-	// codes reach nobody.
-	switch c.EmailProvider {
-	case "", "smtp":
-		if strings.TrimSpace(c.SMTPHost) == "" || strings.TrimSpace(c.SMTPFrom) == "" {
-			problems = append(problems, "an email provider is required: set SMTP_HOST and SMTP_FROM, or EMAIL_PROVIDER=ses-api with SMTP_FROM and AWS_REGION")
-		}
-	case "ses-api":
-		if strings.TrimSpace(c.SMTPFrom) == "" || strings.TrimSpace(c.AWSRegion) == "" {
-			problems = append(problems, "SMTP_FROM and AWS_REGION are required with EMAIL_PROVIDER=ses-api")
-		}
-	default:
-		problems = append(problems, fmt.Sprintf("EMAIL_PROVIDER %q is invalid (want \"smtp\" or \"ses-api\")", c.EmailProvider))
-	}
-	if o := strings.TrimSpace(c.AllowedOriginsRaw); o == "" || o == "*" {
-		problems = append(problems, "ALLOWED_ORIGINS must list explicit origins (a wildcard is unsafe with credentialed CORS)")
-	}
-	if c.PublicBaseURL != "" && !isOrigin(c.PublicBaseURL, c.ServiceEnv == EnvProd) {
-		problems = append(problems, "PUBLIC_BASE_URL must be an origin such as https://api.example.com (https in prod)")
-	}
-	switch c.ServiceEnv {
-	case EnvProd:
-		if u, err := url.Parse(c.AppBaseURL); err != nil || u.Hostname() == "" || isLocalHost(u.Hostname()) || isAnyKitZoneHost(u.Hostname()) {
-			problems = append(problems, "APP_BASE_URL must be a real public origin, not localhost or a kit zone")
-		}
-		if c.PublicBaseURL == "" {
-			problems = append(problems, "PUBLIC_BASE_URL is required in prod, so no absolute URL is built from a request's Host")
-		}
-		if !isIssuerURL(c.JWTIssuer) {
-			problems = append(problems, "JWT_ISSUER must be an https URL with no query or fragment, such as https://api.example.com (OpenID Connect discovery requires it; the default qeet-id is for development)")
-		}
-	case EnvLocal:
-		// A local runtime is reachable only on this machine: its browser-facing
-		// hosts must be loopback names, or https on its own kit zone, so it can
-		// never be deployed publicly.
-		for _, v := range []struct{ name, raw string }{
-			{"APP_BASE_URL", c.AppBaseURL},
-			{"LOGIN_BASE_URL", c.LoginBaseURL},
-		} {
-			u, err := url.Parse(v.raw)
-			switch {
-			case err == nil && isLoopbackName(u.Hostname()):
-			case err == nil && isKitZoneHost(u.Hostname(), c.ServiceProfile):
-				// Passkeys and Secure cookies need https on a public name.
-				if u.Scheme != "https" {
-					problems = append(problems, v.name+" must use https on the "+c.ServiceProfile+kitZoneSuffix+" kit zone")
-				}
-			default:
-				problems = append(problems, v.name+" must use localhost, a *.localhost host or https on this profile's kit zone (<profile>"+kitZoneSuffix+") with SERVICE_ENV=local")
-			}
-		}
-	}
-	// Qeetai: if a provider is named, the API key must also be set.
-	if strings.TrimSpace(c.QeetaiProvider) != "" && strings.TrimSpace(c.QeetaiAPIKey) == "" {
-		problems = append(problems, "QEETAI_API_KEY is required when QEETAI_PROVIDER is set")
-	}
-	if len(problems) > 0 {
-		return fmt.Errorf("insecure configuration for SERVICE_ENV=%q:\n  - %s", c.ServiceEnv, strings.Join(problems, "\n  - "))
-	}
-	return nil
-}
-
-// isWeakSecret flags empty, too-short, or obviously-placeholder secrets.
-func isWeakSecret(s string) bool {
-	s = strings.TrimSpace(s)
-	if len(s) < 32 {
-		return true
-	}
-	low := strings.ToLower(s)
-	for _, bad := range []string{"change-me", "changeme", "please-change", "placeholder", "example", "your-secret"} {
-		if strings.Contains(low, bad) {
-			return true
-		}
-	}
-	return false
-}
-
-// isOrigin reports whether raw is a bare http(s) origin: a scheme and host name
-// with no user, path, query or fragment, not even an empty one. With
-// httpsOnly, the scheme must be https.
-func isOrigin(raw string, httpsOnly bool) bool {
-	u, err := url.Parse(raw)
-	if err != nil || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") ||
-		u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") {
-		return false
-	}
-	return u.Scheme == "https" || (u.Scheme == "http" && !httpsOnly)
-}
-
-func isLocalHost(h string) bool {
-	h = strings.ToLower(h)
-	return isLoopbackName(h) || h == "127.0.0.1" || h == "::1" || strings.HasSuffix(h, ".local")
-}
-
-// isLoopbackName reports whether h is "localhost" or a subdomain of it
-// (RFC 6761: *.localhost always resolves to loopback).
-func isLoopbackName(h string) bool {
-	h = strings.TrimSuffix(strings.ToLower(h), ".")
-	return h == "localhost" || strings.HasSuffix(h, ".localhost")
-}
-
-// isKitZoneHost reports whether h is in the kit zone of this local profile:
-// <profile>.id.qeet.in or a subdomain of it. Another profile's zone, and
-// id.qeet.in itself (production), are not.
-func isKitZoneHost(h, profile string) bool {
-	if !serviceProfiles[profile] {
-		return false
-	}
-	h = strings.TrimSuffix(strings.ToLower(h), ".")
-	zone := profile + kitZoneSuffix
-	return h == zone || strings.HasSuffix(h, "."+zone)
-}
-
-// isAnyKitZoneHost reports whether h is in the kit zone of any local profile.
-func isAnyKitZoneHost(h string) bool {
-	for profile := range serviceProfiles {
-		if isKitZoneHost(h, profile) {
-			return true
-		}
-	}
-	return false
-}
-
-// RelayKeys returns the configured relay keys (RELAY_KEYS), trimmed, empty
-// ones dropped.
-func (c *Config) RelayKeys() []string {
-	var out []string
-	for _, k := range strings.Split(c.RelayKeysRaw, ",") {
-		if k = strings.TrimSpace(k); k != "" {
-			out = append(out, k)
-		}
-	}
-	return out
-}
-
-// SecretsPreviousKeys returns the SECRETS_PREVIOUS_KEYS entries, trimmed,
-// empty ones dropped.
-func (c *Config) SecretsPreviousKeys() []string { return commaList(c.SecretsPreviousKeysRaw) }
-
-// SecretsPreviousWrappedDEKs returns the SECRETS_PREVIOUS_WRAPPED_DEKS
-// entries, trimmed, empty ones dropped.
-func (c *Config) SecretsPreviousWrappedDEKs() []string {
-	return commaList(c.SecretsPreviousWrappedDEKsRaw)
-}
-
-// commaList splits a comma-separated variable into its trimmed, non-empty
-// entries.
-func commaList(raw string) []string {
-	var out []string
-	for _, v := range strings.Split(raw, ",") {
-		if v = strings.TrimSpace(v); v != "" {
-			out = append(out, v)
-		}
-	}
-	return out
-}
-
-// AllowedOrigins returns the ALLOWED_ORIGINS entries, trimmed, or ["*"] when
-// the variable is empty.
-func (c *Config) AllowedOrigins() []string {
-	if c.AllowedOriginsRaw == "" {
-		return []string{"*"}
-	}
-	parts := strings.Split(c.AllowedOriginsRaw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if t := strings.TrimSpace(p); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
-// WebAuthnRP returns the effective Relying Party config, defaulting the ID to
-// the AppBaseURL host, the display name to ServiceName, and the origins to
-// AppBaseURL and LoginBaseURL when the explicit env vars are unset. The hosted
-// login runs passkey sign-in, sign-up and enrolment from its own origin.
-func (c *Config) WebAuthnRP() (id, displayName string, origins []string) {
-	id = c.WebAuthnRPID
-	if id == "" {
-		if u, err := url.Parse(c.AppBaseURL); err == nil {
-			id = u.Hostname()
-		}
-	}
-	displayName = c.WebAuthnRPDisplayName
-	if displayName == "" {
-		displayName = c.ServiceName
-	}
-	if c.WebAuthnRPOriginsRaw != "" {
-		for _, p := range strings.Split(c.WebAuthnRPOriginsRaw, ",") {
-			if t := strings.TrimSpace(p); t != "" {
-				origins = append(origins, t)
-			}
-		}
-	} else {
-		origins = []string{c.AppBaseURL}
-		login := strings.TrimSuffix(c.LoginBaseURL, "/")
-		if login != "" && login != strings.TrimSuffix(c.AppBaseURL, "/") {
-			origins = append(origins, login)
-		}
-	}
-	return id, displayName, origins
-}
-
-// TracingConfig builds the tracing setup from the loaded config. An empty
-// OTelEndpoint yields a no-op tracer (tracing disabled).
-func (c *Config) TracingConfig() tracing.Config {
-	return tracing.Config{
-		Endpoint:    c.OTelEndpoint,
-		ServiceName: c.ServiceName,
-		ServiceEnv:  c.ServiceEnv,
-		SampleRatio: c.OTelSampleRatio,
-	}
-}
-
-// isIssuerURL reports whether s can be an OpenID Connect issuer: an https URL
-// with a host and no query or fragment (OpenID Connect Discovery 1.0, §3). It
-// is what relying parties compare the iss claim and the discovery document to.
-func isIssuerURL(s string) bool {
-	u, err := url.Parse(s)
-	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil &&
-		u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && !strings.HasSuffix(s, "#")
 }

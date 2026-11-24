@@ -1,0 +1,15 @@
+type: object
+description: The resource the event acted upon.
+properties:
+  type:
+    type: string
+    description: Resource type (e.g. "user", "group", "organization").
+  id:
+    type: string
+    format: uuid
+    description: Resource UUID (omitted for un-keyed resources).
+  label:
+    type: string
+    description: Human-readable resource label when available.
+required:
+  - type

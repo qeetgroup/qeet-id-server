@@ -10,34 +10,103 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const checkTenantMembership = `-- name: CheckTenantMembership :one
+const accountEmail = `-- name: AccountEmail :one
+SELECT email FROM account.users WHERE id = $1
+`
+
+func (q *Queries) AccountEmail(ctx context.Context, userID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, accountEmail, userID)
+	var email string
+	err := row.Scan(&email)
+	return email, err
+}
+
+const accountEmailVerified = `-- name: AccountEmailVerified :one
+SELECT email, (email_verified_at IS NOT NULL)::bool AS verified FROM account.users WHERE id = $1
+`
+
+type AccountEmailVerifiedRow struct {
+	Email    string
+	Verified bool
+}
+
+// The account's email and whether it is verified.
+func (q *Queries) AccountEmailVerified(ctx context.Context, userID uuid.UUID) (AccountEmailVerifiedRow, error) {
+	row := q.db.QueryRow(ctx, accountEmailVerified, userID)
+	var i AccountEmailVerifiedRow
+	err := row.Scan(&i.Email, &i.Verified)
+	return i, err
+}
+
+const accountStanding = `-- name: AccountStanding :one
+
+SELECT status, (deleted_at IS NOT NULL)::bool AS deleted FROM account.users WHERE id = $1
+`
+
+type AccountStandingRow struct {
+	Status  string
+	Deleted bool
+}
+
+// ── Account and organization standing (accountstatus.go, signinaudit.go) ────
+// The account's status and whether it is deleted, for a sign-in to refuse.
+func (q *Queries) AccountStanding(ctx context.Context, userID uuid.UUID) (AccountStandingRow, error) {
+	row := q.db.QueryRow(ctx, accountStanding, userID)
+	var i AccountStandingRow
+	err := row.Scan(&i.Status, &i.Deleted)
+	return i, err
+}
+
+const checkOrganizationMembership = `-- name: CheckOrganizationMembership :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users account
-    JOIN tenant.tenants organization ON organization.id = $1::uuid
+    SELECT 1 FROM account.users account
+    JOIN organization.organizations organization ON organization.id = $1::uuid
     WHERE account.id = $2
       AND account.status = 'active' AND account.deleted_at IS NULL
       AND organization.status = 'active' AND organization.deleted_at IS NULL
-      AND (account.tenant_id = organization.id
+      AND (account.organization_id = organization.id
            OR EXISTS (SELECT 1 FROM rbac.user_roles membership
-                      WHERE membership.tenant_id = organization.id AND membership.user_id = account.id))
+                      WHERE membership.organization_id = organization.id AND membership.user_id = account.id))
 ) AS is_member
 `
 
-type CheckTenantMembershipParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+type CheckOrganizationMembershipParams struct {
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
-// CheckTenantMembership reports whether an active account is a member of an
-// active organisation: the organisation's own account, or holding a role there.
-func (q *Queries) CheckTenantMembership(ctx context.Context, arg CheckTenantMembershipParams) (bool, error) {
-	row := q.db.QueryRow(ctx, checkTenantMembership, arg.TenantID, arg.UserID)
+// CheckOrganizationMembership reports whether an active account is a member of an
+// active organization: the organization's own account, or holding a role there.
+func (q *Queries) CheckOrganizationMembership(ctx context.Context, arg CheckOrganizationMembershipParams) (bool, error) {
+	row := q.db.QueryRow(ctx, checkOrganizationMembership, arg.OrganizationID, arg.UserID)
 	var is_member bool
 	err := row.Scan(&is_member)
 	return is_member, err
+}
+
+const clearLoginAttemptBudget = `-- name: ClearLoginAttemptBudget :exec
+DELETE FROM auth.mfa_attempt_budgets WHERE user_id = $1 AND purpose = 'login'
+`
+
+func (q *Queries) ClearLoginAttemptBudget(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearLoginAttemptBudget, userID)
+	return err
+}
+
+const clearRefreshRetries = `-- name: ClearRefreshRetries :execrows
+UPDATE auth.refresh_tokens SET replacement_enc = NULL, replacement_nonce = NULL
+WHERE replacement_enc IS NOT NULL AND used_at < $1
+`
+
+// Drops the sealed pairs of rotations made before @cutoff.
+func (q *Queries) ClearRefreshRetries(ctx context.Context, cutoff *time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, clearRefreshRetries, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const clearSignInFailures = `-- name: ClearSignInFailures :exec
@@ -56,6 +125,26 @@ type ClearSignInFailuresParams struct {
 // and its account-wide count. Other networks' counts stay.
 func (q *Queries) ClearSignInFailures(ctx context.Context, arg ClearSignInFailuresParams) error {
 	_, err := q.db.Exec(ctx, clearSignInFailures, arg.Email, arg.Network)
+	return err
+}
+
+const continueSession = `-- name: ContinueSession :exec
+UPDATE auth.sessions s SET signed_in_at = f.signed_in_at, second_factor = COALESCE(NULLIF($1::text, ''), s.second_factor)
+FROM auth.sessions f
+WHERE s.id = $2 AND f.id = $3 AND f.user_id = s.user_id
+`
+
+type ContinueSessionParams struct {
+	Factor        string
+	SessionID     uuid.UUID
+	FromSessionID uuid.UUID
+}
+
+// Records on the session that it continues another of the same person's: that
+// one's sign-in time, and the second factor carried from it (empty: keep its
+// own).
+func (q *Queries) ContinueSession(ctx context.Context, arg ContinueSessionParams) error {
+	_, err := q.db.Exec(ctx, continueSession, arg.Factor, arg.SessionID, arg.FromSessionID)
 	return err
 }
 
@@ -80,6 +169,29 @@ func (q *Queries) CountMFAAttempt(ctx context.Context, userID uuid.UUID) (CountM
 	return i, err
 }
 
+const countMFAChallengeFailure = `-- name: CountMFAChallengeFailure :exec
+UPDATE auth.mfa_login_challenges SET failed_attempts = $1 WHERE id = $2
+`
+
+type CountMFAChallengeFailureParams struct {
+	FailedAttempts int16
+	ID             uuid.UUID
+}
+
+func (q *Queries) CountMFAChallengeFailure(ctx context.Context, arg CountMFAChallengeFailureParams) error {
+	_, err := q.db.Exec(ctx, countMFAChallengeFailure, arg.FailedAttempts, arg.ID)
+	return err
+}
+
+const countMFACodeSent = `-- name: CountMFACodeSent :exec
+UPDATE auth.mfa_login_challenges SET codes_sent = codes_sent + 1 WHERE id = $1
+`
+
+func (q *Queries) CountMFACodeSent(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, countMFACodeSent, id)
+	return err
+}
+
 const countSourceAccounts = `-- name: CountSourceAccounts :one
 SELECT COUNT(*) FROM auth.login_source_failures WHERE network = $1
 `
@@ -87,6 +199,37 @@ SELECT COUNT(*) FROM auth.login_source_failures WHERE network = $1
 // Distinct accounts the network failed against (stale rows already forgotten).
 func (q *Queries) CountSourceAccounts(ctx context.Context, network string) (int64, error) {
 	row := q.db.QueryRow(ctx, countSourceAccounts, network)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countTrustedDevices = `-- name: CountTrustedDevices :one
+SELECT count(*)::int AS devices, count(DISTINCT user_id)::int AS users
+FROM auth.trusted_devices
+WHERE organization_id = $1 AND expires_at > NOW()
+`
+
+type CountTrustedDevicesRow struct {
+	Devices int32
+	Users   int32
+}
+
+func (q *Queries) CountTrustedDevices(ctx context.Context, organizationID *uuid.UUID) (CountTrustedDevicesRow, error) {
+	row := q.db.QueryRow(ctx, countTrustedDevices, organizationID)
+	var i CountTrustedDevicesRow
+	err := row.Scan(&i.Devices, &i.Users)
+	return i, err
+}
+
+const countUserSessions = `-- name: CountUserSessions :one
+SELECT count(*) FROM auth.sessions sess
+JOIN account.users u ON u.id = sess.user_id
+WHERE sess.user_id = $1 AND u.deleted_at IS NULL AND sess.superseded_by IS NULL
+`
+
+func (q *Queries) CountUserSessions(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countUserSessions, userID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -137,7 +280,7 @@ WHERE user_id = $1 AND consumed_at IS NULL AND status IN ('pending', 'authorized
 
 // DenyDeviceAuthorizationsForUser denies every device sign-in the user approved
 // that the device has not collected yet.
-func (q *Queries) DenyDeviceAuthorizationsForUser(ctx context.Context, userID pgtype.UUID) (int64, error) {
+func (q *Queries) DenyDeviceAuthorizationsForUser(ctx context.Context, userID *uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, denyDeviceAuthorizationsForUser, userID)
 	if err != nil {
 		return 0, err
@@ -150,14 +293,14 @@ WITH ended AS (
     DELETE FROM auth.login_sessions WHERE token_hash = $1
     RETURNING id, user_id
 )
-SELECT ended.id, ended.user_id, u.tenant_id
-FROM ended LEFT JOIN "user".users u ON u.id = ended.user_id
+SELECT ended.id, ended.user_id, u.organization_id
+FROM ended LEFT JOIN account.users u ON u.id = ended.user_id
 `
 
 type EndLoginSessionRow struct {
-	ID       uuid.UUID
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
 }
 
 // EndLoginSession ends the hosted-login (browser) session behind a cookie —
@@ -167,7 +310,7 @@ type EndLoginSessionRow struct {
 func (q *Queries) EndLoginSession(ctx context.Context, tokenHash string) (EndLoginSessionRow, error) {
 	row := q.db.QueryRow(ctx, endLoginSession, tokenHash)
 	var i EndLoginSessionRow
-	err := row.Scan(&i.ID, &i.UserID, &i.TenantID)
+	err := row.Scan(&i.ID, &i.UserID, &i.OrganizationID)
 	return i, err
 }
 
@@ -182,6 +325,25 @@ func (q *Queries) EndMFAFailureStreak(ctx context.Context, userID uuid.UUID) err
 	return err
 }
 
+const ensureLoginAttemptBudget = `-- name: EnsureLoginAttemptBudget :exec
+INSERT INTO auth.mfa_attempt_budgets (user_id, purpose) VALUES ($1, 'login')
+ON CONFLICT DO NOTHING
+`
+
+func (q *Queries) EnsureLoginAttemptBudget(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, ensureLoginAttemptBudget, userID)
+	return err
+}
+
+const evictSessions = `-- name: EvictSessions :exec
+UPDATE auth.sessions SET revoked_at = NOW() WHERE id = ANY($1::uuid[]) AND revoked_at IS NULL
+`
+
+func (q *Queries) EvictSessions(ctx context.Context, ids []uuid.UUID) error {
+	_, err := q.db.Exec(ctx, evictSessions, ids)
+	return err
+}
+
 const expireAuthorizationCodesForLoginSession = `-- name: ExpireAuthorizationCodesForLoginSession :execrows
 UPDATE auth.oidc_authorization_codes SET used_at = NOW()
 WHERE login_session_id = $1 AND used_at IS NULL
@@ -193,7 +355,7 @@ WHERE login_session_id = $1 AND used_at IS NULL
 // locked and writes its grant before releasing it; this waits for it, skips
 // the code it spent, and the grant is ended by RevokeAppGrantsForLoginSession,
 // which runs after.
-func (q *Queries) ExpireAuthorizationCodesForLoginSession(ctx context.Context, loginSessionID pgtype.UUID) (int64, error) {
+func (q *Queries) ExpireAuthorizationCodesForLoginSession(ctx context.Context, loginSessionID *uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, expireAuthorizationCodesForLoginSession, loginSessionID)
 	if err != nil {
 		return 0, err
@@ -207,7 +369,7 @@ WITH resets AS (
     WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
 )
 UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
-WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = $1)
+WHERE LOWER(email) = (SELECT LOWER(u.email) FROM account.users u WHERE u.id = $1)
   AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
 `
 
@@ -217,6 +379,201 @@ WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = $1)
 func (q *Queries) ExpireRecoveryLinksForUser(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, expireRecoveryLinksForUser, userID)
 	return err
+}
+
+const foldAddress = `-- name: FoldAddress :one
+SELECT LOWER($1::text)::text
+`
+
+// An address as the database's LOWER folds it, as the account lookup does.
+func (q *Queries) FoldAddress(ctx context.Context, address string) (string, error) {
+	row := q.db.QueryRow(ctx, foldAddress, address)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const forgetAPIKeys = `-- name: ForgetAPIKeys :execrows
+UPDATE auth.api_keys SET revoked_at = NOW() WHERE user_id = $1::uuid AND revoked_at IS NULL
+`
+
+// Revokes the account's personal API keys.
+func (q *Queries) ForgetAPIKeys(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetAPIKeys, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetConsoleLinkCodes = `-- name: ForgetConsoleLinkCodes :execrows
+DELETE FROM auth.platform_social_link_codes WHERE user_id = $1
+`
+
+func (q *Queries) ForgetConsoleLinkCodes(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetConsoleLinkCodes, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetConsoleSignIns = `-- name: ForgetConsoleSignIns :execrows
+DELETE FROM auth.platform_social_identities WHERE user_id = $1
+`
+
+func (q *Queries) ForgetConsoleSignIns(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetConsoleSignIns, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetEmailVerifications = `-- name: ForgetEmailVerifications :execrows
+DELETE FROM account.email_verifications WHERE user_id = $1
+`
+
+func (q *Queries) ForgetEmailVerifications(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetEmailVerifications, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetLinkedAccounts = `-- name: ForgetLinkedAccounts :execrows
+DELETE FROM account.external_identities WHERE user_id = $1
+`
+
+func (q *Queries) ForgetLinkedAccounts(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetLinkedAccounts, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetOTPFactors = `-- name: ForgetOTPFactors :execrows
+DELETE FROM auth.mfa_otp_factors WHERE user_id = $1
+`
+
+func (q *Queries) ForgetOTPFactors(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetOTPFactors, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetPasskeyCeremonies = `-- name: ForgetPasskeyCeremonies :execrows
+DELETE FROM auth.webauthn_sessions WHERE user_id = $1::uuid
+`
+
+func (q *Queries) ForgetPasskeyCeremonies(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetPasskeyCeremonies, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetPasskeys = `-- name: ForgetPasskeys :execrows
+
+DELETE FROM auth.passkey_credentials WHERE user_id = $1
+`
+
+// ── Forgetting credentials (credentials.go) ──────────────────────────────────
+func (q *Queries) ForgetPasskeys(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetPasskeys, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetPassword = `-- name: ForgetPassword :execrows
+DELETE FROM auth.password_credentials WHERE user_id = $1
+`
+
+func (q *Queries) ForgetPassword(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetPassword, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetPhoneVerifications = `-- name: ForgetPhoneVerifications :execrows
+DELETE FROM account.phone_verifications WHERE user_id = $1
+`
+
+func (q *Queries) ForgetPhoneVerifications(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetPhoneVerifications, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetPushChallenges = `-- name: ForgetPushChallenges :execrows
+DELETE FROM auth.mfa_push_challenges WHERE user_id = $1 AND status = 'pending'
+`
+
+func (q *Queries) ForgetPushChallenges(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetPushChallenges, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetPushDevices = `-- name: ForgetPushDevices :execrows
+DELETE FROM auth.mfa_push_devices WHERE user_id = $1
+`
+
+func (q *Queries) ForgetPushDevices(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetPushDevices, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetPushPairings = `-- name: ForgetPushPairings :execrows
+DELETE FROM auth.mfa_push_pairings WHERE user_id = $1 AND used_at IS NULL
+`
+
+func (q *Queries) ForgetPushPairings(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetPushPairings, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetRecoveryCodes = `-- name: ForgetRecoveryCodes :execrows
+DELETE FROM auth.mfa_recovery_codes WHERE user_id = $1
+`
+
+func (q *Queries) ForgetRecoveryCodes(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetRecoveryCodes, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetSignInCodes = `-- name: ForgetSignInCodes :execrows
+DELETE FROM auth.login_codes WHERE user_id = $1
+`
+
+func (q *Queries) ForgetSignInCodes(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetSignInCodes, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const forgetSourceFailuresBefore = `-- name: ForgetSourceFailuresBefore :exec
@@ -234,23 +591,88 @@ func (q *Queries) ForgetSourceFailuresBefore(ctx context.Context, arg ForgetSour
 	return err
 }
 
-const getClientTenant = `-- name: GetClientTenant :one
-SELECT tenant_id FROM auth.oidc_clients WHERE client_id = $1
+const forgetStepUps = `-- name: ForgetStepUps :execrows
+DELETE FROM auth.mfa_verifications WHERE user_id = $1
 `
 
-// The tenant an OAuth client belongs to (whose policy a hosted sign-in for it
+func (q *Queries) ForgetStepUps(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetStepUps, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetTOTP = `-- name: ForgetTOTP :execrows
+DELETE FROM auth.mfa_totp WHERE user_id = $1
+`
+
+func (q *Queries) ForgetTOTP(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetTOTP, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetTrustedDevices = `-- name: ForgetTrustedDevices :many
+DELETE FROM auth.trusted_devices
+WHERE user_id = $1 AND ($2::uuid IS NULL OR organization_id = $2)
+  AND ($3::uuid IS NULL OR id = $3)
+RETURNING id, organization_id
+`
+
+type ForgetTrustedDevicesParams struct {
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+	DeviceID       *uuid.UUID
+}
+
+type ForgetTrustedDevicesRow struct {
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
+}
+
+// Forgets the person's remembered devices: in every organization when
+// @organization_id is NULL, else only in it; all of them, or with @device_id
+// only that one.
+func (q *Queries) ForgetTrustedDevices(ctx context.Context, arg ForgetTrustedDevicesParams) ([]ForgetTrustedDevicesRow, error) {
+	rows, err := q.db.Query(ctx, forgetTrustedDevices, arg.UserID, arg.OrganizationID, arg.DeviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ForgetTrustedDevicesRow{}
+	for rows.Next() {
+		var i ForgetTrustedDevicesRow
+		if err := rows.Scan(&i.ID, &i.OrganizationID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getClientOrganization = `-- name: GetClientOrganization :one
+SELECT organization_id FROM auth.oidc_clients WHERE client_id = $1
+`
+
+// The organization an OAuth client belongs to (whose policy a hosted sign-in for it
 // is held to).
-func (q *Queries) GetClientTenant(ctx context.Context, clientID string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getClientTenant, clientID)
-	var tenant_id uuid.UUID
-	err := row.Scan(&tenant_id)
-	return tenant_id, err
+func (q *Queries) GetClientOrganization(ctx context.Context, clientID string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getClientOrganization, clientID)
+	var organization_id uuid.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
 }
 
 const getLoginSession = `-- name: GetLoginSession :one
 SELECT s.id, s.user_id, s.expires_at, s.created_at
 FROM auth.login_sessions s
-JOIN "user".users u ON u.id = s.user_id
+JOIN account.users u ON u.id = s.user_id
 WHERE s.token_hash = $1 AND u.status = 'active' AND u.deleted_at IS NULL
 `
 
@@ -277,21 +699,21 @@ func (q *Queries) GetLoginSession(ctx context.Context, tokenHash string) (GetLog
 }
 
 const getLoginSessionUser = `-- name: GetLoginSessionUser :one
-SELECT s.user_id, u.tenant_id, s.created_at, COALESCE(s.second_factor, '')::text AS second_factor
+SELECT s.user_id, u.organization_id, s.created_at, COALESCE(s.second_factor, '')::text AS second_factor
 FROM auth.login_sessions s
-JOIN "user".users u ON u.id = s.user_id
-LEFT JOIN tenant.tenants t ON t.id = u.tenant_id
+JOIN account.users u ON u.id = s.user_id
+LEFT JOIN organization.organizations t ON t.id = u.organization_id
 WHERE s.token_hash = $1
   AND s.expires_at > NOW()
   AND u.status = 'active' AND u.deleted_at IS NULL
-  AND (u.tenant_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL))
+  AND (u.organization_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL))
 `
 
 type GetLoginSessionUserRow struct {
-	UserID       uuid.UUID
-	TenantID     pgtype.UUID
-	CreatedAt    time.Time
-	SecondFactor string
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+	CreatedAt      time.Time
+	SecondFactor   string
 }
 
 // The user behind a live hosted-login session, and their own organization (NULL
@@ -303,7 +725,7 @@ func (q *Queries) GetLoginSessionUser(ctx context.Context, tokenHash string) (Ge
 	var i GetLoginSessionUserRow
 	err := row.Scan(
 		&i.UserID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.CreatedAt,
 		&i.SecondFactor,
 	)
@@ -332,19 +754,13 @@ type GetSignInLocksParams struct {
 }
 
 type GetSignInLocksRow struct {
-	SourceThrottledUntil pgtype.Timestamptz
-	NetworkLockedUntil   pgtype.Timestamptz
-	AccountLockedUntil   pgtype.Timestamptz
+	SourceThrottledUntil *time.Time
+	NetworkLockedUntil   *time.Time
+	AccountLockedUntil   *time.Time
 }
 
-// Queries for the authentication domain.
-// Static queries with fully-typed, non-nullable parameters are converted.
-// Queries involving nullable UUID columns passed as Go interface{}/nil
-// (sessions.tenant_id, mfa_login_challenges.tenant_id, trusted_devices.tenant_id)
-// remain hand-written because they require Go-nil → SQL NULL semantics that
-// sqlc's uuid override cannot express without additional NULLIF wrappers that
-// would silently treat the zero UUID as NULL.
-// The Refresh join (FOR UPDATE OF rt across three tables) is also left raw.
+// Queries for the authentication domain, compiled by sqlc into ./dbgen. A
+// NULL-able organization_id is a *uuid.UUID: nil is no organization.
 // Sign-in lockout (lockout.go). Every timestamp is the caller's @now, so one
 // attempt is judged against a single instant. Keys: @email is the lowercased
 // address (whether or not an account has it); @network the source network.
@@ -355,6 +771,18 @@ func (q *Queries) GetSignInLocks(ctx context.Context, arg GetSignInLocksParams) 
 	var i GetSignInLocksRow
 	err := row.Scan(&i.SourceThrottledUntil, &i.NetworkLockedUntil, &i.AccountLockedUntil)
 	return i, err
+}
+
+const homeOrganization = `-- name: HomeOrganization :one
+SELECT organization_id FROM account.users WHERE id = $1
+`
+
+// The account's own organization (NULL: none).
+func (q *Queries) HomeOrganization(ctx context.Context, userID uuid.UUID) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, homeOrganization, userID)
+	var organization_id *uuid.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
 }
 
 const insertLoginSession = `-- name: InsertLoginSession :one
@@ -387,6 +815,108 @@ func (q *Queries) InsertLoginSession(ctx context.Context, arg InsertLoginSession
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const insertMFAChallenge = `-- name: InsertMFAChallenge :one
+
+INSERT INTO auth.mfa_login_challenges (user_id, organization_id, expires_at, claims, enrollment, first_factor)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id
+`
+
+type InsertMFAChallengeParams struct {
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+	ExpiresAt      time.Time
+	Claims         []byte
+	Enrollment     bool
+	FirstFactor    string
+}
+
+// ── Second-factor sign-in challenges (mfachallenge.go, mfalogin.go, mfapolicy.go, risksignin.go) ──
+func (q *Queries) InsertMFAChallenge(ctx context.Context, arg InsertMFAChallengeParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertMFAChallenge,
+		arg.UserID,
+		arg.OrganizationID,
+		arg.ExpiresAt,
+		arg.Claims,
+		arg.Enrollment,
+		arg.FirstFactor,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertOrganizationlessSession = `-- name: InsertOrganizationlessSession :one
+INSERT INTO auth.sessions (id, user_id, organization_id, ip, user_agent, expires_at, idle_timeout, country, city)
+VALUES ($1, $2, NULL, NULLIF($3::text, '')::inet, $4,
+        NOW() + make_interval(secs => $5::float8),
+        make_interval(secs => $6::float8),
+        NULLIF($7::text, ''), NULLIF($8::text, ''))
+RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)::timestamptz AS idle_expires_at
+`
+
+type InsertOrganizationlessSessionParams struct {
+	ID            uuid.UUID
+	UserID        uuid.UUID
+	Ip            string
+	UserAgent     *string
+	MaxAgeSeconds float64
+	IdleSeconds   float64
+	Country       string
+	City          string
+}
+
+type InsertOrganizationlessSessionRow struct {
+	ExpiresAt     time.Time
+	IdleExpiresAt time.Time
+}
+
+// Organization-less session: organization_id is a literal NULL (not a bind). ip goes through
+// NULLIF so an empty string stores as SQL NULL, matching InsertLoginSession.
+// With no organization, the platform's session bounds apply. Returns when it
+// ends however active, and when it ends unless renewed.
+func (q *Queries) InsertOrganizationlessSession(ctx context.Context, arg InsertOrganizationlessSessionParams) (InsertOrganizationlessSessionRow, error) {
+	row := q.db.QueryRow(ctx, insertOrganizationlessSession,
+		arg.ID,
+		arg.UserID,
+		arg.Ip,
+		arg.UserAgent,
+		arg.MaxAgeSeconds,
+		arg.IdleSeconds,
+		arg.Country,
+		arg.City,
+	)
+	var i InsertOrganizationlessSessionRow
+	err := row.Scan(&i.ExpiresAt, &i.IdleExpiresAt)
+	return i, err
+}
+
+const insertOrganizationlessUser = `-- name: InsertOrganizationlessUser :one
+INSERT INTO account.users (organization_id, email, display_name)
+VALUES (NULL, $1, $2)
+RETURNING id, created_at, updated_at
+`
+
+type InsertOrganizationlessUserParams struct {
+	Email       string
+	DisplayName *string
+}
+
+type InsertOrganizationlessUserRow struct {
+	ID        uuid.UUID
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Organization-less signup: creates the identity with organization_id NULL (a literal, not a
+// bind — membership lives in rbac.user_roles). display_name is nullable text.
+func (q *Queries) InsertOrganizationlessUser(ctx context.Context, arg InsertOrganizationlessUserParams) (InsertOrganizationlessUserRow, error) {
+	row := q.db.QueryRow(ctx, insertOrganizationlessUser, arg.Email, arg.DisplayName)
+	var i InsertOrganizationlessUserRow
+	err := row.Scan(&i.ID, &i.CreatedAt, &i.UpdatedAt)
+	return i, err
 }
 
 const insertPasswordCredential = `-- name: InsertPasswordCredential :exec
@@ -424,75 +954,163 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 	return id, err
 }
 
-const insertTenantlessSession = `-- name: InsertTenantlessSession :one
-INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country, city)
-VALUES ($1, $2, NULL, NULLIF($3::text, '')::inet, $4,
-        NOW() + make_interval(secs => $5::float8),
-        make_interval(secs => $6::float8),
-        NULLIF($7::text, ''), NULLIF($8::text, ''))
+const insertRiskEmailChallenge = `-- name: InsertRiskEmailChallenge :one
+INSERT INTO auth.mfa_login_challenges (user_id, organization_id, expires_at, claims, first_factor, risk_email)
+VALUES ($1, $2, $3, $4, $5, TRUE)
+RETURNING id
+`
+
+type InsertRiskEmailChallengeParams struct {
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+	ExpiresAt      time.Time
+	Claims         []byte
+	FirstFactor    string
+}
+
+// A challenge met by a code to the account's verified email.
+func (q *Queries) InsertRiskEmailChallenge(ctx context.Context, arg InsertRiskEmailChallengeParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertRiskEmailChallenge,
+		arg.UserID,
+		arg.OrganizationID,
+		arg.ExpiresAt,
+		arg.Claims,
+		arg.FirstFactor,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertSession = `-- name: InsertSession :one
+
+INSERT INTO auth.sessions (id, user_id, organization_id, ip, user_agent, hook_claims, expires_at, idle_timeout, country,
+                           second_factor, city)
+SELECT $1, $2, $3, NULLIF($4::text, '')::inet, $5, $6,
+       LEAST(NOW() + COALESCE(sp.session_max_age, make_interval(secs => $7::float8)),
+             COALESCE($8::timestamptz, 'infinity'::timestamptz)),
+       COALESCE(sp.session_idle_timeout, make_interval(secs => $9::float8)),
+       NULLIF($10::text, ''), NULLIF($11::text, ''), NULLIF($12::text, '')
+FROM (VALUES (1)) AS one
+LEFT JOIN organization.security_policies sp ON sp.organization_id = $3
 RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)::timestamptz AS idle_expires_at
 `
 
-type InsertTenantlessSessionParams struct {
-	ID            uuid.UUID
-	UserID        uuid.UUID
-	Ip            string
-	UserAgent     *string
-	MaxAgeSeconds float64
-	IdleSeconds   float64
-	Country       string
-	City          string
+type InsertSessionParams struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+	Ip             string
+	UserAgent      *string
+	HookClaims     []byte
+	MaxAgeS        float64
+	NotAfter       *time.Time
+	IdleS          float64
+	Country        string
+	SecondFactor   string
+	City           string
 }
 
-type InsertTenantlessSessionRow struct {
+type InsertSessionRow struct {
 	ExpiresAt     time.Time
 	IdleExpiresAt time.Time
 }
 
-// Tenant-less session: tenant_id is a literal NULL (not a bind). ip goes through
-// NULLIF so an empty string stores as SQL NULL, matching InsertLoginSession.
-// With no organisation, the platform's session bounds apply. Returns when it
-// ends however active, and when it ends unless renewed.
-func (q *Queries) InsertTenantlessSession(ctx context.Context, arg InsertTenantlessSessionParams) (InsertTenantlessSessionRow, error) {
-	row := q.db.QueryRow(ctx, insertTenantlessSession,
+// ── Sessions (issue.go, sessions.go, sessionlimit.go, switch.go) ─────────────
+// Opens a session bounded by its organization's maximum age and idle timeout,
+// else by @max_age_s and @idle_s, and never past @not_after (NULL: no bound).
+// An empty @ip, @country, @second_factor or @city is recorded as NULL.
+func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (InsertSessionRow, error) {
+	row := q.db.QueryRow(ctx, insertSession,
 		arg.ID,
 		arg.UserID,
+		arg.OrganizationID,
 		arg.Ip,
 		arg.UserAgent,
-		arg.MaxAgeSeconds,
-		arg.IdleSeconds,
+		arg.HookClaims,
+		arg.MaxAgeS,
+		arg.NotAfter,
+		arg.IdleS,
 		arg.Country,
+		arg.SecondFactor,
 		arg.City,
 	)
-	var i InsertTenantlessSessionRow
+	var i InsertSessionRow
 	err := row.Scan(&i.ExpiresAt, &i.IdleExpiresAt)
 	return i, err
 }
 
-const insertTenantlessUser = `-- name: InsertTenantlessUser :one
-INSERT INTO "user".users (tenant_id, email, display_name)
-VALUES (NULL, $1, $2)
+const insertSignupUser = `-- name: InsertSignupUser :one
+
+INSERT INTO account.users (organization_id, email, display_name)
+VALUES ($1, $2, $3)
 RETURNING id, created_at, updated_at
 `
 
-type InsertTenantlessUserParams struct {
-	Email       string
-	DisplayName *string
+type InsertSignupUserParams struct {
+	OrganizationID *uuid.UUID
+	Email          string
+	DisplayName    *string
 }
 
-type InsertTenantlessUserRow struct {
+type InsertSignupUserRow struct {
 	ID        uuid.UUID
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
-// Tenant-less signup: creates the identity with tenant_id NULL (a literal, not a
-// bind — membership lives in rbac.user_roles). display_name is nullable text.
-func (q *Queries) InsertTenantlessUser(ctx context.Context, arg InsertTenantlessUserParams) (InsertTenantlessUserRow, error) {
-	row := q.db.QueryRow(ctx, insertTenantlessUser, arg.Email, arg.DisplayName)
-	var i InsertTenantlessUserRow
+// ── Sign-up and password (signup.go, password.go, lockout.go) ────────────────
+func (q *Queries) InsertSignupUser(ctx context.Context, arg InsertSignupUserParams) (InsertSignupUserRow, error) {
+	row := q.db.QueryRow(ctx, insertSignupUser, arg.OrganizationID, arg.Email, arg.DisplayName)
+	var i InsertSignupUserRow
 	err := row.Scan(&i.ID, &i.CreatedAt, &i.UpdatedAt)
 	return i, err
+}
+
+const insertTrustedDevice = `-- name: InsertTrustedDevice :one
+
+INSERT INTO auth.trusted_devices (user_id, organization_id, token_hash, label, expires_at)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id
+`
+
+type InsertTrustedDeviceParams struct {
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+	TokenHash      string
+	Label          string
+	ExpiresAt      time.Time
+}
+
+// ── Trusted devices (trusteddevice.go) ───────────────────────────────────────
+func (q *Queries) InsertTrustedDevice(ctx context.Context, arg InsertTrustedDeviceParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertTrustedDevice,
+		arg.UserID,
+		arg.OrganizationID,
+		arg.TokenHash,
+		arg.Label,
+		arg.ExpiresAt,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const isHomeMember = `-- name: IsHomeMember :one
+SELECT EXISTS (SELECT 1 FROM account.users WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL)::bool
+`
+
+type IsHomeMemberParams struct {
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+}
+
+// Whether the organization is the account's home.
+func (q *Queries) IsHomeMember(ctx context.Context, arg IsHomeMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isHomeMember, arg.UserID, arg.OrganizationID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const isSessionLiveForUser = `-- name: IsSessionLiveForUser :one
@@ -538,6 +1156,365 @@ func (q *Queries) IsSessionOfUser(ctx context.Context, arg IsSessionOfUserParams
 	return owned, err
 }
 
+const issueRiskEmailCode = `-- name: IssueRiskEmailCode :exec
+UPDATE auth.mfa_login_challenges
+SET email_code_hash = $1, email_code_expires_at = $2, email_code_sent_at = NOW(),
+    codes_sent = codes_sent + 1
+WHERE id = $3
+`
+
+type IssueRiskEmailCodeParams struct {
+	EmailCodeHash      *string
+	EmailCodeExpiresAt *time.Time
+	ID                 uuid.UUID
+}
+
+// Replaces a risk challenge's emailed code, counting the send.
+func (q *Queries) IssueRiskEmailCode(ctx context.Context, arg IssueRiskEmailCodeParams) error {
+	_, err := q.db.Exec(ctx, issueRiskEmailCode, arg.EmailCodeHash, arg.EmailCodeExpiresAt, arg.ID)
+	return err
+}
+
+const keepRotation = `-- name: KeepRotation :exec
+UPDATE auth.refresh_tokens SET replacement_enc = $1, replacement_nonce = $2 WHERE id = $3
+`
+
+type KeepRotationParams struct {
+	ReplacementEnc   []byte
+	ReplacementNonce []byte
+	ID               uuid.UUID
+}
+
+// Keeps, sealed, the pair the rotation of the refresh token issued.
+func (q *Queries) KeepRotation(ctx context.Context, arg KeepRotationParams) error {
+	_, err := q.db.Exec(ctx, keepRotation, arg.ReplacementEnc, arg.ReplacementNonce, arg.ID)
+	return err
+}
+
+const keptRotation = `-- name: KeptRotation :one
+SELECT r.replacement_enc, r.replacement_nonce, n.token_hash, EXTRACT(EPOCH FROM NOW() - r.used_at)::float8 AS seconds
+FROM auth.refresh_tokens r
+JOIN auth.refresh_tokens n ON n.id = r.replaced_by
+WHERE r.id = $1 AND r.session_id = $2 AND r.replacement_enc IS NOT NULL
+  AND r.used_at > NOW() - make_interval(secs => $3::float8)
+  AND n.used_at IS NULL AND n.expires_at > NOW()
+`
+
+type KeptRotationParams struct {
+	ID        uuid.UUID
+	SessionID uuid.UUID
+	GraceS    float64
+}
+
+type KeptRotationRow struct {
+	ReplacementEnc   []byte
+	ReplacementNonce []byte
+	TokenHash        string
+	Seconds          float64
+}
+
+// The sealed pair the rotation of the refresh token issued, its refresh
+// token's hash and the seconds since the rotation: only within @grace_s of it,
+// and while that refresh token is unused and live.
+func (q *Queries) KeptRotation(ctx context.Context, arg KeptRotationParams) (KeptRotationRow, error) {
+	row := q.db.QueryRow(ctx, keptRotation, arg.ID, arg.SessionID, arg.GraceS)
+	var i KeptRotationRow
+	err := row.Scan(
+		&i.ReplacementEnc,
+		&i.ReplacementNonce,
+		&i.TokenHash,
+		&i.Seconds,
+	)
+	return i, err
+}
+
+const listTrustedDevices = `-- name: ListTrustedDevices :many
+SELECT id, organization_id, label, created_at, last_used_at, expires_at, (token_hash = $1::text)::bool AS current
+FROM auth.trusted_devices
+WHERE user_id = $2 AND ($3::uuid IS NULL OR organization_id = $3)
+  AND expires_at > NOW()
+ORDER BY created_at DESC, id
+`
+
+type ListTrustedDevicesParams struct {
+	CurrentHash    string
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+}
+
+type ListTrustedDevicesRow struct {
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
+	Label          string
+	CreatedAt      time.Time
+	LastUsedAt     *time.Time
+	ExpiresAt      time.Time
+	Current        bool
+}
+
+// The person's live remembered devices, newest first: in every organization
+// when @organization_id is NULL, else only in it; current marks the one with
+// @current_hash.
+func (q *Queries) ListTrustedDevices(ctx context.Context, arg ListTrustedDevicesParams) ([]ListTrustedDevicesRow, error) {
+	rows, err := q.db.Query(ctx, listTrustedDevices, arg.CurrentHash, arg.UserID, arg.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTrustedDevicesRow{}
+	for rows.Next() {
+		var i ListTrustedDevicesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Label,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.Current,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserSessions = `-- name: ListUserSessions :many
+SELECT sess.id, sess.user_id, sess.organization_id, COALESCE(host(sess.ip), '')::text AS ip, sess.user_agent,
+       sess.created_at, sess.last_seen_at, sess.revoked_at,
+       sess.expires_at, ends.idle::timestamptz AS idle_expires_at,
+       (CASE WHEN ends.idle <= COALESCE(sess.revoked_at, NOW()) THEN 'expired'
+             WHEN sess.revoked_at IS NOT NULL THEN 'revoked'
+             ELSE 'active' END)::text AS status,
+       COALESCE(sess.country, '')::text AS country, COALESCE(sess.city, '')::text AS city
+FROM auth.sessions sess
+CROSS JOIN LATERAL (SELECT LEAST(sess.last_seen_at + sess.idle_timeout, sess.expires_at) AS idle) ends
+JOIN account.users u ON u.id = sess.user_id
+WHERE sess.user_id = $1 AND u.deleted_at IS NULL AND sess.superseded_by IS NULL
+  AND ($2::boolean = FALSE OR (sess.created_at, sess.id) < ($3::timestamptz, $4::uuid))
+ORDER BY sess.created_at DESC, sess.id DESC
+LIMIT $5
+`
+
+type ListUserSessionsParams struct {
+	UserID   uuid.UUID
+	After    bool
+	BeforeTs time.Time
+	BeforeID uuid.UUID
+	Lim      int32
+}
+
+type ListUserSessionsRow struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+	Ip             string
+	UserAgent      *string
+	CreatedAt      time.Time
+	LastSeenAt     time.Time
+	RevokedAt      *time.Time
+	ExpiresAt      time.Time
+	IdleExpiresAt  time.Time
+	Status         string
+	Country        string
+	City           string
+}
+
+// A page of the person's sessions, newest first, before the session at
+// (@before_ts, @before_id) when @after is set; ip is ” when none was
+// recorded. A soft-deleted account's sessions are kept for the record but
+// never listed, nor a superseded one.
+func (q *Queries) ListUserSessions(ctx context.Context, arg ListUserSessionsParams) ([]ListUserSessionsRow, error) {
+	rows, err := q.db.Query(ctx, listUserSessions,
+		arg.UserID,
+		arg.After,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUserSessionsRow{}
+	for rows.Next() {
+		var i ListUserSessionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.OrganizationID,
+			&i.Ip,
+			&i.UserAgent,
+			&i.CreatedAt,
+			&i.LastSeenAt,
+			&i.RevokedAt,
+			&i.ExpiresAt,
+			&i.IdleExpiresAt,
+			&i.Status,
+			&i.Country,
+			&i.City,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const liveSessionsByUse = `-- name: LiveSessionsByUse :many
+SELECT id FROM auth.sessions
+WHERE user_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
+ORDER BY last_seen_at, created_at
+`
+
+type LiveSessionsByUseParams struct {
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+}
+
+// The person's live sessions in the organization, least recently used first.
+func (q *Queries) LiveSessionsByUse(ctx context.Context, arg LiveSessionsByUseParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, liveSessionsByUse, arg.UserID, arg.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockAccount = `-- name: LockAccount :one
+SELECT id FROM account.users WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockAccount(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockAccount, userID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockLoginAttemptBudget = `-- name: LockLoginAttemptBudget :one
+SELECT failed_attempts, window_started_at, locked_until
+FROM auth.mfa_attempt_budgets WHERE user_id = $1 AND purpose = 'login'
+FOR UPDATE
+`
+
+type LockLoginAttemptBudgetRow struct {
+	FailedAttempts  int16
+	WindowStartedAt time.Time
+	LockedUntil     *time.Time
+}
+
+func (q *Queries) LockLoginAttemptBudget(ctx context.Context, userID uuid.UUID) (LockLoginAttemptBudgetRow, error) {
+	row := q.db.QueryRow(ctx, lockLoginAttemptBudget, userID)
+	var i LockLoginAttemptBudgetRow
+	err := row.Scan(&i.FailedAttempts, &i.WindowStartedAt, &i.LockedUntil)
+	return i, err
+}
+
+const lockMFAChallenge = `-- name: LockMFAChallenge :one
+SELECT user_id, organization_id, enrollment, expires_at, passkey_session_id, push_challenge_id, codes_sent,
+       risk_email, email_code_sent_at, email_code_hash, email_code_expires_at
+FROM auth.mfa_login_challenges WHERE id = $1 FOR UPDATE
+`
+
+type LockMFAChallengeRow struct {
+	UserID             uuid.UUID
+	OrganizationID     *uuid.UUID
+	Enrollment         bool
+	ExpiresAt          time.Time
+	PasskeySessionID   *uuid.UUID
+	PushChallengeID    *uuid.UUID
+	CodesSent          int32
+	RiskEmail          bool
+	EmailCodeSentAt    *time.Time
+	EmailCodeHash      *string
+	EmailCodeExpiresAt *time.Time
+}
+
+// The challenge a sign-in's second step names, locked.
+func (q *Queries) LockMFAChallenge(ctx context.Context, id uuid.UUID) (LockMFAChallengeRow, error) {
+	row := q.db.QueryRow(ctx, lockMFAChallenge, id)
+	var i LockMFAChallengeRow
+	err := row.Scan(
+		&i.UserID,
+		&i.OrganizationID,
+		&i.Enrollment,
+		&i.ExpiresAt,
+		&i.PasskeySessionID,
+		&i.PushChallengeID,
+		&i.CodesSent,
+		&i.RiskEmail,
+		&i.EmailCodeSentAt,
+		&i.EmailCodeHash,
+		&i.EmailCodeExpiresAt,
+	)
+	return i, err
+}
+
+const lockMFAChallengeForProof = `-- name: LockMFAChallengeForProof :one
+SELECT user_id, organization_id, expires_at, claims, failed_attempts, passkey_session_id, push_challenge_id,
+       enrollment, enrollment_started, first_factor, risk_email, email_code_hash, email_code_expires_at
+FROM auth.mfa_login_challenges WHERE id = $1 FOR UPDATE
+`
+
+type LockMFAChallengeForProofRow struct {
+	UserID             uuid.UUID
+	OrganizationID     *uuid.UUID
+	ExpiresAt          time.Time
+	Claims             []byte
+	FailedAttempts     int16
+	PasskeySessionID   *uuid.UUID
+	PushChallengeID    *uuid.UUID
+	Enrollment         bool
+	EnrollmentStarted  bool
+	FirstFactor        string
+	RiskEmail          bool
+	EmailCodeHash      *string
+	EmailCodeExpiresAt *time.Time
+}
+
+// LockMFAChallenge with what checking its proof needs.
+func (q *Queries) LockMFAChallengeForProof(ctx context.Context, id uuid.UUID) (LockMFAChallengeForProofRow, error) {
+	row := q.db.QueryRow(ctx, lockMFAChallengeForProof, id)
+	var i LockMFAChallengeForProofRow
+	err := row.Scan(
+		&i.UserID,
+		&i.OrganizationID,
+		&i.ExpiresAt,
+		&i.Claims,
+		&i.FailedAttempts,
+		&i.PasskeySessionID,
+		&i.PushChallengeID,
+		&i.Enrollment,
+		&i.EnrollmentStarted,
+		&i.FirstFactor,
+		&i.RiskEmail,
+		&i.EmailCodeHash,
+		&i.EmailCodeExpiresAt,
+	)
+	return i, err
+}
+
 const lockMFASignIn = `-- name: LockMFASignIn :exec
 UPDATE auth.mfa_failure_streaks SET locked_at = NOW() WHERE user_id = $1
 `
@@ -549,8 +1526,68 @@ func (q *Queries) LockMFASignIn(ctx context.Context, userID uuid.UUID) error {
 	return err
 }
 
+const lockRefreshToken = `-- name: LockRefreshToken :one
+
+SELECT rt.id, rt.session_id, rt.used_at, rt.expires_at,
+       s.revoked_at AS session_revoked_at, s.user_id, s.organization_id, u.status AS user_status,
+       u.deleted_at AS user_deleted_at, s.hook_claims, s.expires_at AS session_expires_at,
+       (s.expires_at <= COALESCE(s.revoked_at, NOW()))::bool AS past_max_age,
+       (s.last_seen_at + s.idle_timeout <= COALESCE(s.revoked_at, NOW()))::bool AS past_idle,
+       (s.organization_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL))::bool AS organization_active
+FROM auth.refresh_tokens rt
+JOIN auth.sessions s ON s.id = rt.session_id
+JOIN account.users u ON u.id = s.user_id
+LEFT JOIN organization.organizations t ON t.id = s.organization_id
+WHERE rt.token_hash = $1
+FOR UPDATE OF rt, s
+`
+
+type LockRefreshTokenRow struct {
+	ID                 uuid.UUID
+	SessionID          uuid.UUID
+	UsedAt             *time.Time
+	ExpiresAt          time.Time
+	SessionRevokedAt   *time.Time
+	UserID             uuid.UUID
+	OrganizationID     *uuid.UUID
+	UserStatus         string
+	UserDeletedAt      *time.Time
+	HookClaims         []byte
+	SessionExpiresAt   time.Time
+	PastMaxAge         bool
+	PastIdle           bool
+	OrganizationActive bool
+}
+
+// ── Refresh (refresh.go, refreshretry.go) ────────────────────────────────────
+// The refresh token with this hash, its session, account and organization,
+// locked with its session. Whether the session had reached its maximum age or
+// idle timeout by the time it ended (now, if it has not) is decided on the
+// database's clock, as the bounds were set.
+func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash string) (LockRefreshTokenRow, error) {
+	row := q.db.QueryRow(ctx, lockRefreshToken, tokenHash)
+	var i LockRefreshTokenRow
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.UsedAt,
+		&i.ExpiresAt,
+		&i.SessionRevokedAt,
+		&i.UserID,
+		&i.OrganizationID,
+		&i.UserStatus,
+		&i.UserDeletedAt,
+		&i.HookClaims,
+		&i.SessionExpiresAt,
+		&i.PastMaxAge,
+		&i.PastIdle,
+		&i.OrganizationActive,
+	)
+	return i, err
+}
+
 const lockUserForSessionRevocation = `-- name: LockUserForSessionRevocation :one
-SELECT id FROM "user".users WHERE id = $1 FOR NO KEY UPDATE
+SELECT id FROM account.users WHERE id = $1 FOR NO KEY UPDATE
 `
 
 // LockUserForSessionRevocation row-locks the account so bulk session
@@ -563,6 +1600,27 @@ func (q *Queries) LockUserForSessionRevocation(ctx context.Context, userID uuid.
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const loginSessionBounds = `-- name: LoginSessionBounds :one
+SELECT EXTRACT(EPOCH FROM sp.session_max_age)::bigint AS max_age_s, EXTRACT(EPOCH FROM sp.session_idle_timeout)::bigint AS idle_s
+FROM account.users u
+JOIN organization.security_policies sp ON sp.organization_id = u.organization_id
+WHERE u.id = $1
+`
+
+type LoginSessionBoundsRow struct {
+	MaxAgeS int64
+	IdleS   int64
+}
+
+// The maximum age and idle timeout, in seconds, of the account's
+// organization's sessions.
+func (q *Queries) LoginSessionBounds(ctx context.Context, userID uuid.UUID) (LoginSessionBoundsRow, error) {
+	row := q.db.QueryRow(ctx, loginSessionBounds, userID)
+	var i LoginSessionBoundsRow
+	err := row.Scan(&i.MaxAgeS, &i.IdleS)
+	return i, err
 }
 
 const loginSessionSecondFactor = `-- name: LoginSessionSecondFactor :one
@@ -588,9 +1646,9 @@ func (q *Queries) LoginSessionSecondFactor(ctx context.Context, arg LoginSession
 
 const mFARequirement = `-- name: MFARequirement :one
 SELECT u.mfa_required,
-       (CASE WHEN u.tenant_id = $1::uuid THEN u.created_at
+       (CASE WHEN u.organization_id = $1::uuid THEN u.created_at
              ELSE COALESCE((SELECT MIN(ur.granted_at) FROM rbac.user_roles ur
-                            WHERE ur.user_id = u.id AND ur.tenant_id = $1::uuid), u.created_at)
+                            WHERE ur.user_id = u.id AND ur.organization_id = $1::uuid), u.created_at)
         END)::timestamptz AS joined_at,
        COALESCE(sp.mfa_enforcement, 'optional')::text AS enforcement,
        COALESCE(sp.mfa_grace_days, 0)::int AS grace_days,
@@ -598,25 +1656,32 @@ SELECT u.mfa_required,
        EXISTS (
            SELECT 1
            FROM rbac.user_roles ur
-           JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
-           JOIN rbac.permissions p ON p.id = rp.permission_id
-           WHERE ur.user_id = u.id AND ur.tenant_id = $1 AND p.key LIKE '%.write'
+           JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.organization_id = ur.organization_id
+           LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+           LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+           WHERE ur.user_id = u.id AND ur.organization_id = $1
+             AND ((ro.is_system AND ro.name = 'owner')
+                  OR (p.key IS NOT NULL AND NOT (p.key = ANY(COALESCE($2::text[], '{}')))))
            UNION ALL
            SELECT 1
-           FROM tenant.group_members gm
-           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
-           JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
-           JOIN rbac.permissions p ON p.id = rp.permission_id
-           WHERE gm.user_id = u.id AND gm.tenant_id = $1 AND p.key LIKE '%.write'
+           FROM organization.group_members gm
+           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+           JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id
+           LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+           LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+           WHERE gm.user_id = u.id AND gm.organization_id = $1
+             AND ((ro.is_system AND ro.name = 'owner')
+                  OR (p.key IS NOT NULL AND NOT (p.key = ANY(COALESCE($2::text[], '{}')))))
        ) AS is_admin
-FROM "user".users u
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = $1
-WHERE u.id = $2
+FROM account.users u
+LEFT JOIN organization.security_policies sp ON sp.organization_id = $1
+WHERE u.id = $3
 `
 
 type MFARequirementParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+	OrganizationID    uuid.UUID
+	MemberPermissions []string
+	UserID            uuid.UUID
 }
 
 type MFARequirementRow struct {
@@ -624,20 +1689,21 @@ type MFARequirementRow struct {
 	JoinedAt         time.Time
 	Enforcement      string
 	GraceDays        int32
-	MfaEnforcedSince pgtype.Timestamptz
+	MfaEnforcedSince *time.Time
 	IsAdmin          bool
 }
 
 // MFARequirement reads what decides whether an account must use a second
-// factor to sign in to an organisation: the account's own flag, the
-// organisation's requirement and grace period, and whether the account is an
-// administrator there — holds a role, directly or through a group, granting
-// any write permission.
-// joined_at is when the account joined the organisation, which the grace
-// period is judged by: its creation for its own organisation, its first role
+// factor to sign in to an organization: the account's own flag, the
+// organization's requirement and grace period, and whether the account is an
+// administrator there — holds the owner role or a role granting a permission
+// outside member_permissions, directly or through a group (with none listed,
+// any permission does).
+// joined_at is when the account joined the organization, which the grace
+// period is judged by: its creation for its own organization, its first role
 // there for any other.
 func (q *Queries) MFARequirement(ctx context.Context, arg MFARequirementParams) (MFARequirementRow, error) {
-	row := q.db.QueryRow(ctx, mFARequirement, arg.TenantID, arg.UserID)
+	row := q.db.QueryRow(ctx, mFARequirement, arg.OrganizationID, arg.MemberPermissions, arg.UserID)
 	var i MFARequirementRow
 	err := row.Scan(
 		&i.MfaRequired,
@@ -655,13 +1721,35 @@ UPDATE auth.refresh_tokens SET used_at = NOW(), replaced_by = $1 WHERE id = $2
 `
 
 type MarkRefreshTokenUsedParams struct {
-	ReplacedBy pgtype.UUID
+	ReplacedBy *uuid.UUID
 	ID         uuid.UUID
 }
 
 func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshTokenUsedParams) error {
 	_, err := q.db.Exec(ctx, markRefreshTokenUsed, arg.ReplacedBy, arg.ID)
 	return err
+}
+
+const organizationActive = `-- name: OrganizationActive :one
+SELECT (status = 'active' AND deleted_at IS NULL)::bool AS active FROM organization.organizations WHERE id = $1
+`
+
+func (q *Queries) OrganizationActive(ctx context.Context, organizationID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, organizationActive, organizationID)
+	var active bool
+	err := row.Scan(&active)
+	return active, err
+}
+
+const passwordHash = `-- name: PasswordHash :one
+SELECT password_hash FROM auth.password_credentials WHERE user_id = $1
+`
+
+func (q *Queries) PasswordHash(ctx context.Context, userID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, passwordHash, userID)
+	var password_hash string
+	err := row.Scan(&password_hash)
+	return password_hash, err
 }
 
 const purgeEndedSessions = `-- name: PurgeEndedSessions :many
@@ -679,7 +1767,7 @@ WHERE s.ctid = ANY(ARRAY(
                   WHERE rt.session_id = e.id AND rt.expires_at >= $1)))
       )
     LIMIT $2))
-RETURNING s.id, s.user_id, s.tenant_id, (s.revoked_at IS NULL)::boolean AS expired
+RETURNING s.id, s.user_id, s.organization_id, (s.revoked_at IS NULL)::boolean AS expired
 `
 
 type PurgeEndedSessionsParams struct {
@@ -688,10 +1776,10 @@ type PurgeEndedSessionsParams struct {
 }
 
 type PurgeEndedSessionsRow struct {
-	ID       uuid.UUID
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
-	Expired  bool
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+	Expired        bool
 }
 
 // PurgeEndedSessions deletes at most @max_rows API and console sessions past
@@ -713,7 +1801,7 @@ func (q *Queries) PurgeEndedSessions(ctx context.Context, arg PurgeEndedSessions
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Expired,
 		); err != nil {
 			return nil, err
@@ -815,7 +1903,7 @@ type RecordAccountFailureParams struct {
 
 type RecordAccountFailureRow struct {
 	FailedCount int32
-	LockedUntil pgtype.Timestamptz
+	LockedUntil *time.Time
 }
 
 // RecordNetworkFailure for the account alone, whichever network failed.
@@ -865,7 +1953,7 @@ type RecordNetworkFailureParams struct {
 
 type RecordNetworkFailureRow struct {
 	FailedCount int32
-	LockedUntil pgtype.Timestamptz
+	LockedUntil *time.Time
 }
 
 // Counts a failure for the account from one network. The count starts afresh
@@ -908,12 +1996,12 @@ const revokeAllSessionsForUser = `-- name: RevokeAllSessionsForUser :many
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = $1 AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-RETURNING id, tenant_id
+RETURNING id, organization_id
 `
 
 type RevokeAllSessionsForUserRow struct {
-	ID       uuid.UUID
-	TenantID pgtype.UUID
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
 }
 
 // RevokeAllSessionsForUser ends every live session of the user, the caller's
@@ -928,7 +2016,7 @@ func (q *Queries) RevokeAllSessionsForUser(ctx context.Context, userID uuid.UUID
 	items := []RevokeAllSessionsForUserRow{}
 	for rows.Next() {
 		var i RevokeAllSessionsForUserRow
-		if err := rows.Scan(&i.ID, &i.TenantID); err != nil {
+		if err := rows.Scan(&i.ID, &i.OrganizationID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -959,7 +2047,7 @@ type RevokeAppGrantsForLoginSessionRow struct {
 // started — every not-yet-revoked token in their chains, renewals included —
 // and returns how many rows it touched and how many were the live head of a
 // grant (the number of grants it ended), like RevokeAppGrantsForUser.
-func (q *Queries) RevokeAppGrantsForLoginSession(ctx context.Context, loginSessionID pgtype.UUID) (RevokeAppGrantsForLoginSessionRow, error) {
+func (q *Queries) RevokeAppGrantsForLoginSession(ctx context.Context, loginSessionID *uuid.UUID) (RevokeAppGrantsForLoginSessionRow, error) {
 	row := q.db.QueryRow(ctx, revokeAppGrantsForLoginSession, loginSessionID)
 	var i RevokeAppGrantsForLoginSessionRow
 	err := row.Scan(&i.Touched, &i.Live)
@@ -999,7 +2087,7 @@ const revokeOtherSessionsForUser = `-- name: RevokeOtherSessionsForUser :many
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-RETURNING id, tenant_id
+RETURNING id, organization_id
 `
 
 type RevokeOtherSessionsForUserParams struct {
@@ -1008,8 +2096,8 @@ type RevokeOtherSessionsForUserParams struct {
 }
 
 type RevokeOtherSessionsForUserRow struct {
-	ID       uuid.UUID
-	TenantID pgtype.UUID
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
 }
 
 // RevokeOtherSessionsForUser revokes all of a user's active sessions except the
@@ -1025,7 +2113,7 @@ func (q *Queries) RevokeOtherSessionsForUser(ctx context.Context, arg RevokeOthe
 	items := []RevokeOtherSessionsForUserRow{}
 	for rows.Next() {
 		var i RevokeOtherSessionsForUserRow
-		if err := rows.Scan(&i.ID, &i.TenantID); err != nil {
+		if err := rows.Scan(&i.ID, &i.OrganizationID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1051,7 +2139,7 @@ const revokeSessionForUser = `-- name: RevokeSessionForUser :one
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-RETURNING tenant_id
+RETURNING organization_id
 `
 
 type RevokeSessionForUserParams struct {
@@ -1059,15 +2147,35 @@ type RevokeSessionForUserParams struct {
 	UserID    uuid.UUID
 }
 
-// Revokes a session scoped to its owner and returns the (nullable) tenant for
+// Revokes a session scoped to its owner and returns the (nullable) organization for
 // event emission. No row (pgx.ErrNoRows) means the session isn't the caller's
 // or has already ended (revoked, or past its maximum age or idle timeout) — a
 // safe no-op, never a cross-user takedown.
-func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionForUserParams) (pgtype.UUID, error) {
+func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionForUserParams) (*uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, revokeSessionForUser, arg.SessionID, arg.UserID)
-	var tenant_id pgtype.UUID
-	err := row.Scan(&tenant_id)
-	return tenant_id, err
+	var organization_id *uuid.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
+}
+
+const sessionCursorTime = `-- name: SessionCursorTime :one
+SELECT sess.created_at
+FROM auth.sessions sess
+JOIN account.users u ON u.id = sess.user_id
+WHERE sess.id = $1 AND sess.user_id = $2 AND u.deleted_at IS NULL
+`
+
+type SessionCursorTimeParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// When the person's session that a list cursor names was opened.
+func (q *Queries) SessionCursorTime(ctx context.Context, arg SessionCursorTimeParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, sessionCursorTime, arg.ID, arg.UserID)
+	var created_at time.Time
+	err := row.Scan(&created_at)
+	return created_at, err
 }
 
 const sessionEnd = `-- name: SessionEnd :one
@@ -1088,6 +2196,24 @@ func (q *Queries) SessionEnd(ctx context.Context, arg SessionEndParams) (time.Ti
 	return expires_at, err
 }
 
+const sessionLimit = `-- name: SessionLimit :one
+SELECT max_sessions, session_limit_action FROM organization.security_policies WHERE organization_id = $1
+`
+
+type SessionLimitRow struct {
+	MaxSessions        *int32
+	SessionLimitAction string
+}
+
+// The organization's limit on one person's live sessions (NULL: none) and
+// what a sign-in at it does.
+func (q *Queries) SessionLimit(ctx context.Context, organizationID uuid.UUID) (SessionLimitRow, error) {
+	row := q.db.QueryRow(ctx, sessionLimit, organizationID)
+	var i SessionLimitRow
+	err := row.Scan(&i.MaxSessions, &i.SessionLimitAction)
+	return i, err
+}
+
 const sessionSecondFactor = `-- name: SessionSecondFactor :one
 SELECT COALESCE(s.second_factor, '')::text AS second_factor,
        EXISTS (
@@ -1096,7 +2222,7 @@ SELECT COALESCE(s.second_factor, '')::text AS second_factor,
              AND v.verified_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes')
        ) AS stepped_up
 FROM auth.sessions s
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+LEFT JOIN organization.security_policies sp ON sp.organization_id = s.organization_id
 WHERE s.id = $1 AND s.user_id = $2 AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
 `
@@ -1113,13 +2239,86 @@ type SessionSecondFactorRow struct {
 
 // How the sign-in behind a live session of the user's met a second factor
 // (” when it didn't), and whether the session holds a step-up still inside
-// its organisation's window. No row when the session is unknown, someone
+// its organization's window. No row when the session is unknown, someone
 // else's, revoked or expired.
 func (q *Queries) SessionSecondFactor(ctx context.Context, arg SessionSecondFactorParams) (SessionSecondFactorRow, error) {
 	row := q.db.QueryRow(ctx, sessionSecondFactor, arg.SessionID, arg.UserID)
 	var i SessionSecondFactorRow
 	err := row.Scan(&i.SecondFactor, &i.SteppedUp)
 	return i, err
+}
+
+const setLoginAttemptBudget = `-- name: SetLoginAttemptBudget :exec
+UPDATE auth.mfa_attempt_budgets
+SET failed_attempts = $1, window_started_at = $2, locked_until = $3
+WHERE user_id = $4 AND purpose = 'login'
+`
+
+type SetLoginAttemptBudgetParams struct {
+	FailedAttempts  int16
+	WindowStartedAt time.Time
+	LockedUntil     *time.Time
+	UserID          uuid.UUID
+}
+
+func (q *Queries) SetLoginAttemptBudget(ctx context.Context, arg SetLoginAttemptBudgetParams) error {
+	_, err := q.db.Exec(ctx, setLoginAttemptBudget,
+		arg.FailedAttempts,
+		arg.WindowStartedAt,
+		arg.LockedUntil,
+		arg.UserID,
+	)
+	return err
+}
+
+const setMFAChallengePasskeySession = `-- name: SetMFAChallengePasskeySession :execrows
+UPDATE auth.mfa_login_challenges SET passkey_session_id = $1 WHERE id = $2
+`
+
+type SetMFAChallengePasskeySessionParams struct {
+	PasskeySessionID *uuid.UUID
+	ID               uuid.UUID
+}
+
+func (q *Queries) SetMFAChallengePasskeySession(ctx context.Context, arg SetMFAChallengePasskeySessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setMFAChallengePasskeySession, arg.PasskeySessionID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setMFAChallengePush = `-- name: SetMFAChallengePush :execrows
+UPDATE auth.mfa_login_challenges SET push_challenge_id = $1 WHERE id = $2
+`
+
+type SetMFAChallengePushParams struct {
+	PushChallengeID *uuid.UUID
+	ID              uuid.UUID
+}
+
+func (q *Queries) SetMFAChallengePush(ctx context.Context, arg SetMFAChallengePushParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setMFAChallengePush, arg.PushChallengeID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setPassword = `-- name: SetPassword :exec
+INSERT INTO auth.password_credentials (user_id, password_hash)
+VALUES ($1, $2)
+ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = NOW()
+`
+
+type SetPasswordParams struct {
+	UserID       uuid.UUID
+	PasswordHash string
+}
+
+func (q *Queries) SetPassword(ctx context.Context, arg SetPasswordParams) error {
+	_, err := q.db.Exec(ctx, setPassword, arg.UserID, arg.PasswordHash)
+	return err
 }
 
 const signInClientName = `-- name: SignInClientName :one
@@ -1151,29 +2350,38 @@ func (q *Queries) SpendAuthorizationCodesForUser(ctx context.Context, userID uui
 	return result.RowsAffected(), nil
 }
 
+const startMFAChallengeEnrollment = `-- name: StartMFAChallengeEnrollment :exec
+UPDATE auth.mfa_login_challenges SET enrollment_started = TRUE WHERE id = $1
+`
+
+func (q *Queries) StartMFAChallengeEnrollment(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, startMFAChallengeEnrollment, id)
+	return err
+}
+
 const supersedeSession = `-- name: SupersedeSession :one
 UPDATE auth.sessions SET revoked_at = NOW(), superseded_by = $1
 WHERE id = $2 AND user_id = $3 AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-RETURNING tenant_id
+RETURNING organization_id
 `
 
 type SupersedeSessionParams struct {
-	NewSessionID pgtype.UUID
+	NewSessionID *uuid.UUID
 	SessionID    uuid.UUID
 	UserID       uuid.UUID
 }
 
-// SupersedeSession ends the session a switch of organisation was made from —
+// SupersedeSession ends the session a switch of organization was made from —
 // only while it is live (not revoked, not past its maximum age or idle timeout)
 // and the caller's own — and records the session that replaced it. Ending it
 // is what stops its refresh tokens. Returns the organization it belonged to
 // (NULL for none). No row: it had already ended.
-func (q *Queries) SupersedeSession(ctx context.Context, arg SupersedeSessionParams) (pgtype.UUID, error) {
+func (q *Queries) SupersedeSession(ctx context.Context, arg SupersedeSessionParams) (*uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, supersedeSession, arg.NewSessionID, arg.SessionID, arg.UserID)
-	var tenant_id pgtype.UUID
-	err := row.Scan(&tenant_id)
-	return tenant_id, err
+	var organization_id *uuid.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
 }
 
 const takeSourceAccounts = `-- name: TakeSourceAccounts :many
@@ -1252,23 +2460,32 @@ func (q *Queries) TouchSession(ctx context.Context, sessionID uuid.UUID) error {
 
 const touchTrustedDevice = `-- name: TouchTrustedDevice :one
 UPDATE auth.trusted_devices SET last_used_at = NOW()
-WHERE token_hash = $1 AND user_id = $2 AND tenant_id = $3 AND expires_at > NOW()
+WHERE token_hash = $1 AND user_id = $2 AND organization_id = $3 AND expires_at > NOW()
 RETURNING id
 `
 
 type TouchTrustedDeviceParams struct {
-	TokenHash string
-	UserID    uuid.UUID
-	TenantID  pgtype.UUID
+	TokenHash      string
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
 }
 
 // Refreshes last_used_at on the live device the token names for the user in
-// the organisation that remembered it, and returns its id; no row otherwise.
+// the organization that remembered it, and returns its id; no row otherwise.
 func (q *Queries) TouchTrustedDevice(ctx context.Context, arg TouchTrustedDeviceParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, touchTrustedDevice, arg.TokenHash, arg.UserID, arg.TenantID)
+	row := q.db.QueryRow(ctx, touchTrustedDevice, arg.TokenHash, arg.UserID, arg.OrganizationID)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const uncountMFACodeSent = `-- name: UncountMFACodeSent :exec
+UPDATE auth.mfa_login_challenges SET codes_sent = codes_sent - 1 WHERE id = $1
+`
+
+func (q *Queries) UncountMFACodeSent(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, uncountMFACodeSent, id)
+	return err
 }
 
 const updatePasswordCredentialHash = `-- name: UpdatePasswordCredentialHash :exec
@@ -1298,4 +2515,44 @@ func (q *Queries) UpdateSessionLastSeen(ctx context.Context, sessionID uuid.UUID
 	var idle_expires_at time.Time
 	err := row.Scan(&idle_expires_at)
 	return idle_expires_at, err
+}
+
+const verifiedAccountEmail = `-- name: VerifiedAccountEmail :one
+SELECT email FROM account.users WHERE id = $1 AND email_verified_at IS NOT NULL
+`
+
+// The account's email, when it is verified.
+func (q *Queries) VerifiedAccountEmail(ctx context.Context, userID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, verifiedAccountEmail, userID)
+	var email string
+	err := row.Scan(&email)
+	return email, err
+}
+
+const withdrawRiskEmailCode = `-- name: WithdrawRiskEmailCode :exec
+UPDATE auth.mfa_login_challenges
+SET email_code_hash = $1, email_code_expires_at = $2,
+    email_code_sent_at = $3, codes_sent = codes_sent - 1
+WHERE id = $4 AND email_code_hash = $5
+`
+
+type WithdrawRiskEmailCodeParams struct {
+	EmailCodeHash      *string
+	EmailCodeExpiresAt *time.Time
+	EmailCodeSentAt    *time.Time
+	ID                 uuid.UUID
+	SentHash           *string
+}
+
+// Puts back a risk challenge's earlier code, pacing and count when the code
+// @sent_hash names did not go.
+func (q *Queries) WithdrawRiskEmailCode(ctx context.Context, arg WithdrawRiskEmailCodeParams) error {
+	_, err := q.db.Exec(ctx, withdrawRiskEmailCode,
+		arg.EmailCodeHash,
+		arg.EmailCodeExpiresAt,
+		arg.EmailCodeSentAt,
+		arg.ID,
+		arg.SentHash,
+	)
+	return err
 }

@@ -1,0 +1,15 @@
+type: object
+description: A role granted to a group, with the role's name for display.
+required:
+  - role_id
+  - name
+  - granted_at
+properties:
+  role_id:
+    type: string
+    format: uuid
+  name:
+    type: string
+  granted_at:
+    type: string
+    format: date-time

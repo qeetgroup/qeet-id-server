@@ -1,0 +1,41 @@
+delete:
+  operationId: deleteSamlGroupMapping
+  summary: Remove a group mapping
+  description: >-
+    Removes a group mapping of the connection. Once none of the connection's
+    mappings reaches the group, the memberships of it the connection's sign-ins
+    made end at once, each audited as group.member_removed; one a SCIM group's
+    external id still reaches comes back at the person's next sign-in. Audited
+    as saml.group_mapping_deleted. Requires group.write. Needs a recent step-up.
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: mappingID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "204":
+      description: Removed
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

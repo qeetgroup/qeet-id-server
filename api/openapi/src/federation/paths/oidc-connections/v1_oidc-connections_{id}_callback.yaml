@@ -1,0 +1,83 @@
+get:
+  operationId: completeOidcConnectionSignIn
+  description: >-
+    Where the provider sends the browser back; register it as the connection's
+    redirect URI. The state is spent whatever happens next, and an unknown,
+    spent or expired one answers 400 oidc_connection.state_invalid. A sign-in
+    completes only in the browser that began it, holding the cookie the login
+    call set (403 oidc_connection.other_browser). A refusal by the provider (an
+    error parameter) answers 401 oidc_connection.provider_refused. Otherwise the
+    code is traded at the provider's token endpoint with the PKCE verifier (502
+    oidc_connection.token_exchange_failed) and the ID token is validated: its
+    signature against the provider's published keys (fetched again once for a
+    key not yet seen), an asymmetric algorithm, iss equal to the connection's
+    issuer (or, for a provider serving many tenants, the issuer of a tid the
+    connection lists), aud naming the client (and azp the client when it names
+    several), exp and iat within a minute's skew, and the nonce this sign-in
+    sent; any failure answers 401 oidc_connection.id_token_invalid. The subject
+    (issuer and sub) is linked to the connection, so another connection
+    asserting it signs nobody in. A linked subject signs in while the
+    organization is still its account's home (403
+    oidc_connection.user_organization_mismatch). An address not yet linked is adopted
+    or given an account only on a domain the organization has verified (403
+    oidc_connection.email_domain_unverified), and not when the provider's
+    email_verified is false (403 oidc_connection.email_unverified); a provider
+    that doesn't say (Microsoft Entra ID) is trusted for those domains. An
+    adopted account must have the organization as its home and a verified
+    address (403 oidc_connection.account_unverified), and one that owns or
+    administers the organization is never adopted by its address (403
+    oidc_connection.account_administers). A suspended account is refused. Every
+    refusal is audited as auth.sign_in_failed with the error code as its reason.
+    On success the browser goes to the console's /sso/callback with a one-time
+    code in the fragment (#oidc_code=...), to trade at POST
+    /v1/oidc-connections/exchange. The plan is checked again when the answer
+    arrives, so one that has since lapsed signs no one in (402
+    billing.upgrade_required). Once the state is found to be this browser's, a
+    refusal of a sign-in the hosted login began redirects instead to the hosted
+    login's /sign-in with a generic error (sso, or account_inactive for a
+    suspended or deleted account) and its return_to; the refusal is still
+    audited. Unauthenticated.
+  summary: Complete OIDC sign-in (public)
+  tags:
+    - OIDC Connections
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: state
+      in: query
+      schema:
+        type: string
+    - name: code
+      in: query
+      schema:
+        type: string
+    - name: error
+      in: query
+      schema:
+        type: string
+  security: []
+  responses:
+    "302":
+      description: Redirect to the console with a one-time login code in the fragment
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "402":
+      description: >-
+        The organization's plan no longer includes enterprise SSO
+        (`billing.upgrade_required`).
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Error.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

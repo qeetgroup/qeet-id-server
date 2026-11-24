@@ -1,140 +1,188 @@
-.PHONY: install dev dev-secrets build test test-db lint sqlc sqlc-check vuln sast ci migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
+# Qeet ID server: every development command.
+#
+# Each target runs its task in Go (cmd/devtool), so it behaves the same on Windows, macOS and Linux;
+# no shell tools are needed, only Go and Docker. Without make, run the same task directly:
+#   go run ./cmd/devtool dev
+# devtool reads .env itself. Tool versions live in cmd/devtool/checks.go.
 
-# Tool versions; keep in step with .github/workflows/ci.yml.
-GOLANGCI_VERSION    = v2.15.0
-SQLC_VERSION        = v1.31.1
-GOVULNCHECK_VERSION = v1.9.0
-GOSEC_VERSION       = v2.30.0
-GOSEC_XTOOLS        = v0.52.0
+DEVTOOL = go run ./cmd/devtool
 
-ifneq (,$(wildcard .env))
-    include .env
-    export
-endif
+.PHONY: help install dev-secrets dev dev-observed build kill \
+	db-up db-down db-reset seed seed-reset migrate-up migrate-down \
+	test test-db lint fmt fmt-check sqlc sqlc-check openapi openapi-check postman ci \
+	vuln sast secrets scan-image \
+	load dast fuzz-api sonar-up sonar sonar-down \
+	obs-up obs-down
 
-# DB_URL comes from .env (included above); this is the fallback when .env is absent.
-DB_URL        ?= postgres://postgres:password@localhost:5001/qeet_id?sslmode=disable
-MIGRATIONS_DIR = internal/platform/database/migrations
-# Persistent local dev signing material (gitignored). Multi-line PEMs can't live in
-# the Make-included .env, so `dev` injects these from files (see dev-secrets below).
-SECRETS_DIR    = .secrets
+# List the commands with one line each.
+help:
+	@$(DEVTOOL) help
 
+# ── Set up and run ───────────────────────────────────────────────────────────────────────────────
+
+# Download the Go modules.
 install:
-	go mod download
+	@$(DEVTOOL) install
 
-# Generate persistent JWT (ES256) + SAML IdP (RSA key + self-signed cert) signing
-# material once, into $(SECRETS_DIR) (gitignored). Idempotent: skips whatever is
-# already present. The SAML key+cert are always generated as a matching pair.
+# Generate the persistent local JWT and SAML signing keys into .secrets/ (once; kept after that).
 dev-secrets:
-	@mkdir -p $(SECRETS_DIR)
-	@[ -s $(SECRETS_DIR)/jwt_es256.pem ] || { \
-		openssl ecparam -name prime256v1 -genkey -noout -out $(SECRETS_DIR)/jwt_es256.pem && \
-		chmod 600 $(SECRETS_DIR)/jwt_es256.pem && \
-		echo "generated $(SECRETS_DIR)/jwt_es256.pem (JWT ES256 signing key)"; }
-	@{ [ -s $(SECRETS_DIR)/saml_idp_key.pem ] && [ -s $(SECRETS_DIR)/saml_idp_cert.pem ]; } || { \
-		openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-			-keyout $(SECRETS_DIR)/saml_idp_key.pem \
-			-out $(SECRETS_DIR)/saml_idp_cert.pem \
-			-subj "/CN=Qeet ID SAML IdP" 2>/dev/null && \
-		chmod 600 $(SECRETS_DIR)/saml_idp_key.pem $(SECRETS_DIR)/saml_idp_cert.pem && \
-		echo "generated $(SECRETS_DIR)/saml_idp_key.pem + saml_idp_cert.pem (SAML IdP pair)"; }
+	@$(DEVTOOL) dev-secrets
 
-# `make dev` injects the persistent keys from $(SECRETS_DIR) with real newlines —
-# a multi-line PEM can't be carried by the Make-included .env. These override the
-# blank JWT_SIGNING_KEY, SAML_IDP_KEY and SAML_IDP_CERT exported from .env.
-dev: dev-secrets
-	@echo "starting qeet-id on :$${HTTP_PORT:-4001} — persistent JWT + SAML keys from $(SECRETS_DIR)/"
-	@JWT_SIGNING_KEY="$$(cat $(SECRETS_DIR)/jwt_es256.pem)" \
-	 SAML_IDP_KEY="$$(cat $(SECRETS_DIR)/saml_idp_key.pem)" \
-	 SAML_IDP_CERT="$$(cat $(SECRETS_DIR)/saml_idp_cert.pem)" \
-	 go run ./cmd/api
+# Run the API on http://localhost:4001 with the local signing keys (runs dev-secrets first).
+dev:
+	@$(DEVTOOL) dev
 
+# Run the API as `make dev` does, plus JSON logs to bin/logs/api.log and traces to the local
+# collector. Start the observability stack first with `make obs-up`.
+dev-observed:
+	@$(DEVTOOL) dev-observed
+
+# Build the server binary into bin/qeet-id.
 build:
-	go build -o bin/qeet-id ./cmd/api
+	@$(DEVTOOL) build
 
-test:
-	go test ./...
-
-# Every test, the database ones too, with the race detector (needs Docker).
-# One PostgreSQL serves the run: the first test package migrates a template
-# database and each gets a copy of it (see internal/platform/database/dbtest).
-test-db:
-	@name="qeet-id-dbtest-$$$$"; \
-	docker run -d --rm --name "$$name" -e POSTGRES_PASSWORD=postgres -p 127.0.0.1::5432 \
-		postgres:16-alpine -c max_connections=400 -c fsync=off -c synchronous_commit=off >/dev/null || exit 1; \
-	trap 'docker stop "$$name" >/dev/null' EXIT; \
-	until [ "$$(docker logs "$$name" 2>&1 | grep -c 'ready to accept connections')" -ge 2 ]; do sleep 0.2; done; \
-	port="$$(docker port "$$name" 5432/tcp | head -1 | sed 's/.*://')"; \
-	DBTEST_SERVER="postgres://postgres:postgres@127.0.0.1:$$port/postgres?sslmode=disable" \
-		go test -race -tags integration -count=1 -timeout 15m ./...
-
-# The linters CI runs, over the whole tree including the database tests.
-lint:
-	go vet ./...
-	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION) run --build-tags=integration ./...
-
-# sqlc, built once and cached in GOPATH/bin: go run per package costs a second
-# each, over some sixty packages.
-SQLC = $(shell go env GOPATH)/bin/sqlc-$(SQLC_VERSION)
-
-$(SQLC):
-	@dir="$$(mktemp -d)" && GOBIN="$$dir" go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) && mv "$$dir/sqlc" "$@"
-
-# Regenerate every package's dbgen/ from its queries.sql.
-sqlc: $(SQLC)
-	@for cfg in $$(find internal -name sqlc.yaml); do \
-		(cd "$$(dirname "$$cfg")" && "$(SQLC)" generate) || exit 1; \
-	done
-
-# Known vulnerabilities in what ships (cmd/ and internal/), as CI gates on.
-vuln:
-	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./cmd/... ./internal/...
-
-# gosec, built against a current x/tools as CI does (the released binary can't
-# read this Go version's export data), cached in GOPATH/bin.
-sast:
-	@bin="$$(go env GOPATH)/bin/gosec-$(GOSEC_VERSION)"; \
-	[ -x "$$bin" ] || { dir="$$(mktemp -d)" && (cd "$$dir" && go mod init gosec-build >/dev/null 2>&1 && \
-		go get github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) golang.org/x/tools@$(GOSEC_XTOOLS) && \
-		go build -o "$$bin" github.com/securego/gosec/v2/cmd/gosec) || exit 1; }; \
-	"$$bin" -quiet -conf .gosec.json -exclude-dir='.*dbgen' -exclude-generated ./...
-
-# The full local gate before a push (CI runs only Verify): build, every test
-# with the race detector, the database ones too (needs Docker), lint (with
-# vet), generated SQL, and the vulnerability and security scans.
-ci:
-	go build ./...
-	$(MAKE) test-db lint sqlc-check vuln sast
-	@echo "ci: every check passed"
-
-# Fail if any dbgen/ differs from what sqlc generates.
-sqlc-check: $(SQLC)
-	@for cfg in $$(find internal -name sqlc.yaml); do \
-		(cd "$$(dirname "$$cfg")" && "$(SQLC)" diff) || exit 1; \
-	done
-
-db-up:
-	docker compose up -d
-
-db-down:
-	docker compose down
-
-db-reset:
-	docker compose down -v
-	docker compose up -d
-
-migrate-up:
-	migrate -path $(MIGRATIONS_DIR) -database "$(DB_URL)" up
-
-migrate-down:
-	migrate -path $(MIGRATIONS_DIR) -database "$(DB_URL)" down 1
-
-seed:
-	go run ./cmd/seed
-
-seed-reset:
-	go run ./cmd/seed -reset
-
+# Stop whatever is still listening on :4001.
 kill:
-	@pids=$$(lsof -nP -iTCP:4001 -sTCP:LISTEN -t 2>/dev/null); \
-	[ -n "$$pids" ] && kill $$pids && echo "stopped :4001" || echo ":4001 not running"
+	@$(DEVTOOL) kill
+
+# ── Local database and demo data ─────────────────────────────────────────────────────────────────
+
+# Start PostgreSQL :5001, NATS :4222 and Mailpit :8025 (mail UI http://localhost:8025).
+db-up:
+	@$(DEVTOOL) db-up
+
+# Stop them.
+db-down:
+	@$(DEVTOOL) db-down
+
+# Recreate them with empty volumes.
+db-reset:
+	@$(DEVTOOL) db-reset
+
+# Fill an empty local database with demo organizations, people and activity (development only).
+seed:
+	@$(DEVTOOL) seed
+
+# db-reset, wait for it, then seed.
+seed-reset:
+	@$(DEVTOOL) seed-reset
+
+# Apply every pending migration without starting the server. It uses the server's own migrator, as
+# make dev and make seed do at start, so the files it applies are recorded. Never run `migrate up`
+# with the migrate CLI instead: it keeps no such record, and the server then refuses the database.
+migrate-up:
+	@$(DEVTOOL) migrate-up
+
+# Roll one migration back with the migrate CLI, to try its down file; make migrate-up applies it again.
+migrate-down:
+	@$(DEVTOOL) migrate-down
+
+# ── Tests and checks ─────────────────────────────────────────────────────────────────────────────
+
+# The tests that need no database.
+test:
+	@$(DEVTOOL) test
+
+# Every test, the database ones too, with the race detector, on one throwaway PostgreSQL (Docker).
+test-db:
+	@$(DEVTOOL) test-db
+
+# go vet and golangci-lint, as CI runs them.
+lint:
+	@$(DEVTOOL) lint
+
+# Format every file: Go (gofmt, goimports), JavaScript, JSON, YAML and Markdown (Prettier, settings
+# in .prettierrc.json), shell scripts (shfmt).
+fmt:
+	@$(DEVTOOL) fmt
+
+# Fail if a file isn't formatted, showing what make fmt would change.
+fmt-check:
+	@$(DEVTOOL) fmt-check
+
+# Regenerate every dbgen/ from its queries.sql (after editing SQL).
+sqlc:
+	@$(DEVTOOL) sqlc
+
+# Fail if a dbgen/ is stale or a queries.sql isn't listed in sqlc.yaml.
+sqlc-check:
+	@$(DEVTOOL) sqlc-check
+
+# Rebuild the API documents in api/openapi from api/openapi/src, then the Postman collection in
+# api/postman from them (needs Bun).
+openapi:
+	@$(DEVTOOL) openapi
+
+# Lint the API sources and fail if a built document or the Postman collection is out of date.
+openapi-check:
+	@$(DEVTOOL) openapi-check
+
+# Rebuild only the Postman collection and its local environment in api/postman, from the API
+# documents (make openapi does this too). Import both files into Postman: api/postman/README.md.
+postman:
+	@$(DEVTOOL) postman
+
+# The full local gate before a push: build, test-db, lint, fmt-check, sqlc-check, openapi-check,
+# vuln, sast and secrets.
+ci:
+	@$(DEVTOOL) ci
+
+# ── Security scans ───────────────────────────────────────────────────────────────────────────────
+
+# Known vulnerabilities in the Go code and its dependencies (govulncheck).
+vuln:
+	@$(DEVTOOL) vuln
+
+# Static security analysis of the Go code (gosec).
+sast:
+	@$(DEVTOOL) sast
+
+# Secrets committed in the git history or present in the working tree (gitleaks, Docker).
+secrets:
+	@$(DEVTOOL) secrets
+
+# Build the server image and scan it and the Dockerfile (Trivy, Docker).
+scan-image:
+	@$(DEVTOOL) scan-image
+
+# ── Load and security testing (against a running local server; see .env.example's tools list) ──
+
+# Load-test it with k6: sign-in, renewal, reads and discovery, failing when an SLO is missed.
+load:
+	@$(DEVTOOL) load
+
+# Scan it with OWASP ZAP from the API documents (reports in bin/reports/zap). It sends attacks and
+# changes data: use a throwaway server. SCAN_TOKEN reaches the signed-in routes.
+dast:
+	@$(DEVTOOL) dast
+
+# Fuzz it with Schemathesis from the API documents: no 5xx, every answer as documented (reports in
+# bin/reports/schemathesis). It changes data too.
+fuzz-api:
+	@$(DEVTOOL) fuzz-api
+
+# ── Code analysis ────────────────────────────────────────────────────────────────────────────────
+
+# Start a local SonarQube Community Build on http://localhost:9000 (first sign-in admin / admin).
+sonar-up:
+	@$(DEVTOOL) sonar-up
+
+# Analyse the code with SonarQube, with the coverage of every test (the database ones too, so it needs
+# Docker). Needs SONAR_TOKEN (a SonarQube token).
+sonar:
+	@$(DEVTOOL) sonar
+
+# Stop the local SonarQube.
+sonar-down:
+	@$(DEVTOOL) sonar-down
+
+# ── Observability ────────────────────────────────────────────────────────────────────────────────
+
+# Start the local observability stack: Grafana http://localhost:3300, Prometheus :9090,
+# Alertmanager :9093, Loki, Tempo, the OpenTelemetry Collector and the exporters.
+obs-up:
+	@$(DEVTOOL) obs-up
+
+# Stop it (the database stays up).
+obs-down:
+	@$(DEVTOOL) obs-down

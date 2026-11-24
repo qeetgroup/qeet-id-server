@@ -10,11 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const advanceLogSinkCursor = `-- name: AdvanceLogSinkCursor :exec
-UPDATE tenant.log_sinks
+UPDATE organization.log_sinks
 SET cursor_created_at = $1,
     cursor_id         = $2,
     last_forwarded_at = NOW(),
@@ -25,8 +24,8 @@ WHERE id = $3
 `
 
 type AdvanceLogSinkCursorParams struct {
-	CursorCreatedAt pgtype.Timestamptz
-	CursorID        pgtype.UUID
+	CursorCreatedAt *time.Time
+	CursorID        *uuid.UUID
 	ID              uuid.UUID
 }
 
@@ -37,7 +36,7 @@ func (q *Queries) AdvanceLogSinkCursor(ctx context.Context, arg AdvanceLogSinkCu
 }
 
 const claimLogSink = `-- name: ClaimLogSink :one
-UPDATE tenant.log_sinks
+UPDATE organization.log_sinks
 SET leased_until = $1::timestamptz
 WHERE id = $2 AND enabled
   AND (leased_until IS NULL OR leased_until < NOW())
@@ -51,8 +50,8 @@ type ClaimLogSinkParams struct {
 }
 
 type ClaimLogSinkRow struct {
-	CursorCreatedAt pgtype.Timestamptz
-	CursorID        pgtype.UUID
+	CursorCreatedAt *time.Time
+	CursorID        *uuid.UUID
 }
 
 // ClaimLogSink leases an enabled sink due an attempt to this instance until
@@ -66,17 +65,17 @@ func (q *Queries) ClaimLogSink(ctx context.Context, arg ClaimLogSinkParams) (Cla
 }
 
 const deleteLogSink = `-- name: DeleteLogSink :execrows
-DELETE FROM tenant.log_sinks
-WHERE id = $1 AND tenant_id = $2
+DELETE FROM organization.log_sinks
+WHERE id = $1 AND organization_id = $2
 `
 
 type DeleteLogSinkParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteLogSink(ctx context.Context, arg DeleteLogSinkParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteLogSink, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, deleteLogSink, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -84,46 +83,46 @@ func (q *Queries) DeleteLogSink(ctx context.Context, arg DeleteLogSinkParams) (i
 }
 
 const fetchAuditEventsAfterCursor = `-- name: FetchAuditEventsAfterCursor :many
-SELECT id, tenant_id, actor_user_id, actor_type, action, resource_type,
+SELECT id, organization_id, actor_user_id, actor_type, action, resource_type,
        resource_id, COALESCE(host(ip), '')::text AS host, request_id, created_at,
        user_agent, metadata
 FROM audit.events
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND (created_at > $2 OR (created_at = $2 AND id > $3))
 ORDER BY created_at ASC, id ASC
 LIMIT $4
 `
 
 type FetchAuditEventsAfterCursorParams struct {
-	TenantID pgtype.UUID
-	AfterAt  time.Time
-	AfterID  uuid.UUID
-	RowLimit int32
+	OrganizationID *uuid.UUID
+	AfterAt        time.Time
+	AfterID        uuid.UUID
+	RowLimit       int32
 }
 
 type FetchAuditEventsAfterCursorRow struct {
-	ID           uuid.UUID
-	TenantID     pgtype.UUID
-	ActorUserID  pgtype.UUID
-	ActorType    string
-	Action       string
-	ResourceType string
-	ResourceID   pgtype.UUID
-	Host         string
-	RequestID    *string
-	CreatedAt    time.Time
-	UserAgent    *string
-	Metadata     []byte
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
+	ActorUserID    *uuid.UUID
+	ActorType      string
+	Action         string
+	ResourceType   string
+	ResourceID     *uuid.UUID
+	Host           string
+	RequestID      *string
+	CreatedAt      time.Time
+	UserAgent      *string
+	Metadata       []byte
 }
 
-// Fetch audit events strictly after (after_at, after_id) for a tenant.
+// Fetch audit events strictly after (after_at, after_id) for an organization.
 // Row-value comparison (created_at, id) > (after_at, after_id) is rewritten
 // as an equivalent OR expression — the #1 sqlc gotcha with tuple predicates.
 // ip is nullable INET; COALESCE(host(ip), ”) prevents a NULL-into-string scan
 // error. The mapping layer converts ” back to nil for the AuditEvent.IP field.
 func (q *Queries) FetchAuditEventsAfterCursor(ctx context.Context, arg FetchAuditEventsAfterCursorParams) ([]FetchAuditEventsAfterCursorRow, error) {
 	rows, err := q.db.Query(ctx, fetchAuditEventsAfterCursor,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.AfterAt,
 		arg.AfterID,
 		arg.RowLimit,
@@ -137,7 +136,7 @@ func (q *Queries) FetchAuditEventsAfterCursor(ctx context.Context, arg FetchAudi
 		var i FetchAuditEventsAfterCursorRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.ActorUserID,
 			&i.ActorType,
 			&i.Action,
@@ -159,11 +158,138 @@ func (q *Queries) FetchAuditEventsAfterCursor(ctx context.Context, arg FetchAudi
 	return items, nil
 }
 
+const getLogSinkSecret = `-- name: GetLogSinkSecret :one
+SELECT id, organization_id, type, endpoint, token_ct, token_nonce
+FROM organization.log_sinks WHERE id = $1 AND organization_id = $2
+`
+
+type GetLogSinkSecretParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+type GetLogSinkSecretRow struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Type           string
+	Endpoint       string
+	TokenCt        []byte
+	TokenNonce     []byte
+}
+
+func (q *Queries) GetLogSinkSecret(ctx context.Context, arg GetLogSinkSecretParams) (GetLogSinkSecretRow, error) {
+	row := q.db.QueryRow(ctx, getLogSinkSecret, arg.ID, arg.OrganizationID)
+	var i GetLogSinkSecretRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Type,
+		&i.Endpoint,
+		&i.TokenCt,
+		&i.TokenNonce,
+	)
+	return i, err
+}
+
+const insertLogSink = `-- name: InsertLogSink :one
+INSERT INTO organization.log_sinks
+    (id, organization_id, type, endpoint, token_ct, token_nonce, cursor_created_at, cursor_id)
+VALUES ($1, $2, $3, $4, $5, $6, NOW(), '00000000-0000-0000-0000-000000000000')
+RETURNING id, type, endpoint, enabled, last_forwarded_at, last_error, created_at
+`
+
+type InsertLogSinkParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Type           string
+	Endpoint       string
+	TokenCt        []byte
+	TokenNonce     []byte
+}
+
+type InsertLogSinkRow struct {
+	ID              uuid.UUID
+	Type            string
+	Endpoint        string
+	Enabled         bool
+	LastForwardedAt *time.Time
+	LastError       string
+	CreatedAt       time.Time
+}
+
+// A new destination starts from now: the nil cursor id sorts before every
+// event of its first second.
+func (q *Queries) InsertLogSink(ctx context.Context, arg InsertLogSinkParams) (InsertLogSinkRow, error) {
+	row := q.db.QueryRow(ctx, insertLogSink,
+		arg.ID,
+		arg.OrganizationID,
+		arg.Type,
+		arg.Endpoint,
+		arg.TokenCt,
+		arg.TokenNonce,
+	)
+	var i InsertLogSinkRow
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.Endpoint,
+		&i.Enabled,
+		&i.LastForwardedAt,
+		&i.LastError,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const listEnabledLogSinks = `-- name: ListEnabledLogSinks :many
+SELECT id, organization_id, type, endpoint, token_ct, token_nonce
+FROM organization.log_sinks
+WHERE enabled
+`
+
+type ListEnabledLogSinksRow struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Type           string
+	Endpoint       string
+	TokenCt        []byte
+	TokenNonce     []byte
+}
+
+// Every organization's enabled destinations, for the forwarding job.
+func (q *Queries) ListEnabledLogSinks(ctx context.Context) ([]ListEnabledLogSinksRow, error) {
+	rows, err := q.db.Query(ctx, listEnabledLogSinks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEnabledLogSinksRow{}
+	for rows.Next() {
+		var i ListEnabledLogSinksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Type,
+			&i.Endpoint,
+			&i.TokenCt,
+			&i.TokenNonce,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLogSinks = `-- name: ListLogSinks :many
 SELECT id, type, endpoint, enabled, last_forwarded_at, last_error, created_at
-FROM tenant.log_sinks
-WHERE tenant_id = $1
+FROM organization.log_sinks
+WHERE organization_id = $1
 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListLogSinksRow struct {
@@ -171,16 +297,17 @@ type ListLogSinksRow struct {
 	Type            string
 	Endpoint        string
 	Enabled         bool
-	LastForwardedAt pgtype.Timestamptz
+	LastForwardedAt *time.Time
 	LastError       string
 	CreatedAt       time.Time
 }
 
 // Queries for the siem domain.
-// Static queries against tenant.log_sinks and audit.events live here and are
+// Static queries against organization.log_sinks and audit.events live here and are
 // compiled by sqlc into ./dbgen.
-func (q *Queries) ListLogSinks(ctx context.Context, tenantID uuid.UUID) ([]ListLogSinksRow, error) {
-	rows, err := q.db.Query(ctx, listLogSinks, tenantID)
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
+func (q *Queries) ListLogSinks(ctx context.Context, organizationID uuid.UUID) ([]ListLogSinksRow, error) {
+	rows, err := q.db.Query(ctx, listLogSinks, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +335,7 @@ func (q *Queries) ListLogSinks(ctx context.Context, tenantID uuid.UUID) ([]ListL
 }
 
 const releaseLogSink = `-- name: ReleaseLogSink :exec
-UPDATE tenant.log_sinks SET leased_until = NULL WHERE id = $1
+UPDATE organization.log_sinks SET leased_until = NULL WHERE id = $1
 `
 
 // ReleaseLogSink ends this instance's lease on a sink.
@@ -218,19 +345,19 @@ func (q *Queries) ReleaseLogSink(ctx context.Context, id uuid.UUID) error {
 }
 
 const setLogSinkEnabled = `-- name: SetLogSinkEnabled :execrows
-UPDATE tenant.log_sinks
+UPDATE organization.log_sinks
 SET enabled = $1
-WHERE id = $2 AND tenant_id = $3
+WHERE id = $2 AND organization_id = $3
 `
 
 type SetLogSinkEnabledParams struct {
-	Enabled  bool
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	Enabled        bool
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) SetLogSinkEnabled(ctx context.Context, arg SetLogSinkEnabledParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setLogSinkEnabled, arg.Enabled, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, setLogSinkEnabled, arg.Enabled, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -238,7 +365,7 @@ func (q *Queries) SetLogSinkEnabled(ctx context.Context, arg SetLogSinkEnabledPa
 }
 
 const setLogSinkError = `-- name: SetLogSinkError :exec
-UPDATE tenant.log_sinks
+UPDATE organization.log_sinks
 SET last_error      = $1,
     failures        = failures + 1,
     next_attempt_at = NOW() + LEAST(INTERVAL '1 hour', INTERVAL '10 seconds' * power(2, LEAST(failures, 12)))

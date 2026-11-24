@@ -8,29 +8,29 @@ context:
   type: repository
   level: L2
   canonical: true
-  last_verified: "2026-08-28"
+  last_verified: "2026-11-15"
 
 inheritance:
   organization:
     repository: qeetgroup/qeet-context
-    level: L0            # organization standards — security, domain, API, engineering
+    level: L0 # organization standards — security, domain, API, engineering
   product:
     repository: qeetgroup/qeet-id-context
-    level: L1            # Qeet ID product architecture, flows, cross-repo contracts
+    level: L1 # Qeet ID product architecture, flows, cross-repo contracts
 
 repository:
   name: qeet-id-server
   product: qeet-id
   type: backend
   role: primary
-  status: active         # the product is pre-1.0; this repository is actively developed
+  status: active # the product has not had its first release (2027.1.0); this repository is actively developed
   visibility: private
   default_branch: main
   working_branch: develop
 
 runtime:
   language: Go
-  version: "1.26.0"      # go.mod; toolchain go1.27.4
+  version: "1.27.0" # go.mod; toolchain go1.27.4
   build_image: golang:1.27.4-alpine
   runtime_image: gcr.io/distroless/static-debian13:nonroot
   port: 4001
@@ -43,45 +43,50 @@ architecture:
   composition_root: internal/bootstrap
   shared_kernel: internal/platform
   bounded_contexts:
-    - internal/access        # authentication, authorization, MFA, passkeys, risk
-    - internal/identity      # tenants, users, groups, invitations, verification
-    - internal/federation    # OIDC provider, SAML, SCIM, LDAP, social
-    - internal/developer     # API keys, principals, agents, webhooks, vaults
-    - internal/operations    # audit, billing, GDPR, analytics, SIEM, retention
+    - internal/access # authentication, authorization, MFA, passkeys, risk
+    - internal/identity # organizations, users, groups, invitations, verification
+    - internal/federation # OIDC provider, SAML, SCIM, LDAP, social
+    - internal/developer # API keys, principals, agents, webhooks, vaults
+    - internal/operations # audit, billing, GDPR, analytics, SIEM, retention
   boundary_enforcement:
-    mechanism: lint          # depguard rules in .golangci.yml
+    mechanism: lint # depguard rules in .golangci.yml
     rules:
       R1: internal/platform/* imports no bounded context, no cmd/*, not internal/bootstrap
       R2: bounded contexts import neither cmd/* nor internal/bootstrap
       note: cross-context imports are NOT yet enforced
 
 entrypoints:
-  - {name: api,       path: cmd/api,       purpose: HTTP API server}
-  - {name: worker,    path: cmd/worker,    purpose: background workers, standalone}
-  - {name: scheduler, path: cmd/scheduler, purpose: scheduled maintenance, advisory-lock coordinated}
-  - {name: migrate,   path: cmd/migrate,   purpose: golang-migrate wrapper}
-  - {name: seed,      path: cmd/seed,      purpose: development-only demo data}
+  - { name: api, path: cmd/api, purpose: HTTP API server }
+  - {
+      name: scheduler,
+      path: cmd/scheduler,
+      purpose: scheduled maintenance,
+      advisory-lock coordinated,
+    }
+  - { name: seed, path: cmd/seed, purpose: development-only demo data }
 
 contracts:
   openapi:
     path: api/openapi/
     format: openapi-3.1
-    documents: 5           # auth, management, federation, developer, operations
-    version: "0.2.0"
+    documents: 5 # access, identity, federation, developer, operations: one per bounded context
+    version: "0.2.0" # info.version of all five; from the first release, the version of the release they describe (2027.1.0)
     coverage_gate: internal/bootstrap/openapi_coverage_test.go
-  postman: api/postman/
-  ai_tools: api/qeetai/tools.manifest.json
+    source: api/openapi/src/ # the documents are generated from here: make openapi
+    bundler: redocly-cli # pinned in api/openapi/src/bun.lock
+  postman: api/postman/ # one collection and a local environment, generated from the documents: make openapi
+  ai_tools: internal/operations/qeetai/tools.manifest.json
 
 data:
   database: postgresql
   driver: pgx/v5
-  query_codegen: sqlc      # 52 queries.sql + sqlc.yaml pairs -> dbgen packages
+  query_codegen: sqlc # 61 queries.sql, listed in the root sqlc.yaml -> dbgen packages
   migrations:
     path: internal/platform/database/migrations/
     tool: golang-migrate
-    embedded: true         # //go:embed *.sql in runner.go
-    range: "0001..0229"    # 228 pairs; 0082 absent
-    schemas: [auth, tenant, "user", rbac, audit, platform, qeetai]
+    embedded: true # //go:embed *.sql in runner.go
+    range: "0001..0012" # the schema baseline: 12 pairs, one file per schema
+    schemas: [auth, organization, account, rbac, audit, platform, qeetai]
 
 http:
   router: chi/v5
@@ -90,36 +95,38 @@ http:
   metrics: /metrics
 
 dependencies:
-  internal: []             # depends on NO other Qeet product — it is the identity root
+  internal: [] # depends on NO other Qeet product — it is the identity root
   external:
     required: [postgresql]
-    optional: [redis, nats, aws-kms, aws-ses, smtp, twilio, stripe, razorpay, hibp, anthropic, openai]
+    optional:
+      [redis, nats, aws-kms, aws-ses, smtp, twilio, stripe, razorpay, hibp, anthropic, openai]
   dev_only: [mailpit]
 
 security:
-  tenant_isolation:
-    mechanism: application-layer, backed by row-level security
-    rls: true              # migration 0160: tenant_isolation on organisation-owned tables, organisation-administration requests only
-    guard: internal/platform/http/httpx/auth.go  # EnforceTenantScope, RequireTenant
+  organization_isolation:
+    mechanism: principal/path/query enforcement, backed by row-level security
+    rls: true # migration 0011: organization_isolation on organization-owned tables, organization-administration requests only
+    guard: internal/platform/http/httpx/auth.go # EnforceOrganizationScope, RequireOrganization
   authentication: internal/platform/http/httpx/auth.go
   authorization: internal/access/authorization/
   permission_map: internal/bootstrap/permissions.go
-  tokens: internal/platform/crypto/tokens/jwt.go   # ES256, RFC 7638 kid
-  password_hash: argon2id                          # internal/platform/crypto/password/hasher.go
+  tokens: internal/platform/crypto/tokens/ # ES256 or RS256, RFC 7638 kid
+  password_hash: argon2id # internal/platform/crypto/password/hasher.go
   csrf: internal/platform/http/httpx/csrf.go
-  boot_gate: internal/platform/config/config.go    # Config.Validate()
+  boot_gate: internal/platform/config/config.go # Config.Validate()
 
 ci:
-  workflows: [.github/workflows/ci.yml, .github/workflows/candidate.yml, .github/workflows/deploy.yml]
+  workflows:
+    [.github/workflows/ci.yml, .github/workflows/candidate.yml, .github/workflows/deploy.yml]
   jobs: [verify, image, version, deploy, rollback]
   verify: "ci.yml — on PRs into develop and main: compile (build, vet), golangci-lint, govulncheck, gitleaks; tests, database tests, sqlc diff and gosec run locally (make ci)"
-  branches: "develop · main (production) · release/YEAR.MONTH.0 (monthly) · hotfix/YEAR.MONTH.N — scripts/release/version.sh"
+  branches: "develop · main (production) · release/YEAR.MONTH.0 (monthly: cut on the first working day, released the third Tuesday) · hotfix/YEAR.MONTH.N — scripts/release/version.sh"
   deploy_trigger: merged release/… or hotfix/… pull request into main
   release_image: "candidate.yml — push to release/** or hotfix/**: ghcr.io/qeetgroup/qeet-id-server:sha-<commit>, linux/amd64+arm64, OCI + in.qeet.* labels (consumed by the Qeet ID Kit, qeet-id-kit); deploy.yml promotes it to ECR unchanged"
 
 llm_context:
   canonical: docs/llm/context.md
-  subsystems: docs/llm/subsystems.md   # L3 subsystem map + L4 source pointers
+  subsystems: docs/llm/subsystems.md # L3 subsystem map + L4 source pointers
   boundaries: docs/llm/boundaries.md
   workflows: docs/llm/workflows.md
   architecture_map: docs/llm/architecture-map.md

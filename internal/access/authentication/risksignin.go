@@ -1,4 +1,4 @@
-package auth
+package authentication
 
 import (
 	"context"
@@ -11,8 +11,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
@@ -35,14 +36,14 @@ const (
 // remembered-device cookie ("" where there is none, as on the API). A sign-in
 // that goes on to stepSession is recorded, by recordSignIn, once its session
 // is issued.
-func (s *Service) nextSignInStep(ctx context.Context, userID, tenantID uuid.UUID, gate mfaGate, firstFactor,
+func (s *Service) nextSignInStep(ctx context.Context, userID, organizationID uuid.UUID, gate mfaGate, firstFactor,
 	trustedToken, ip, ua, country string) nextStep {
-	risky := s.riskAssessor != nil && s.riskAssessor.ShouldForceMFA(ctx, tenantID, userID, ip, ua, country)
+	risky := s.riskAssessor.ShouldForceMFA(ctx, organizationID, userID, ip, ua, country)
 	switch {
 	case gate.enrollment():
 		return stepChallenge
 	case gate.challenged():
-		if !risky && s.trustedDeviceSkips(ctx, userID, tenantID, trustedToken) {
+		if !risky && s.trustedDeviceSkips(ctx, userID, organizationID, trustedToken) {
 			return stepSession
 		}
 		return stepChallenge
@@ -54,50 +55,41 @@ func (s *Service) nextSignInStep(ctx context.Context, userID, tenantID uuid.UUID
 
 // recordSignIn records, for later risk assessments, a sign-in whose session
 // (or hosted-login session) has been issued.
-func (s *Service) recordSignIn(ctx context.Context, userID, tenantID uuid.UUID, ua, country string) {
-	if s.riskAssessor != nil {
-		s.riskAssessor.RecordSignIn(ctx, tenantID, userID, ua, country)
-	}
+func (s *Service) recordSignIn(ctx context.Context, userID, organizationID uuid.UUID, ua, country string) {
+	s.riskAssessor.RecordSignIn(ctx, organizationID, userID, ua, country)
 }
 
 // trustedDeviceSkips reports whether a remembered device may skip the second
-// factor: the organisation allows it and the request carries a live
-// remembered-device token of the person's, for that organisation. Any failure
+// factor: the organization allows it and the request carries a live
+// remembered-device token of the person's, for that organization. Any failure
 // or missing piece is false — the safe default is always to ask.
-func (s *Service) trustedDeviceSkips(ctx context.Context, userID, tenantID uuid.UUID, trustedToken string) bool {
-	if s.devicePolicy == nil || trustedToken == "" {
+func (s *Service) trustedDeviceSkips(ctx context.Context, userID, organizationID uuid.UUID, trustedToken string) bool {
+	if trustedToken == "" {
 		return false
 	}
-	enabled, err := s.devicePolicy.RememberDeviceEnabled(ctx, tenantID)
+	enabled, err := s.devicePolicy.RememberDeviceEnabled(ctx, organizationID)
 	if err != nil || !enabled {
 		return false
 	}
-	return s.IsTrustedDevice(ctx, userID, tenantID, trustedToken)
+	return s.IsTrustedDevice(ctx, userID, organizationID, trustedToken)
 }
 
 // riskEmailChallenge records a challenge met by a code sent to the verified
 // email, for a risky sign-in with no second factor, and audits it. It returns
 // ErrAuthRiskVerificationUnavailable when the account has no verified email.
-func (s *Service) riskEmailChallenge(ctx context.Context, userID, tenantID uuid.UUID, claims map[string]any,
+func (s *Service) riskEmailChallenge(ctx context.Context, userID, organizationID uuid.UUID, claims map[string]any,
 	firstFactor, ip, ua string) (MFAChallenge, error) {
-	var email string
-	var verified bool
-	if err := s.pool.QueryRow(ctx, `SELECT email, email_verified_at IS NOT NULL FROM "user".users WHERE id = $1`, userID).
-		Scan(&email, &verified); err != nil {
+	account, err := s.q.AccountEmailVerified(ctx, userID)
+	if err != nil {
 		return MFAChallenge{}, err
 	}
-	var tenantPtr *uuid.UUID
-	var tid any
-	if tenantID != uuid.Nil {
-		tenantPtr, tid = &tenantID, tenantID
+	organizationPtr, by := orNil(organizationID), asUser(userID, ip, ua)
+	if !account.Verified || account.Email == "" {
+		_ = audit.RecordAlone(ctx, s.pool, by.EventIn(organizationPtr, "auth.sign_in_refused", "user", userID,
+			map[string]any{"reason": "risk_unverifiable", "first_factor": firstFactor}))
+		return MFAChallenge{}, ErrRiskVerificationUnavailable
 	}
-	if !verified || email == "" || s.sender == nil {
-		_ = s.auditTx(ctx, audit.Event{TenantID: tenantPtr, ActorUserID: &userID, ActorType: "user",
-			Action: "auth.sign_in_refused", ResourceType: "user", ResourceID: &userID, IP: ip, UserAgent: ua,
-			Metadata: map[string]any{"reason": "risk_unverifiable", "first_factor": firstFactor}})
-		return MFAChallenge{}, errs.ErrAuthRiskVerificationUnavailable
-	}
-	var claimsArg any
+	var claimsArg []byte
 	if len(claims) > 0 {
 		raw, err := json.Marshal(claims)
 		if err != nil {
@@ -110,21 +102,17 @@ func (s *Service) riskEmailChallenge(ctx context.Context, userID, tenantID uuid.
 		return MFAChallenge{}, err
 	}
 	defer tx.Rollback(ctx)
-	var id uuid.UUID
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO auth.mfa_login_challenges (user_id, tenant_id, expires_at, claims, first_factor, risk_email)
-		VALUES ($1, $2, $3, $4, $5, TRUE) RETURNING id
-	`, userID, tid, time.Now().UTC().Add(mfaChallengeTTL), claimsArg, firstFactor).Scan(&id); err != nil {
+	id, err := s.q.WithTx(tx).InsertRiskEmailChallenge(ctx, dbgen.InsertRiskEmailChallengeParams{
+		UserID: userID, OrganizationID: organizationPtr, ExpiresAt: time.Now().UTC().Add(mfaChallengeTTL),
+		Claims: claimsArg, FirstFactor: firstFactor,
+	})
+	if err != nil {
 		return MFAChallenge{}, err
 	}
-	factor := LoginFactor{Type: "email", ID: &id, Destination: maskEmail(email)}
+	factor := LoginFactor{Type: "email", ID: &id, Destination: notifier.MaskDestination("email", account.Email)}
 	challenge := MFAChallenge{MFARequired: true, Methods: []string{"email"}, Factors: []LoginFactor{factor}}
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: tenantPtr, ActorUserID: &userID, ActorType: "user",
-		Action: "auth.mfa_challenged", ResourceType: "user", ResourceID: &userID, IP: ip, UserAgent: ua,
-		Metadata: map[string]any{"reason": mfaReasonRisk, "enrollment": false, "methods": challenge.Methods,
-			"first_factor": firstFactor},
-	}); err != nil {
+	if err := audit.Record(ctx, tx, by.EventIn(organizationPtr, "auth.mfa_challenged", "user", userID,
+		map[string]any{"reason": mfaReasonRisk, "enrollment": false, "methods": challenge.Methods, "first_factor": firstFactor})); err != nil {
 		return MFAChallenge{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -158,23 +146,21 @@ func (s *Service) newRiskEmailCode(ctx context.Context, tx pgx.Tx, id uuid.UUID,
 			return riskEmailCode{}, errs.ErrMFACodeSendLimited.WithMetadata(map[string]any{"retry_after": int(wait.Round(time.Second).Seconds()) + 1})
 		}
 	}
+	q := s.q.WithTx(tx)
 	var out riskEmailCode
-	if err := tx.QueryRow(ctx, `SELECT email FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, c.userID).
-		Scan(&out.email); err != nil {
+	var err error
+	if out.email, err = q.VerifiedAccountEmail(ctx, c.userID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return riskEmailCode{}, errs.ErrAuthRiskVerificationUnavailable
+			return riskEmailCode{}, ErrRiskVerificationUnavailable
 		}
 		return riskEmailCode{}, err
 	}
-	var err error
 	if out.code, err = codes.Numeric(6); err != nil {
 		return riskEmailCode{}, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.mfa_login_challenges
-		SET email_code_hash = $2, email_code_expires_at = $3, email_code_sent_at = NOW(), codes_sent = codes_sent + 1
-		WHERE id = $1
-	`, id, codes.Hash(out.code), time.Now().UTC().Add(riskEmailCodeTTL)); err != nil {
+	if err := q.IssueRiskEmailCode(ctx, dbgen.IssueRiskEmailCodeParams{
+		ID: id, EmailCodeHash: new(codes.Hash(out.code)), EmailCodeExpiresAt: new(time.Now().UTC().Add(riskEmailCodeTTL)),
+	}); err != nil {
 		return riskEmailCode{}, err
 	}
 	return out, nil
@@ -197,41 +183,13 @@ func (s *Service) sendRiskEmailCode(ctx context.Context, id uuid.UUID, c pending
 	// On a context of its own, so a send that failed as ctx ended is undone too.
 	uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	if _, uerr := s.pool.Exec(uctx, `
-		UPDATE auth.mfa_login_challenges
-		SET email_code_hash = $3, email_code_expires_at = $4, email_code_sent_at = $5, codes_sent = codes_sent - 1
-		WHERE id = $1 AND email_code_hash = $2
-	`, id, codes.Hash(code.code), c.emailCodeHash, c.emailCodeExpiresAt, c.emailCodeSentAt); uerr != nil {
+	if uerr := s.q.WithdrawRiskEmailCode(uctx, dbgen.WithdrawRiskEmailCodeParams{
+		ID: id, SentHash: new(codes.Hash(code.code)),
+		EmailCodeHash: c.emailCodeHash, EmailCodeExpiresAt: c.emailCodeExpiresAt, EmailCodeSentAt: c.emailCodeSentAt,
+	}); uerr != nil {
 		slog.Warn("undelivered risk email code not withdrawn", "err", uerr)
 	}
 	return errs.ErrMFADeliveryFailed.Wrap(err)
-}
-
-// auditTx records one audit event in its own transaction.
-func (s *Service) auditTx(ctx context.Context, e audit.Event) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if err := audit.Record(ctx, tx, e); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-// maskEmail keeps the first character of the address's local part and its
-// domain: "j***@example.com".
-func maskEmail(email string) string {
-	for i := range len(email) {
-		if email[i] == '@' {
-			if i <= 1 {
-				return email
-			}
-			return email[:1] + "***" + email[i:]
-		}
-	}
-	return email
 }
 
 // metProofKind names how a met challenge was met, as audited.

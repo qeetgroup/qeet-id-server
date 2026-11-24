@@ -1,0 +1,92 @@
+# Service level objectives for qeet-id, as recording rules and multi-window burn-rate alerts (Google
+# SRE workbook, chapter 5): a page when the error budget burns fast over both a long and a short
+# window, a ticket when it burns slowly. Targets are starting points, to be tuned once baselined.
+#
+#   availability  99.9% of requests (health and metrics routes aside) answer without a 5xx
+#   latency       99% of sign-ins and token requests answer within 0.5s
+groups:
+  - name: qeet-id.slo.availability
+    rules:
+      - record: qeetid:request_errors:ratio_rate5m
+        expr: |
+          sum(rate(http_requests_total{job="qeet-id",status=~"5..",route!~"/metrics|/healthz|/readyz"}[5m]))
+            / clamp_min(sum(rate(http_requests_total{job="qeet-id",route!~"/metrics|/healthz|/readyz"}[5m])), 1e-9)
+      - record: qeetid:request_errors:ratio_rate30m
+        expr: |
+          sum(rate(http_requests_total{job="qeet-id",status=~"5..",route!~"/metrics|/healthz|/readyz"}[30m]))
+            / clamp_min(sum(rate(http_requests_total{job="qeet-id",route!~"/metrics|/healthz|/readyz"}[30m])), 1e-9)
+      - record: qeetid:request_errors:ratio_rate1h
+        expr: |
+          sum(rate(http_requests_total{job="qeet-id",status=~"5..",route!~"/metrics|/healthz|/readyz"}[1h]))
+            / clamp_min(sum(rate(http_requests_total{job="qeet-id",route!~"/metrics|/healthz|/readyz"}[1h])), 1e-9)
+      - record: qeetid:request_errors:ratio_rate2h
+        expr: |
+          sum(rate(http_requests_total{job="qeet-id",status=~"5..",route!~"/metrics|/healthz|/readyz"}[2h]))
+            / clamp_min(sum(rate(http_requests_total{job="qeet-id",route!~"/metrics|/healthz|/readyz"}[2h])), 1e-9)
+      - record: qeetid:request_errors:ratio_rate6h
+        expr: |
+          sum(rate(http_requests_total{job="qeet-id",status=~"5..",route!~"/metrics|/healthz|/readyz"}[6h]))
+            / clamp_min(sum(rate(http_requests_total{job="qeet-id",route!~"/metrics|/healthz|/readyz"}[6h])), 1e-9)
+      - record: qeetid:request_errors:ratio_rate1d
+        expr: |
+          sum(rate(http_requests_total{job="qeet-id",status=~"5..",route!~"/metrics|/healthz|/readyz"}[1d]))
+            / clamp_min(sum(rate(http_requests_total{job="qeet-id",route!~"/metrics|/healthz|/readyz"}[1d])), 1e-9)
+      - record: qeetid:request_errors:ratio_rate3d
+        expr: |
+          sum(rate(http_requests_total{job="qeet-id",status=~"5..",route!~"/metrics|/healthz|/readyz"}[3d]))
+            / clamp_min(sum(rate(http_requests_total{job="qeet-id",route!~"/metrics|/healthz|/readyz"}[3d])), 1e-9)
+
+      # Budget 0.1%. Page: 2% of a 30-day budget in 1h (14.4x) or 5% in 6h (6x).
+      - alert: QeetIdAvailabilityBudgetBurnFast
+        expr: |
+          (qeetid:request_errors:ratio_rate1h > 14.4 * 0.001 and qeetid:request_errors:ratio_rate5m > 14.4 * 0.001)
+          or
+          (qeetid:request_errors:ratio_rate6h > 6 * 0.001 and qeetid:request_errors:ratio_rate30m > 6 * 0.001)
+        labels: { severity: critical }
+        annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidavailabilitybudgetburnfast"
+          summary: "availability error budget burning fast"
+          description: "At this rate the 30-day 99.9% budget is gone within days. 5xx ratio (1h): {{ $value | humanizePercentage }}."
+      # Ticket: 10% of the budget in 3d (1x) or in 1d (3x).
+      - alert: QeetIdAvailabilityBudgetBurnSlow
+        expr: |
+          (qeetid:request_errors:ratio_rate1d > 3 * 0.001 and qeetid:request_errors:ratio_rate2h > 3 * 0.001)
+          or
+          (qeetid:request_errors:ratio_rate3d > 1 * 0.001 and qeetid:request_errors:ratio_rate6h > 1 * 0.001)
+        labels: { severity: warning }
+        annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidavailabilitybudgetburnslow"
+          summary: "availability error budget burning"
+          description: "The 30-day 99.9% budget will run out before the month ends at this rate."
+
+  - name: qeet-id.slo.latency
+    rules:
+      # The share of sign-ins and token requests slower than 0.5s.
+      - record: qeetid:signin_token_slow:ratio_rate5m
+        expr: |
+          1 - sum(rate(http_request_duration_seconds_bucket{job="qeet-id",route=~"/v1/auth/login|/v1/oauth/token",le="0.5"}[5m]))
+            / clamp_min(sum(rate(http_request_duration_seconds_count{job="qeet-id",route=~"/v1/auth/login|/v1/oauth/token"}[5m])), 1e-9)
+      - record: qeetid:signin_token_slow:ratio_rate1h
+        expr: |
+          1 - sum(rate(http_request_duration_seconds_bucket{job="qeet-id",route=~"/v1/auth/login|/v1/oauth/token",le="0.5"}[1h]))
+            / clamp_min(sum(rate(http_request_duration_seconds_count{job="qeet-id",route=~"/v1/auth/login|/v1/oauth/token"}[1h])), 1e-9)
+      - record: qeetid:signin_token_slow:ratio_rate6h
+        expr: |
+          1 - sum(rate(http_request_duration_seconds_bucket{job="qeet-id",route=~"/v1/auth/login|/v1/oauth/token",le="0.5"}[6h]))
+            / clamp_min(sum(rate(http_request_duration_seconds_count{job="qeet-id",route=~"/v1/auth/login|/v1/oauth/token"}[6h])), 1e-9)
+      # Budget 1% slow. Page at 14.4x over 1h and 5m.
+      - alert: QeetIdSignInLatencyBudgetBurnFast
+        expr: qeetid:signin_token_slow:ratio_rate1h > 14.4 * 0.01 and qeetid:signin_token_slow:ratio_rate5m > 14.4 * 0.01
+        labels: { severity: critical }
+        annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidsigninlatencybudgetburnfast"
+          summary: "sign-in and token latency budget burning fast"
+          description: "{{ $value | humanizePercentage }} of sign-ins and token requests took over 0.5s in the last hour."
+      - alert: QeetIdSignInLatencyBudgetBurnSlow
+        expr: qeetid:signin_token_slow:ratio_rate6h > 6 * 0.01
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidsigninlatencybudgetburnslow"
+          summary: "sign-in and token latency budget burning"
+          description: "{{ $value | humanizePercentage }} of sign-ins and token requests took over 0.5s in the last 6h."

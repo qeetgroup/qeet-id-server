@@ -23,3 +23,8 @@ indent_size = 2
 
 [*.sql]
 indent_size = 4
+
+# Read by shfmt (make fmt): the scripts' own style, indented case branches and "> file".
+[*.sh]
+switch_case_indent = true
+space_redirects = true

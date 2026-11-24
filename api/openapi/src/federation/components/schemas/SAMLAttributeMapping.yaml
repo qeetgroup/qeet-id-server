@@ -1,0 +1,27 @@
+type: object
+required:
+  - name
+  - source
+properties:
+  name:
+    type: string
+    maxLength: 256
+    description: The attribute's SAML Name, unique within the SP
+  source:
+    type: string
+    description: >-
+      email; user_id (the account ID, the same at every app); persistent_id (an
+      opaque value made for this person at this SP, which never changes);
+      display_name; given_name and family_name (the user-metadata key of that
+      name, else the person's directory profile first_name or last_name); groups
+      (the names of their groups in the organization, one value each); roles
+      (the names of their roles there, directly or through a group, one value
+      each); or metadata.<key> (that user-metadata key: a string, number or
+      boolean, or an array of them as one value each)
+  name_format:
+    type: string
+    enum:
+      - basic
+      - uri
+      - unspecified
+    description: The attribute's NameFormat; basic when absent

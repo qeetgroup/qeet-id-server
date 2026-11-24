@@ -19,12 +19,12 @@ const (
 )
 
 // openIncident posts the incident args describe (-component, -impact, -title
-// and -detail), shown to every organisation, and returns the exit code.
-func openIncident(ctx context.Context, svc *servicehealth.Service, args []string) int {
+// and -detail), shown to every organization, and returns the exit code.
+func openIncident(ctx context.Context, svc *servicehealth.Incidents, args []string) int {
 	fs := flag.NewFlagSet(openIncidentCommand, flag.ContinueOnError)
 	component := fs.String("component", "", "api, sign_in, email, webhooks or directory")
 	impact := fs.String("impact", "", "maintenance, degraded or outage")
-	title := fs.String("title", "", "what organisations see")
+	title := fs.String("title", "", "what organizations see")
 	detail := fs.String("detail", "", "more about it, optional")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -43,7 +43,7 @@ func openIncident(ctx context.Context, svc *servicehealth.Service, args []string
 }
 
 // resolveIncident ends the incident -incident names, and returns the exit code.
-func resolveIncident(ctx context.Context, svc *servicehealth.Service, args []string) int {
+func resolveIncident(ctx context.Context, svc *servicehealth.Incidents, args []string) int {
 	fs := flag.NewFlagSet(resolveIncidentCommand, flag.ContinueOnError)
 	incident := fs.String("incident", "", "the incident's id")
 	if err := fs.Parse(args); err != nil {

@@ -4,8 +4,6 @@ package reseal
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
 	"fmt"
 	"strings"
 	"testing"
@@ -41,20 +39,20 @@ func scratchTable(t *testing.T) Column {
 	t.Helper()
 	table := "platform." + strings.ReplaceAll(dbtest.Unique("reseal"), "-", "_")
 	if _, err := dbtest.Owner(t).Exec(dbtest.Context(t), `CREATE TABLE `+table+` (
-		id uuid PRIMARY KEY, tenant_id uuid NOT NULL, name text NOT NULL, ct bytea, nonce bytea)`); err != nil {
+		id uuid PRIMARY KEY, organization_id uuid NOT NULL, name text NOT NULL, ct bytea, nonce bytea)`); err != nil {
 		t.Fatal(err)
 	}
 	return Column{Table: table, Key: []string{"id"}, Ciphertext: "ct", Nonce: "nonce",
-		Tenant: "tenant_id", Purpose: "secret", Resource: "name"}
+		Organization: "organization_id", Purpose: "secret", Resource: "name"}
 }
 
-// put stores a value sealed as ct and nonce under tenant and name.
-func put(t *testing.T, c Column, tenant uuid.UUID, name string, ct, nonce []byte) uuid.UUID {
+// put stores a value sealed as ct and nonce under organization and name.
+func put(t *testing.T, c Column, organization uuid.UUID, name string, ct, nonce []byte) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t),
-		`INSERT INTO `+c.Table+` (id, tenant_id, name, ct, nonce) VALUES ($1, $2, $3, $4, $5)`,
-		id, tenant, name, ct, nonce); err != nil {
+		`INSERT INTO `+c.Table+` (id, organization_id, name, ct, nonce) VALUES ($1, $2, $3, $4, $5)`,
+		id, organization, name, ct, nonce); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -71,20 +69,6 @@ func stored(t *testing.T, c Column, id uuid.UUID) ([]byte, []byte) {
 	return ct, nonce
 }
 
-func legacySeal(t *testing.T, key, plaintext []byte) ([]byte, []byte) {
-	t.Helper()
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nonce := bytes.Repeat([]byte{9}, aead.NonceSize())
-	return aead.Seal(nil, nonce, plaintext, nil), nonce
-}
-
 func count(t *testing.T, box *envelope.Cipher, c Column) int64 {
 	t.Helper()
 	n, err := Count(dbtest.Context(t), dbtest.Pool(t), box, []Column{c})
@@ -95,45 +79,42 @@ func count(t *testing.T, box *envelope.Cipher, c Column) int64 {
 }
 
 // TestRunMovesValuesToTheCurrentKey seals values with a previous key, the
-// oldest scheme, the current key, a key that is not configured and the wrong
-// context, then checks that a run in small batches moves exactly the readable
+// current key, a key that is not configured and the wrong context, then checks that a run in small batches moves exactly the readable
 // ones to the current key, leaves the rest, and that running it again changes
 // nothing.
 func TestRunMovesValuesToTheCurrentKey(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	c := scratchTable(t)
-	tenant := uuid.New()
+	organization := uuid.New()
 	before, after := mustCipher(t, oldKey), mustCipher(t, newKey, oldKey)
 
 	want := map[uuid.UUID]string{}
 	for i := range 5 {
 		name := fmt.Sprintf("old-%d", i)
-		ct, nonce, err := before.Seal(tenant, "secret", name, []byte("value of "+name))
+		ct, nonce, err := before.Seal(organization, "secret", name, []byte("value of "+name))
 		if err != nil {
 			t.Fatal(err)
 		}
-		want[put(t, c, tenant, name, ct, nonce)] = "value of " + name
+		want[put(t, c, organization, name, ct, nonce)] = "value of " + name
 	}
-	legacyCT, legacyNonce := legacySeal(t, oldKey, []byte("legacy value"))
-	want[put(t, c, tenant, "legacy", legacyCT, legacyNonce)] = "legacy value"
 
-	currentCT, currentNonce, _ := after.Seal(tenant, "secret", "current", []byte("current value"))
-	current := put(t, c, tenant, "current", currentCT, currentNonce)
-	strayCT, strayNonce, _ := mustCipher(t, strayKey).Seal(tenant, "secret", "stray", []byte("stray"))
-	stray := put(t, c, tenant, "stray", strayCT, strayNonce)
-	elsewhereCT, elsewhereNonce, _ := before.Seal(tenant, "secret", "other-name", []byte("moved"))
-	put(t, c, tenant, "elsewhere", elsewhereCT, elsewhereNonce)
-	put(t, c, tenant, "empty", nil, nil)
+	currentCT, currentNonce, _ := after.Seal(organization, "secret", "current", []byte("current value"))
+	current := put(t, c, organization, "current", currentCT, currentNonce)
+	strayCT, strayNonce, _ := mustCipher(t, strayKey).Seal(organization, "secret", "stray", []byte("stray"))
+	stray := put(t, c, organization, "stray", strayCT, strayNonce)
+	elsewhereCT, elsewhereNonce, _ := before.Seal(organization, "secret", "other-name", []byte("moved"))
+	put(t, c, organization, "elsewhere", elsewhereCT, elsewhereNonce)
+	put(t, c, organization, "empty", nil, nil)
 
-	if n := count(t, after, c); n != 8 {
-		t.Fatalf("before the run %d values are on old keys, want 8", n)
+	if n := count(t, after, c); n != 7 {
+		t.Fatalf("before the run %d values are on old keys, want 7", n)
 	}
 	res, err := Run(ctx, pool, after, []Column{c}, 2, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Resealed != 6 || res.Unreadable != 2 || !res.Finished {
-		t.Fatalf("run = %+v, want 6 resealed, 2 unreadable, finished", res)
+	if res.Resealed != 5 || res.Unreadable != 2 || !res.Finished {
+		t.Fatalf("run = %+v, want 5 resealed, 2 unreadable, finished", res)
 	}
 	if n := count(t, after, c); n != 2 {
 		t.Errorf("after the run %d values are on old keys, want the 2 unreadable", n)
@@ -149,7 +130,7 @@ func TestRunMovesValuesToTheCurrentKey(t *testing.T) {
 		if err := pool.QueryRow(ctx, `SELECT name FROM `+c.Table+` WHERE id = $1`, id).Scan(&name); err != nil {
 			t.Fatal(err)
 		}
-		got, err := newOnly.Open(tenant, "secret", name, ct, nonce)
+		got, err := newOnly.Open(organization, "secret", name, ct, nonce)
 		if err != nil || string(got) != plain {
 			t.Errorf("%s opens to %q, %v once the old key is removed", name, got, err)
 		}
@@ -170,7 +151,7 @@ func TestRunMovesValuesToTheCurrentKey(t *testing.T) {
 	}
 }
 
-// TestRunPagesACompositeKey checks a column keyed by two columns whose tenant
+// TestRunPagesACompositeKey checks a column keyed by two columns whose organization
 // is read from a column's text, as the idempotency keys are.
 func TestRunPagesACompositeKey(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
@@ -179,17 +160,17 @@ func TestRunPagesACompositeKey(t *testing.T) {
 		scope text, key text, body bytea, body_nonce bytea, PRIMARY KEY (scope, key))`); err != nil {
 		t.Fatal(err)
 	}
-	tenant := uuid.New()
+	organization := uuid.New()
 	c := Column{Table: table, Key: []string{"scope", "key"}, Ciphertext: "body", Nonce: "body_nonce",
-		Tenant: "scope", TenantOf: func(scope string) uuid.UUID {
+		Organization: "scope", OrganizationOf: func(scope string) uuid.UUID {
 			id, _ := uuid.Parse(strings.SplitN(scope, "|", 2)[0])
 			return id
 		}, Purpose: "pair", Resource: "scope || '|' || key"}
 	before, after := mustCipher(t, oldKey), mustCipher(t, newKey, oldKey)
 	for _, scope := range []string{"a", "b"} {
 		for i := range 3 {
-			s, k := tenant.String()+"|"+scope, fmt.Sprint(i)
-			ct, nonce, err := before.Seal(tenant, "pair", s+"|"+k, []byte("answer"))
+			s, k := organization.String()+"|"+scope, fmt.Sprint(i)
+			ct, nonce, err := before.Seal(organization, "pair", s+"|"+k, []byte("answer"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -215,11 +196,11 @@ func TestRunPagesACompositeKey(t *testing.T) {
 func TestRunWithTheKeyAsResource(t *testing.T) {
 	c := scratchTable(t)
 	c.Resource = "id"
-	tenant, id := uuid.New(), uuid.New()
+	organization, id := uuid.New(), uuid.New()
 	before, after := mustCipher(t, oldKey), mustCipher(t, newKey, oldKey)
-	ct, nonce, _ := before.Seal(tenant, "secret", id.String(), []byte("value"))
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO `+c.Table+` (id, tenant_id, name, ct, nonce) VALUES ($1, $2, 'n', $3, $4)`,
-		id, tenant, ct, nonce); err != nil {
+	ct, nonce, _ := before.Seal(organization, "secret", id.String(), []byte("value"))
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO `+c.Table+` (id, organization_id, name, ct, nonce) VALUES ($1, $2, 'n', $3, $4)`,
+		id, organization, ct, nonce); err != nil {
 		t.Fatal(err)
 	}
 	res, err := Run(dbtest.Context(t), dbtest.Pool(t), after, []Column{c}, 10, time.Minute)
@@ -233,28 +214,28 @@ func TestRunWithTheKeyAsResource(t *testing.T) {
 func TestStoreKeepsANewerValue(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	c := scratchTable(t)
-	tenant := uuid.New()
+	organization := uuid.New()
 	before, after := mustCipher(t, oldKey), mustCipher(t, newKey, oldKey)
-	ct, nonce, _ := before.Seal(tenant, "secret", "rotated", []byte("old value"))
-	id := put(t, c, tenant, "rotated", ct, nonce)
+	ct, nonce, _ := before.Seal(organization, "secret", "rotated", []byte("old value"))
+	id := put(t, c, organization, "rotated", ct, nonce)
 
 	rows, err := c.next(ctx, pool, after.CurrentPrefix(), nil, 10)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("next = %d rows, %v", len(rows), err)
 	}
-	newer, newerNonce, _ := after.Seal(tenant, "secret", "rotated", []byte("new value"))
+	newer, newerNonce, _ := after.Seal(organization, "secret", "rotated", []byte("new value"))
 	if _, err := pool.Exec(ctx, `UPDATE `+c.Table+` SET ct = $2, nonce = $3 WHERE id = $1`, id, newer, newerNonce); err != nil {
 		t.Fatal(err)
 	}
-	tenantID, plain, err := c.open(after, rows[0])
+	organizationID, plain, err := c.open(after, rows[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replaced, err := c.store(ctx, pool, after, rows[0], tenantID, plain); err != nil || replaced {
+	if replaced, err := c.store(ctx, pool, after, rows[0], organizationID, plain); err != nil || replaced {
 		t.Fatalf("store over a newer value = %v, %v; want it left alone", replaced, err)
 	}
 	got, gotNonce := stored(t, c, id)
-	if plain, err := after.Open(tenant, "secret", "rotated", got, gotNonce); err != nil || string(plain) != "new value" {
+	if plain, err := after.Open(organization, "secret", "rotated", got, gotNonce); err != nil || string(plain) != "new value" {
 		t.Errorf("stored value is %q, %v; want the application's", plain, err)
 	}
 }
@@ -263,10 +244,10 @@ func TestStoreKeepsANewerValue(t *testing.T) {
 // unfinished, and leaves the rest for the next run.
 func TestRunStopsAtItsBudget(t *testing.T) {
 	c := scratchTable(t)
-	tenant := uuid.New()
+	organization := uuid.New()
 	before, after := mustCipher(t, oldKey), mustCipher(t, newKey, oldKey)
-	ct, nonce, _ := before.Seal(tenant, "secret", "waiting", []byte("value"))
-	put(t, c, tenant, "waiting", ct, nonce)
+	ct, nonce, _ := before.Seal(organization, "secret", "waiting", []byte("value"))
+	put(t, c, organization, "waiting", ct, nonce)
 	res, err := Run(dbtest.Context(t), dbtest.Pool(t), after, []Column{c}, 10, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -283,11 +264,11 @@ func TestRunStopsAtItsBudget(t *testing.T) {
 // know when a previous key can be removed.
 func TestCollectorReportsValuesOnOldKeys(t *testing.T) {
 	c := scratchTable(t)
-	tenant := uuid.New()
+	organization := uuid.New()
 	before, after := mustCipher(t, oldKey), mustCipher(t, newKey, oldKey)
 	for i := range 3 {
-		ct, nonce, _ := before.Seal(tenant, "secret", fmt.Sprint(i), []byte("value"))
-		put(t, c, tenant, fmt.Sprint(i), ct, nonce)
+		ct, nonce, _ := before.Seal(organization, "secret", fmt.Sprint(i), []byte("value"))
+		put(t, c, organization, fmt.Sprint(i), ct, nonce)
 	}
 	reg := prometheus.NewPedanticRegistry()
 	reg.MustRegister(Collector(dbtest.Pool(t), after, []Column{c}))

@@ -1,0 +1,41 @@
+type: object
+description: >-
+  An audit an external body carried out on the organization, or a certificate it
+  issued.
+properties:
+  id:
+    type: string
+    format: uuid
+  framework:
+    type: string
+    enum:
+      - soc2
+      - iso27001
+  kind:
+    type: string
+    enum:
+      - audit
+      - certificate
+  body:
+    type: string
+    description: The auditor or certification body.
+  scope:
+    type: string
+  reference:
+    type: string
+  issued_on:
+    type: string
+    format: date
+  expires_on:
+    type:
+      - string
+      - "null"
+    format: date
+  created_by:
+    type:
+      - string
+      - "null"
+    format: uuid
+  created_at:
+    type: string
+    format: date-time

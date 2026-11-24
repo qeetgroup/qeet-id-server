@@ -1,0 +1,47 @@
+type: object
+description: Non-secret metadata for an issuer signing key (no key material).
+required:
+  - kid
+  - alg
+  - use
+  - status
+  - created_at
+  - activated_at
+properties:
+  kid:
+    type: string
+    description: RFC 7638 JWK thumbprint of the public key.
+  alg:
+    type: string
+    description: ES256 for an EC P-256 key, RS256 for an RSA key.
+    example: ES256
+  use:
+    type: string
+    example: sig
+  status:
+    type: string
+    enum:
+      - candidate
+      - active
+      - retired
+  retire_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  created_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+    description: >-
+      When the key registry first held the key; null for a key it doesn't hold
+      (one only in configuration).
+  activated_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+    description: >-
+      When the key became the active signing key; null for a candidate that
+      never was, or a key the registry doesn't hold.

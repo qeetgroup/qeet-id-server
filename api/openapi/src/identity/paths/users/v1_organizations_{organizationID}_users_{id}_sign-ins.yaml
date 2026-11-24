@@ -1,0 +1,118 @@
+get:
+  operationId: getUserSignInSummary
+  summary: A person's sign-in summary
+  description: >-
+    How the member signed in to the organization over a period, from its audit
+    log: sign-ins by first method, with how many met a second step (recorded as
+    metadata.second_factor from this release, or a method ending _mfa); by
+    address (the 20 most used, with the last time); by browser and platform, as
+    the session list names them; and failed sign-ins by reason. The period is
+    from and to (RFC 3339), or days back from to (or now); 30 days by default,
+    at most 366. A person from another organization counts their sign-ins to
+    this one. Requires audit.read.
+  tags:
+    - Users
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: from
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date-time
+    - name: to
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date-time
+    - name: days
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 366
+        default: 30
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: The summary
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              from:
+                type: string
+                format: date-time
+              to:
+                type: string
+                format: date-time
+              sign_ins:
+                type: integer
+              with_second_step:
+                type: integer
+              by_method:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    method:
+                      type: string
+                    count:
+                      type: integer
+                    with_second_step:
+                      type: integer
+              by_address:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    ip:
+                      type: string
+                    count:
+                      type: integer
+                    last_at:
+                      type: string
+                      format: date-time
+              by_browser:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    device:
+                      type: string
+                    kind:
+                      type: string
+                    count:
+                      type: integer
+              failures:
+                type: integer
+              failures_by_reason:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    reason:
+                      type: string
+                    count:
+                      type: integer
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

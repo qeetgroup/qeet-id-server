@@ -1,0 +1,42 @@
+type: object
+properties:
+  users:
+    type: array
+    items:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        display_name:
+          type:
+            - string
+            - "null"
+        assigned_at:
+          type: string
+          format: date-time
+        assigned_by:
+          type:
+            - string
+            - "null"
+          format: uuid
+  groups:
+    type: array
+    items:
+      type: object
+      properties:
+        group_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        assigned_at:
+          type: string
+          format: date-time
+        assigned_by:
+          type:
+            - string
+            - "null"
+          format: uuid

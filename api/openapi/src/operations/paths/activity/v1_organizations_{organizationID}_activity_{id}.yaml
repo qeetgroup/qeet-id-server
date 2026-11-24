@@ -1,0 +1,37 @@
+get:
+  operationId: getActivityEvent
+  summary: One activity event
+  description: >-
+    One of the organization's activity events by its id (an audit.events row
+    id), with its metadata, actor name and email, address and browser, as in the
+    history. 404 for an unknown id or another organization's. Needs audit.read.
+  tags:
+    - Activity
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: The event
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/ActivityEvent.yaml
+    "400":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

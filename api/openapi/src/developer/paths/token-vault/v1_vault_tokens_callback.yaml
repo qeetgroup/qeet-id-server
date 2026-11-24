@@ -1,0 +1,23 @@
+get:
+  operationId: completeAccountConnection
+  summary: Token Vault OAuth2 redirect target
+  tags:
+    - Token Vault
+  security: []
+  description: >-
+    The fixed, non-caller-supplied redirect_uri registered with the third-party
+    provider. Completes the code exchange, with the ceremony's PKCE verifier,
+    and renders a minimal HTML confirmation page — never redirects to a
+    caller-supplied URL. Only the browser that began the ceremony (holding the
+    cookie the connect call set) completes it: another browser gets 400
+    (tokenvault.connect_other_browser) and nothing is exchanged or stored, so a
+    connect link sent to someone else connects nothing.
+  responses:
+    "200":
+      description: HTML confirmation page
+    "400":
+      description: >-
+        HTML error page (invalid/expired state, or the provider returned an
+        error)
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

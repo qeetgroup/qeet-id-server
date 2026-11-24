@@ -18,8 +18,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 )
 
 // oauth2Provider is a fake OAuth 2.0 provider for the adapters: it accepts a
@@ -79,13 +79,13 @@ func appleKeyPEM(t *testing.T) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 }
 
-// TestOrganisationAdaptersSignIn checks that an organisation adds GitHub,
+// TestOrganizationAdaptersSignIn checks that an organization adds GitHub,
 // Facebook, X, Discord and Apple without a discovery URL, Apple only with a
 // key that signs; that each starts at its own authorize endpoint, X with PKCE
 // and Apple by form_post with a nonce; and that Discord and X sign-ins adopt
 // a member's account through the adapter, while Facebook's unverified address
 // never adopts one.
-func TestOrganisationAdaptersSignIn(t *testing.T) {
+func TestOrganizationAdaptersSignIn(t *testing.T) {
 	f := newSocialFixture(t)
 	idp := newOAuth2Provider(t)
 	f.svc.oauth.endpoints = map[string]oauth2Endpoints{}
@@ -93,9 +93,9 @@ func TestOrganisationAdaptersSignIn(t *testing.T) {
 		ep.authorizeURL, ep.tokenURL, ep.userURL = "https://"+kind+".example.test/authorize", idp.URL+"/token", idp.URL+"/user"
 		f.svc.oauth.endpoints[kind] = ep
 	}
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), f.mount)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), f.mount)
 	add := func(body map[string]string) *httptest.ResponseRecorder {
 		return dbtest.Do(t, asAdmin, http.MethodPost, "/social/providers", body)
 	}
@@ -116,7 +116,7 @@ func TestOrganisationAdaptersSignIn(t *testing.T) {
 
 	start := func(provider string) (*httptest.ResponseRecorder, *url.URL) {
 		t.Helper()
-		rec := browse(t, f.public, http.MethodGet, "/social/"+provider+"/start?tenant_id="+tenant.String(), nil, nil)
+		rec := browse(t, f.public, http.MethodGet, "/social/"+provider+"/start?organization_id="+organization.String(), nil, nil)
 		u, err := url.Parse(rec.Header().Get("Location"))
 		if rec.Code != http.StatusFound || err != nil {
 			t.Fatalf("start %s: %d %s", provider, rec.Code, rec.Body.String())
@@ -142,19 +142,19 @@ func TestOrganisationAdaptersSignIn(t *testing.T) {
 		defer idp.mu.Unlock()
 		return rec, idp.auth[code] + "|" + u.Query().Get("code_challenge")
 	}
-	gamer := dbtest.User(t, tenant, tenant)
+	gamer := dbtest.User(t, organization, organization)
 	verified(t, gamer)
 	email := gamer.Email
 	rec, _ := signIn("discord", `{"id":"d-1","username":"gamer","global_name":"Gamer","email":"`+email+`","verified":true}`)
 	if target, q := redirectQuery(t, rec); target != "https://console.example.test/auth/social/callback" || q.Get("code") == "" {
 		t.Fatalf("Discord sign-in went to %s %v", target, q)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users u JOIN "user".external_identities e ON e.user_id = u.id
-		WHERE u.email = $1 AND u.email_verified_at IS NOT NULL AND e.provider = 'discord' AND e.subject = 'd-1' AND e.tenant_id = $2`, email, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users u JOIN account.external_identities e ON e.user_id = u.id
+		WHERE u.email = $1 AND u.email_verified_at IS NOT NULL AND e.provider = 'discord' AND e.subject = 'd-1' AND e.organization_id = $2`, email, organization); n != 1 {
 		t.Errorf("Discord sign-in made %d verified, linked accounts; want 1", n)
 	}
 
-	ex := dbtest.User(t, tenant, tenant)
+	ex := dbtest.User(t, organization, organization)
 	verified(t, ex)
 	rec, how := signIn("x", `{"data":{"id":"x-1","name":"Ex","username":"ex","confirmed_email":"`+ex.Email+`"}}`)
 	if _, q := redirectQuery(t, rec); q.Get("code") == "" {
@@ -165,13 +165,13 @@ func TestOrganisationAdaptersSignIn(t *testing.T) {
 		t.Errorf("X's token request authenticated as %q; want HTTP Basic with the PKCE verifier", how)
 	}
 
-	member := dbtest.User(t, tenant, tenant)
+	member := dbtest.User(t, organization, organization)
 	verified(t, member)
 	rec, _ = signIn("facebook", `{"id":"fb-1","name":"Asha","email":"`+member.Email+`"}`)
 	if _, q := redirectQuery(t, rec); q.Get("code") != "" {
 		t.Errorf("Facebook's unverified address adopted an existing account: %v", q)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, member.ID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, member.ID); n != 0 {
 		t.Errorf("%d identities linked to the existing account, want none", n)
 	}
 }

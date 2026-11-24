@@ -1,0 +1,99 @@
+post:
+  operationId: createApiKey
+  description: >-
+    Creates a long-lived API key for machine access. The plaintext key is
+    returned only once at creation and is never retrievable again, so store it
+    securely. Its name is required (422 apikey.name_required) and at most 200
+    characters (422 validation_failed on name). Callers present it as `Authorization: ApiKey <key>` and resolve to
+    actor_type `api_key`. A user_id, if sent, must be the caller's own: a key
+    can act only for the person who creates it (403 apikey.user_not_self
+    otherwise). Such a personal key works only while that person's account is
+    active: it is refused while they are suspended and once they are deleted.
+    It also does only what that person may do now: a route needs both one of
+    the key's scopes and the person's permission for it (a vault read, their
+    secret.read), so a key loses what its person loses.
+    Creating and revoking keys is audited. Send an Idempotency-Key header to
+    retry it safely: a retry with the same key and body within 24 hours gets the
+    first answer, marked Idempotent-Replayed: true; the same key with another
+    body answers 422 idempotency.key_reused, one still being processed 409
+    idempotency.in_progress, and one whose first request stopped before
+    answering 409 idempotency.outcome_unknown: check whether it took effect,
+    then retry with a new key. A credential carries only authority its creator
+    holds: every scope must be one the caller holds (a vault scope needs
+    secret.read; a machine caller, a scope of its own), or the request is
+    refused with 403 rbac.grant_exceeds_caller naming the scope.
+  summary: Create API key
+  tags:
+    - API Keys
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        example:
+          organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+          name: CI deploy bot
+          scopes:
+            - users:read
+            - audit:read
+          expires_at: "2027-01-01T00:00:00Z"
+        schema:
+          $ref: ../../components/schemas/ApiKeyCreate.yaml
+  parameters:
+    - $ref: ../../../shared/parameters/IdempotencyKey.yaml
+  responses:
+    "201":
+      description: Created; secret shown once
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+        Idempotent-Replayed:
+          $ref: ../../../shared/headers/IdempotentReplayed.yaml
+      content:
+        application/json:
+          example:
+            api_key:
+              id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
+              organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+              name: CI deploy bot
+              prefix: qk_7Qx8t
+              scopes:
+                - users:read
+                - audit:read
+              expires_at: "2027-01-01T00:00:00Z"
+              created_at: "2026-09-24T10:15:00Z"
+            secret: qk_7Qx8t3f0a1b2c3d4e5f6g7h8i9j0k1l2
+            warning: >-
+              The secret is shown only once. Store it now; it cannot be
+              retrieved again.
+          schema:
+            type: object
+            properties:
+              api_key:
+                $ref: ../../components/schemas/ApiKey.yaml
+              secret:
+                type: string
+              warning:
+                type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "409":
+      description: >-
+        A request with this Idempotency-Key is still being processed
+        (idempotency.in_progress); retry shortly. Or the first request stopped
+        before answering and may have taken effect
+        (idempotency.outcome_unknown): check, then retry with a new key.
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

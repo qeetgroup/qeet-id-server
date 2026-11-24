@@ -1,0 +1,18 @@
+type: object
+properties:
+  id:
+    type: string
+    format: uuid
+  organization_id:
+    type: string
+    format: uuid
+  identifier:
+    type: string
+    format: uri
+  name:
+    type: string
+  server_client_id:
+    type: string
+  created_at:
+    type: string
+    format: date-time

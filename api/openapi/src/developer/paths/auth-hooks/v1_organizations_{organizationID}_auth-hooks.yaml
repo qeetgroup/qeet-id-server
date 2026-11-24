@@ -1,0 +1,108 @@
+get:
+  operationId: listAuthHooks
+  description: >-
+    Lists the organization's authentication hooks — custom actions invoked at defined
+    points in auth flows.
+  summary: List auth hooks
+  tags:
+    - Auth Hooks
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Configured hooks (secrets are write-only, not returned)
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/Hook.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: createAuthHook
+  description: >-
+    Registers an authentication hook, called on every sign-in to the
+    organization once its first factor is proven, whatever the method: password,
+    passkey, social, SAML, LDAP, magic link, invitation and organization switch.
+    It may deny the sign-in (authhook.denied), and on a sign-in that returns
+    tokens its claims are added to the access token. An organization may have
+    several: every enabled hook is called, one after another, oldest first. The
+    first to deny ends the sign-in and the rest are not called; otherwise the
+    claims of all are added, a later hook's replacing an earlier one's of the
+    same name. Each hook's own fail_open decides what its silence does. A
+    sign-in to no organization asks the account's own. Hooks fail open by
+    default: a hook error does not block authentication.
+  summary: Create auth hook
+  tags:
+    - Auth Hooks
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - url
+          properties:
+            url:
+              type: string
+              format: uri
+            secret:
+              type:
+                - string
+                - "null"
+            fail_open:
+              type:
+                - boolean
+                - "null"
+              description: >-
+                What a sign-in does when the hook gives no answer: it can't be
+                read, its signing secret can't be opened, the call fails or
+                times out, or its answer can't be read. True (the default on
+                create) lets the sign-in proceed; false refuses it as
+                temporarily unavailable. Where the hook can't be read, the
+                setting last read for the organization is followed. Every such
+                skip is recorded (audit auth_hook.skipped with the reason and
+                outcome; metric auth_hook_skipped_total).
+  responses:
+    "201":
+      description: Hook created
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Hook.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

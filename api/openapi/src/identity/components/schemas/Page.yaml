@@ -1,0 +1,11 @@
+type: object
+description: Cursor-paginated list wrapper.
+properties:
+  items:
+    type: array
+    items: {}
+  next_cursor:
+    type:
+      - string
+      - "null"
+    description: Cursor for the next page; empty/absent at the end.

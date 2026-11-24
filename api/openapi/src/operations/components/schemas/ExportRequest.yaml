@@ -1,0 +1,50 @@
+type: object
+required:
+  - completed_at
+  - created_at
+  - id
+  - requested_by
+  - status
+  - organization_id
+  - user_id
+properties:
+  completed_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  created_at:
+    type: string
+    format: date-time
+  error:
+    type: string
+  id:
+    type: string
+    format: uuid
+  payload:
+    type: object
+    additionalProperties: true
+    description: >-
+      The person's data in the organization, while status is ready: profile
+      (with metadata), sessions, passkeys, roles, mfa_totp_enabled, identities
+      (linked social and single sign-on accounts), otp_factors (destinations
+      masked), app_consents, app_grants, groups, sign_ins (the latest 1000) and
+      generated_at.
+  requested_by:
+    type:
+      - string
+      - "null"
+    format: uuid
+  status:
+    type: string
+    description: >-
+      pending, ready, failed, or expired once the payload has been deleted
+      (seven days after it was built, or when the person was erased or their
+      account deleted).
+  organization_id:
+    type: string
+    format: uuid
+  user_id:
+    type: string
+    format: uuid
+    description: The account exported; kept after the account itself is deleted.

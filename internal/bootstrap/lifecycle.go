@@ -7,9 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 )
 
@@ -170,27 +171,13 @@ func gracefulShutdown(
 // recordShutdown writes a best-effort audit row summarising the stop. If the
 // database is already unhealthy it logs and the process exits cleanly anyway.
 func recordShutdown(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, r shutdownReport) {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		slog.Warn("audit shutdown begin tx", "err", err)
-		return
-	}
-	err = audit.Record(ctx, tx, audit.Event{
-		ActorType:    "system",
-		Action:       "system.shutdown",
-		ResourceType: "system",
-		Metadata: map[string]any{
-			"service":             cfg.ServiceName,
-			"env":                 cfg.ServiceEnv,
-			"duration_ms":         r.duration.Milliseconds(),
-			"in_flight_at_signal": r.inFlightAtSignal,
-			"dropped_requests":    r.dropped,
-		},
-	})
-	if err != nil {
+	if err := audit.RecordAlone(ctx, pool, audit.Actor{Type: "system"}.EventIn(nil, "system.shutdown", "system", uuid.Nil, map[string]any{
+		"service":             cfg.ServiceName,
+		"env":                 cfg.ServiceEnv,
+		"duration_ms":         r.duration.Milliseconds(),
+		"in_flight_at_signal": r.inFlightAtSignal,
+		"dropped_requests":    r.dropped,
+	})); err != nil {
 		slog.Warn("audit shutdown", "err", err)
-		_ = tx.Rollback(ctx)
-	} else if err := tx.Commit(ctx); err != nil {
-		slog.Warn("audit shutdown commit", "err", err)
 	}
 }

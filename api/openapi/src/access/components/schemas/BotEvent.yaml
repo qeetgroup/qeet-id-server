@@ -1,0 +1,38 @@
+type: object
+required:
+  - created_at
+  - id
+  - score
+  - user_agent
+  - verdict
+  - outcome
+properties:
+  user_id:
+    type: string
+    format: uuid
+    description: The account the sign-in attempt was for, when it exists.
+  user_email:
+    type: string
+  outcome:
+    type: string
+    enum:
+      - signed_in
+      - failed
+      - unknown
+    description: >-
+      How that account's next sign-in from the same address, within five
+      minutes, ended.
+  created_at:
+    type: string
+    format: date-time
+  id:
+    type: string
+    format: uuid
+  ip:
+    type: string
+  score:
+    type: number
+  user_agent:
+    type: string
+  verdict:
+    type: string

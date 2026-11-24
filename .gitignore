@@ -77,3 +77,6 @@ logs/
 
 # product-manager agent run logs (see .claude/README.md)
 .claude/logs/
+
+# Redocly CLI for the API sources (pinned in api/openapi/src/bun.lock)
+api/openapi/src/node_modules/

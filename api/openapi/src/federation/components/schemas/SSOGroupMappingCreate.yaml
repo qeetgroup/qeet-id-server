@@ -1,0 +1,13 @@
+type: object
+additionalProperties: false
+required:
+  - idp_group
+  - group_id
+properties:
+  idp_group:
+    type: string
+    minLength: 1
+    maxLength: 1024
+  group_id:
+    type: string
+    format: uuid

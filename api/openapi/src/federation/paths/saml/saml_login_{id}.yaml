@@ -1,0 +1,47 @@
+get:
+  operationId: startSamlSignIn
+  description: >-
+    Initiates SP-initiated SAML login for a specific connection, with Qeet
+    acting as the Service Provider: it builds and stores an AuthnRequest, sets
+    an HttpOnly cookie binding it to this browser, and redirects the browser to
+    the external IdP's SSO URL. The IdP returns its assertion to POST
+    /saml/acs/{id}. Only an active connection signs anyone in: a disabled one
+    answers 403 saml.connection_disabled, and a draft one, still being set up,
+    403 saml.connection_draft, here and at the ACS. Mounted at the root, not
+    under /v1, and unauthenticated. The organization's plan must include
+    enterprise SSO (402 billing.upgrade_required).
+  summary: Login redirect (public)
+  tags:
+    - SAML
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: return_to
+      in: query
+      required: false
+      description: >-
+        For a sign-in started on the hosted login, where the browser goes back
+        to once it's signed in (the application's authorize request): a path, or
+        an absolute URL on an allowed origin (400 saml.return_to_invalid
+        otherwise). The IdP's answer then returns to the hosted login's /sign-in
+        with the one-time code in the URL fragment, for POST /saml/session.
+      schema:
+        type: string
+  security: []
+  responses:
+    "302":
+      description: Redirect to the external IdP with an AuthnRequest
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "402":
+      description: >-
+        The organization's plan does not include enterprise SSO
+        (billing.upgrade_required).
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

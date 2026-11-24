@@ -29,36 +29,36 @@ func Unique(prefix string) string {
 	return prefix + "-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
 }
 
-// Tenant creates an active tenant and returns its id.
-func Tenant(t testing.TB) uuid.UUID {
+// Organization creates an active organization and returns its id.
+func Organization(t testing.TB) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	slug := Unique("org")
 	if err := Pool(t).QueryRow(context.Background(), `
-		INSERT INTO tenant.tenants (slug, name) VALUES ($1, $1) RETURNING id
+		INSERT INTO organization.organizations (slug, name) VALUES ($1, $1) RETURNING id
 	`, slug).Scan(&id); err != nil {
-		t.Fatalf("dbtest: create tenant: %v", err)
+		t.Fatalf("dbtest: create organization: %v", err)
 	}
 	return id
 }
 
-// Domain verifies a new domain for tenant and returns it, for addresses only
-// that tenant manages. Its single sign-on creates accounts there (jit_enabled);
+// Domain verifies a new domain for organization and returns it, for addresses only
+// that organization manages. Its single sign-on creates accounts there (jit_enabled);
 // SSO isn't required of it (sso_enabled is off).
-func Domain(t testing.TB, tenant uuid.UUID) string {
+func Domain(t testing.TB, organization uuid.UUID) string {
 	t.Helper()
 	domain := Unique("org") + ".example.test"
 	if _, err := Pool(t).Exec(context.Background(), `
-		INSERT INTO tenant.domains (tenant_id, domain, verification_token, verified_at, jit_enabled)
+		INSERT INTO organization.domains (organization_id, domain, verification_token, verified_at, jit_enabled)
 		VALUES ($1, $2, 'test', NOW(), TRUE)
-	`, tenant, domain); err != nil {
+	`, organization, domain); err != nil {
 		t.Fatalf("dbtest: verify domain: %v", err)
 	}
 	return domain
 }
 
-// User creates an active user whose home is tenant home (uuid.Nil: none) and
-// gives them a role in each tenant of memberOf.
+// User creates an active user whose home is organization home (uuid.Nil: none) and
+// gives them a role in each organization of memberOf.
 func User(t testing.TB, home uuid.UUID, memberOf ...uuid.UUID) Account {
 	t.Helper()
 	return UserAt(t, Unique("user")+"@example.test", home, memberOf...)
@@ -73,12 +73,12 @@ func UserAt(t testing.TB, email string, home uuid.UUID, memberOf ...uuid.UUID) A
 	}
 	a := Account{Email: email}
 	if err := Pool(t).QueryRow(context.Background(), `
-		INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id
+		INSERT INTO account.users (organization_id, email) VALUES ($1, $2) RETURNING id
 	`, homeArg, a.Email).Scan(&a.ID); err != nil {
 		t.Fatalf("dbtest: create user: %v", err)
 	}
-	for _, tenant := range memberOf {
-		Assign(t, a.ID, tenant, Role(t, tenant))
+	for _, organization := range memberOf {
+		Assign(t, a.ID, organization, Role(t, organization))
 	}
 	return a
 }
@@ -97,15 +97,15 @@ func SetPassword(t testing.TB, userID uuid.UUID, plain string) {
 	}
 }
 
-// Role creates a non-system role in tenant holding the given permission keys
+// Role creates a non-system role in organization holding the given permission keys
 // and returns its id.
-func Role(t testing.TB, tenant uuid.UUID, permissions ...string) uuid.UUID {
+func Role(t testing.TB, organization uuid.UUID, permissions ...string) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
 	var id uuid.UUID
 	if err := Pool(t).QueryRow(ctx, `
-		INSERT INTO rbac.roles (tenant_id, name) VALUES ($1, $2) RETURNING id
-	`, tenant, Unique("role")).Scan(&id); err != nil {
+		INSERT INTO rbac.roles (organization_id, name) VALUES ($1, $2) RETURNING id
+	`, organization, Unique("role")).Scan(&id); err != nil {
 		t.Fatalf("dbtest: create role: %v", err)
 	}
 	for _, key := range permissions {
@@ -122,12 +122,12 @@ func Role(t testing.TB, tenant uuid.UUID, permissions ...string) uuid.UUID {
 	return id
 }
 
-// Assign gives the user role in tenant.
-func Assign(t testing.TB, userID, tenant, role uuid.UUID) {
+// Assign gives the user role in organization.
+func Assign(t testing.TB, userID, organization, role uuid.UUID) {
 	t.Helper()
 	if _, err := Pool(t).Exec(context.Background(), `
-		INSERT INTO rbac.user_roles (user_id, tenant_id, role_id) VALUES ($1, $2, $3)
-	`, userID, tenant, role); err != nil {
+		INSERT INTO rbac.user_roles (user_id, organization_id, role_id) VALUES ($1, $2, $3)
+	`, userID, organization, role); err != nil {
 		t.Fatalf("dbtest: assign role: %v", err)
 	}
 }

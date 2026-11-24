@@ -1,0 +1,21 @@
+type: object
+required:
+  - id
+  - object
+  - relation
+  - subject
+properties:
+  id:
+    type: string
+    format: uuid
+  object:
+    type: string
+  relation:
+    type: string
+  subject:
+    type: string
+  subject_name:
+    type: string
+    description: >-
+      A user subject's person, by display name or address, when they belong to
+      the organization.

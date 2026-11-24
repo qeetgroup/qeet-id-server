@@ -10,23 +10,22 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const approveAccessRequest = `-- name: ApproveAccessRequest :exec
 UPDATE rbac.access_requests
 SET status = 'approved', decided_by = $1, decided_at = NOW(), decision_note = $2,
     granted = $3, access_ends_at = $4
-WHERE id = $5 AND tenant_id = $6 AND status = 'pending'
+WHERE id = $5 AND organization_id = $6 AND status = 'pending'
 `
 
 type ApproveAccessRequestParams struct {
-	DecidedBy    pgtype.UUID
-	DecisionNote *string
-	Granted      bool
-	AccessEndsAt pgtype.Timestamptz
-	ID           uuid.UUID
-	TenantID     uuid.UUID
+	DecidedBy      *uuid.UUID
+	DecisionNote   *string
+	Granted        bool
+	AccessEndsAt   *time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) ApproveAccessRequest(ctx context.Context, arg ApproveAccessRequestParams) error {
@@ -36,24 +35,24 @@ func (q *Queries) ApproveAccessRequest(ctx context.Context, arg ApproveAccessReq
 		arg.Granted,
 		arg.AccessEndsAt,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	return err
 }
 
 const cancelAccessRequest = `-- name: CancelAccessRequest :execrows
 UPDATE rbac.access_requests SET status = 'cancelled'
-WHERE id = $1 AND tenant_id = $2 AND requester_id = $3 AND status = 'pending'
+WHERE id = $1 AND organization_id = $2 AND requester_id = $3 AND status = 'pending'
 `
 
 type CancelAccessRequestParams struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	RequesterID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	RequesterID    uuid.UUID
 }
 
 func (q *Queries) CancelAccessRequest(ctx context.Context, arg CancelAccessRequestParams) (int64, error) {
-	result, err := q.db.Exec(ctx, cancelAccessRequest, arg.ID, arg.TenantID, arg.RequesterID)
+	result, err := q.db.Exec(ctx, cancelAccessRequest, arg.ID, arg.OrganizationID, arg.RequesterID)
 	if err != nil {
 		return 0, err
 	}
@@ -61,11 +60,11 @@ func (q *Queries) CancelAccessRequest(ctx context.Context, arg CancelAccessReque
 }
 
 const countPendingAccessRequests = `-- name: CountPendingAccessRequests :one
-SELECT COUNT(*) FROM rbac.access_requests WHERE tenant_id = $1 AND status = 'pending'
+SELECT COUNT(*) FROM rbac.access_requests WHERE organization_id = $1 AND status = 'pending'
 `
 
-func (q *Queries) CountPendingAccessRequests(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countPendingAccessRequests, tenantID)
+func (q *Queries) CountPendingAccessRequests(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countPendingAccessRequests, organizationID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -74,14 +73,14 @@ func (q *Queries) CountPendingAccessRequests(ctx context.Context, tenantID uuid.
 const denyAccessRequest = `-- name: DenyAccessRequest :exec
 UPDATE rbac.access_requests
 SET status = 'denied', decided_by = $1, decided_at = NOW(), decision_note = $2
-WHERE id = $3 AND tenant_id = $4 AND status = 'pending'
+WHERE id = $3 AND organization_id = $4 AND status = 'pending'
 `
 
 type DenyAccessRequestParams struct {
-	DecidedBy    pgtype.UUID
-	DecisionNote *string
-	ID           uuid.UUID
-	TenantID     uuid.UUID
+	DecidedBy      *uuid.UUID
+	DecisionNote   *string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DenyAccessRequest(ctx context.Context, arg DenyAccessRequestParams) error {
@@ -89,13 +88,13 @@ func (q *Queries) DenyAccessRequest(ctx context.Context, arg DenyAccessRequestPa
 		arg.DecidedBy,
 		arg.DecisionNote,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	return err
 }
 
 const endingAccess = `-- name: EndingAccess :many
-SELECT id, tenant_id, requester_id, role_id
+SELECT id, organization_id, requester_id, role_id
 FROM rbac.access_requests
 WHERE status = 'approved' AND granted AND ended_at IS NULL AND access_ends_at <= NOW()
 ORDER BY access_ends_at
@@ -103,14 +102,14 @@ LIMIT 100
 `
 
 type EndingAccessRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	RequesterID uuid.UUID
-	RoleID      uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	RequesterID    uuid.UUID
+	RoleID         uuid.UUID
 }
 
 // EndingAccess lists approved, time-limited grants whose time is up, across
-// tenants, oldest first, a batch at a time.
+// organizations, oldest first, a batch at a time.
 func (q *Queries) EndingAccess(ctx context.Context) ([]EndingAccessRow, error) {
 	rows, err := q.db.Query(ctx, endingAccess)
 	if err != nil {
@@ -122,7 +121,7 @@ func (q *Queries) EndingAccess(ctx context.Context) ([]EndingAccessRow, error) {
 		var i EndingAccessRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.RequesterID,
 			&i.RoleID,
 		); err != nil {
@@ -137,27 +136,27 @@ func (q *Queries) EndingAccess(ctx context.Context) ([]EndingAccessRow, error) {
 }
 
 const getAccessRequest = `-- name: GetAccessRequest :one
-SELECT ar.id, ar.tenant_id, ar.requester_id, ar.role_id, ar.reason, ar.duration_hours, ar.status,
+SELECT ar.id, ar.organization_id, ar.requester_id, ar.role_id, ar.reason, ar.duration_hours, ar.status,
        ar.created_at, ar.expires_at, ar.decided_by, ar.decided_at, ar.decision_note, ar.granted,
        ar.access_ends_at, ar.ended_at,
        ro.name AS role_name, ro.description AS role_description,
        COALESCE(u.email, '') AS requester_email, COALESCE(u.display_name, '') AS requester_name,
        COALESCE(d.email, '') AS decider_email, COALESCE(d.display_name, '') AS decider_name
 FROM rbac.access_requests ar
-JOIN rbac.roles ro ON ro.id = ar.role_id AND ro.tenant_id = ar.tenant_id
-LEFT JOIN "user".users u ON u.id = ar.requester_id
-LEFT JOIN "user".users d ON d.id = ar.decided_by
-WHERE ar.id = $1 AND ar.tenant_id = $2
+JOIN rbac.roles ro ON ro.id = ar.role_id AND ro.organization_id = ar.organization_id
+LEFT JOIN account.users u ON u.id = ar.requester_id
+LEFT JOIN account.users d ON d.id = ar.decided_by
+WHERE ar.id = $1 AND ar.organization_id = $2
 `
 
 type GetAccessRequestParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type GetAccessRequestRow struct {
 	ID              uuid.UUID
-	TenantID        uuid.UUID
+	OrganizationID  uuid.UUID
 	RequesterID     uuid.UUID
 	RoleID          uuid.UUID
 	Reason          string
@@ -165,12 +164,12 @@ type GetAccessRequestRow struct {
 	Status          string
 	CreatedAt       time.Time
 	ExpiresAt       time.Time
-	DecidedBy       pgtype.UUID
-	DecidedAt       pgtype.Timestamptz
+	DecidedBy       *uuid.UUID
+	DecidedAt       *time.Time
 	DecisionNote    *string
 	Granted         bool
-	AccessEndsAt    pgtype.Timestamptz
-	EndedAt         pgtype.Timestamptz
+	AccessEndsAt    *time.Time
+	EndedAt         *time.Time
 	RoleName        string
 	RoleDescription string
 	RequesterEmail  string
@@ -180,11 +179,11 @@ type GetAccessRequestRow struct {
 }
 
 func (q *Queries) GetAccessRequest(ctx context.Context, arg GetAccessRequestParams) (GetAccessRequestRow, error) {
-	row := q.db.QueryRow(ctx, getAccessRequest, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getAccessRequest, arg.ID, arg.OrganizationID)
 	var i GetAccessRequestRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.RequesterID,
 		&i.RoleID,
 		&i.Reason,
@@ -211,19 +210,19 @@ func (q *Queries) GetAccessRequest(ctx context.Context, arg GetAccessRequestPara
 const holdsRole = `-- name: HoldsRole :one
 SELECT EXISTS (
     SELECT 1 FROM rbac.user_roles
-    WHERE user_id = $1 AND tenant_id = $2 AND role_id = $3
+    WHERE user_id = $1 AND organization_id = $2 AND role_id = $3
 )::boolean AS held
 `
 
 type HoldsRoleParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
-	RoleID   uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	RoleID         uuid.UUID
 }
 
 // HoldsRole: the person holds the role directly (not through a group).
 func (q *Queries) HoldsRole(ctx context.Context, arg HoldsRoleParams) (bool, error) {
-	row := q.db.QueryRow(ctx, holdsRole, arg.UserID, arg.TenantID, arg.RoleID)
+	row := q.db.QueryRow(ctx, holdsRole, arg.UserID, arg.OrganizationID, arg.RoleID)
 	var held bool
 	err := row.Scan(&held)
 	return held, err
@@ -231,25 +230,25 @@ func (q *Queries) HoldsRole(ctx context.Context, arg HoldsRoleParams) (bool, err
 
 const insertAccessRequest = `-- name: InsertAccessRequest :one
 
-INSERT INTO rbac.access_requests (tenant_id, requester_id, role_id, reason, duration_hours, expires_at)
+INSERT INTO rbac.access_requests (organization_id, requester_id, role_id, reason, duration_hours, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id
 `
 
 type InsertAccessRequestParams struct {
-	TenantID      uuid.UUID
-	RequesterID   uuid.UUID
-	RoleID        uuid.UUID
-	Reason        string
-	DurationHours *int32
-	ExpiresAt     time.Time
+	OrganizationID uuid.UUID
+	RequesterID    uuid.UUID
+	RoleID         uuid.UUID
+	Reason         string
+	DurationHours  *int32
+	ExpiresAt      time.Time
 }
 
-// Access requests: a person asking their organisation for a role, and an
-// administrator's answer. Every query names its tenant.
+// Access requests: a person asking their organization for a role, and an
+// administrator's answer. Every query names its organization.
 func (q *Queries) InsertAccessRequest(ctx context.Context, arg InsertAccessRequestParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertAccessRequest,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.RequesterID,
 		arg.RoleID,
 		arg.Reason,
@@ -264,18 +263,18 @@ func (q *Queries) InsertAccessRequest(ctx context.Context, arg InsertAccessReque
 const lapsePendingAccessRequests = `-- name: LapsePendingAccessRequests :many
 UPDATE rbac.access_requests SET status = 'expired'
 WHERE status = 'pending' AND expires_at <= NOW()
-RETURNING id, tenant_id, requester_id, role_id
+RETURNING id, organization_id, requester_id, role_id
 `
 
 type LapsePendingAccessRequestsRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	RequesterID uuid.UUID
-	RoleID      uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	RequesterID    uuid.UUID
+	RoleID         uuid.UUID
 }
 
 // LapsePendingAccessRequests ends requests nobody answered in time, across
-// tenants (the maintenance job), returning them to tell their requesters.
+// organizations (the maintenance job), returning them to tell their requesters.
 func (q *Queries) LapsePendingAccessRequests(ctx context.Context) ([]LapsePendingAccessRequestsRow, error) {
 	rows, err := q.db.Query(ctx, lapsePendingAccessRequests)
 	if err != nil {
@@ -287,7 +286,7 @@ func (q *Queries) LapsePendingAccessRequests(ctx context.Context) ([]LapsePendin
 		var i LapsePendingAccessRequestsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.RequesterID,
 			&i.RoleID,
 		); err != nil {
@@ -302,31 +301,31 @@ func (q *Queries) LapsePendingAccessRequests(ctx context.Context) ([]LapsePendin
 }
 
 const listAccessRequests = `-- name: ListAccessRequests :many
-SELECT ar.id, ar.tenant_id, ar.requester_id, ar.role_id, ar.reason, ar.duration_hours, ar.status,
+SELECT ar.id, ar.organization_id, ar.requester_id, ar.role_id, ar.reason, ar.duration_hours, ar.status,
        ar.created_at, ar.expires_at, ar.decided_by, ar.decided_at, ar.decision_note, ar.granted,
        ar.access_ends_at, ar.ended_at,
        ro.name AS role_name, ro.description AS role_description,
        COALESCE(u.email, '') AS requester_email, COALESCE(u.display_name, '') AS requester_name,
        COALESCE(d.email, '') AS decider_email, COALESCE(d.display_name, '') AS decider_name
 FROM rbac.access_requests ar
-JOIN rbac.roles ro ON ro.id = ar.role_id AND ro.tenant_id = ar.tenant_id
-LEFT JOIN "user".users u ON u.id = ar.requester_id
-LEFT JOIN "user".users d ON d.id = ar.decided_by
-WHERE ar.tenant_id = $1
+JOIN rbac.roles ro ON ro.id = ar.role_id AND ro.organization_id = ar.organization_id
+LEFT JOIN account.users u ON u.id = ar.requester_id
+LEFT JOIN account.users d ON d.id = ar.decided_by
+WHERE ar.organization_id = $1
   AND ($2::text IS NULL OR ar.status = $2::text)
 ORDER BY ar.created_at DESC, ar.id DESC
 LIMIT $3
 `
 
 type ListAccessRequestsParams struct {
-	TenantID uuid.UUID
-	Status   *string
-	RowLimit int32
+	OrganizationID uuid.UUID
+	Status         *string
+	RowLimit       int32
 }
 
 type ListAccessRequestsRow struct {
 	ID              uuid.UUID
-	TenantID        uuid.UUID
+	OrganizationID  uuid.UUID
 	RequesterID     uuid.UUID
 	RoleID          uuid.UUID
 	Reason          string
@@ -334,12 +333,12 @@ type ListAccessRequestsRow struct {
 	Status          string
 	CreatedAt       time.Time
 	ExpiresAt       time.Time
-	DecidedBy       pgtype.UUID
-	DecidedAt       pgtype.Timestamptz
+	DecidedBy       *uuid.UUID
+	DecidedAt       *time.Time
 	DecisionNote    *string
 	Granted         bool
-	AccessEndsAt    pgtype.Timestamptz
-	EndedAt         pgtype.Timestamptz
+	AccessEndsAt    *time.Time
+	EndedAt         *time.Time
 	RoleName        string
 	RoleDescription string
 	RequesterEmail  string
@@ -348,10 +347,10 @@ type ListAccessRequestsRow struct {
 	DeciderName     string
 }
 
-// ListAccessRequests lists the tenant's requests, newest first, optionally of
+// ListAccessRequests lists the organization's requests, newest first, optionally of
 // one status.
 func (q *Queries) ListAccessRequests(ctx context.Context, arg ListAccessRequestsParams) ([]ListAccessRequestsRow, error) {
-	rows, err := q.db.Query(ctx, listAccessRequests, arg.TenantID, arg.Status, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listAccessRequests, arg.OrganizationID, arg.Status, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +360,7 @@ func (q *Queries) ListAccessRequests(ctx context.Context, arg ListAccessRequests
 		var i ListAccessRequestsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.RequesterID,
 			&i.RoleID,
 			&i.Reason,
@@ -393,29 +392,29 @@ func (q *Queries) ListAccessRequests(ctx context.Context, arg ListAccessRequests
 }
 
 const listMyAccessRequests = `-- name: ListMyAccessRequests :many
-SELECT ar.id, ar.tenant_id, ar.requester_id, ar.role_id, ar.reason, ar.duration_hours, ar.status,
+SELECT ar.id, ar.organization_id, ar.requester_id, ar.role_id, ar.reason, ar.duration_hours, ar.status,
        ar.created_at, ar.expires_at, ar.decided_by, ar.decided_at, ar.decision_note, ar.granted,
        ar.access_ends_at, ar.ended_at,
        ro.name AS role_name, ro.description AS role_description,
        COALESCE(u.email, '') AS requester_email, COALESCE(u.display_name, '') AS requester_name,
        COALESCE(d.email, '') AS decider_email, COALESCE(d.display_name, '') AS decider_name
 FROM rbac.access_requests ar
-JOIN rbac.roles ro ON ro.id = ar.role_id AND ro.tenant_id = ar.tenant_id
-LEFT JOIN "user".users u ON u.id = ar.requester_id
-LEFT JOIN "user".users d ON d.id = ar.decided_by
-WHERE ar.tenant_id = $1 AND ar.requester_id = $2
+JOIN rbac.roles ro ON ro.id = ar.role_id AND ro.organization_id = ar.organization_id
+LEFT JOIN account.users u ON u.id = ar.requester_id
+LEFT JOIN account.users d ON d.id = ar.decided_by
+WHERE ar.organization_id = $1 AND ar.requester_id = $2
 ORDER BY ar.created_at DESC, ar.id DESC
 LIMIT 100
 `
 
 type ListMyAccessRequestsParams struct {
-	TenantID    uuid.UUID
-	RequesterID uuid.UUID
+	OrganizationID uuid.UUID
+	RequesterID    uuid.UUID
 }
 
 type ListMyAccessRequestsRow struct {
 	ID              uuid.UUID
-	TenantID        uuid.UUID
+	OrganizationID  uuid.UUID
 	RequesterID     uuid.UUID
 	RoleID          uuid.UUID
 	Reason          string
@@ -423,12 +422,12 @@ type ListMyAccessRequestsRow struct {
 	Status          string
 	CreatedAt       time.Time
 	ExpiresAt       time.Time
-	DecidedBy       pgtype.UUID
-	DecidedAt       pgtype.Timestamptz
+	DecidedBy       *uuid.UUID
+	DecidedAt       *time.Time
 	DecisionNote    *string
 	Granted         bool
-	AccessEndsAt    pgtype.Timestamptz
-	EndedAt         pgtype.Timestamptz
+	AccessEndsAt    *time.Time
+	EndedAt         *time.Time
 	RoleName        string
 	RoleDescription string
 	RequesterEmail  string
@@ -438,7 +437,7 @@ type ListMyAccessRequestsRow struct {
 }
 
 func (q *Queries) ListMyAccessRequests(ctx context.Context, arg ListMyAccessRequestsParams) ([]ListMyAccessRequestsRow, error) {
-	rows, err := q.db.Query(ctx, listMyAccessRequests, arg.TenantID, arg.RequesterID)
+	rows, err := q.db.Query(ctx, listMyAccessRequests, arg.OrganizationID, arg.RequesterID)
 	if err != nil {
 		return nil, err
 	}
@@ -448,7 +447,7 @@ func (q *Queries) ListMyAccessRequests(ctx context.Context, arg ListMyAccessRequ
 		var i ListMyAccessRequestsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.RequesterID,
 			&i.RoleID,
 			&i.Reason,
@@ -483,16 +482,16 @@ const listRequestableRoles = `-- name: ListRequestableRoles :many
 SELECT ro.id, ro.name, ro.description,
        EXISTS (
            SELECT 1 FROM rbac.user_roles ur
-           WHERE ur.user_id = $1 AND ur.tenant_id = ro.tenant_id AND ur.role_id = ro.id
+           WHERE ur.user_id = $1 AND ur.organization_id = ro.organization_id AND ur.role_id = ro.id
        )::boolean AS held
 FROM rbac.roles ro
-WHERE ro.tenant_id = $2 AND NOT (ro.is_system AND ro.name = 'owner')
+WHERE ro.organization_id = $2 AND NOT (ro.is_system AND ro.name = 'owner')
 ORDER BY ro.is_system DESC, LOWER(ro.name)
 `
 
 type ListRequestableRolesParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type ListRequestableRolesRow struct {
@@ -503,7 +502,7 @@ type ListRequestableRolesRow struct {
 }
 
 func (q *Queries) ListRequestableRoles(ctx context.Context, arg ListRequestableRolesParams) ([]ListRequestableRolesRow, error) {
-	rows, err := q.db.Query(ctx, listRequestableRoles, arg.UserID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listRequestableRoles, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -530,13 +529,13 @@ func (q *Queries) ListRequestableRoles(ctx context.Context, arg ListRequestableR
 const lockPendingAccessRequest = `-- name: LockPendingAccessRequest :one
 SELECT id, requester_id, role_id, duration_hours, expires_at
 FROM rbac.access_requests
-WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+WHERE id = $1 AND organization_id = $2 AND status = 'pending'
 FOR UPDATE
 `
 
 type LockPendingAccessRequestParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type LockPendingAccessRequestRow struct {
@@ -548,7 +547,7 @@ type LockPendingAccessRequestRow struct {
 }
 
 func (q *Queries) LockPendingAccessRequest(ctx context.Context, arg LockPendingAccessRequestParams) (LockPendingAccessRequestRow, error) {
-	row := q.db.QueryRow(ctx, lockPendingAccessRequest, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, lockPendingAccessRequest, arg.ID, arg.OrganizationID)
 	var i LockPendingAccessRequestRow
 	err := row.Scan(
 		&i.ID,
@@ -562,28 +561,28 @@ func (q *Queries) LockPendingAccessRequest(ctx context.Context, arg LockPendingA
 
 const markAccessEnded = `-- name: MarkAccessEnded :exec
 UPDATE rbac.access_requests SET ended_at = NOW()
-WHERE id = $1 AND tenant_id = $2 AND ended_at IS NULL
+WHERE id = $1 AND organization_id = $2 AND ended_at IS NULL
 `
 
 type MarkAccessEndedParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) MarkAccessEnded(ctx context.Context, arg MarkAccessEndedParams) error {
-	_, err := q.db.Exec(ctx, markAccessEnded, arg.ID, arg.TenantID)
+	_, err := q.db.Exec(ctx, markAccessEnded, arg.ID, arg.OrganizationID)
 	return err
 }
 
 const requestableRole = `-- name: RequestableRole :one
 SELECT ro.id, ro.name, ro.description
 FROM rbac.roles ro
-WHERE ro.id = $1 AND ro.tenant_id = $2 AND NOT (ro.is_system AND ro.name = 'owner')
+WHERE ro.id = $1 AND ro.organization_id = $2 AND NOT (ro.is_system AND ro.name = 'owner')
 `
 
 type RequestableRoleParams struct {
-	RoleID   uuid.UUID
-	TenantID uuid.UUID
+	RoleID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type RequestableRoleRow struct {
@@ -592,10 +591,10 @@ type RequestableRoleRow struct {
 	Description string
 }
 
-// RequestableRole is a role of the tenant a person may ask for: any but the
+// RequestableRole is a role of the organization a person may ask for: any but the
 // system owner role.
 func (q *Queries) RequestableRole(ctx context.Context, arg RequestableRoleParams) (RequestableRoleRow, error) {
-	row := q.db.QueryRow(ctx, requestableRole, arg.RoleID, arg.TenantID)
+	row := q.db.QueryRow(ctx, requestableRole, arg.RoleID, arg.OrganizationID)
 	var i RequestableRoleRow
 	err := row.Scan(&i.ID, &i.Name, &i.Description)
 	return i, err

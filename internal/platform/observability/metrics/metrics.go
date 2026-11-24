@@ -60,9 +60,21 @@ func Middleware(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK // handler wrote body without an explicit WriteHeader
 		}
-		reqDuration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
-		reqTotal.WithLabelValues(r.Method, route, strconv.Itoa(status)).Inc()
+		method := methodLabel(r.Method)
+		reqDuration.WithLabelValues(method, route).Observe(time.Since(start).Seconds())
+		reqTotal.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
 	})
+}
+
+// methodLabel is method as a bounded label: a standard HTTP method, or "other" for any word a
+// client makes up, so requests can't add series without limit.
+func methodLabel(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodDelete, http.MethodOptions, http.MethodConnect, http.MethodTrace:
+		return method
+	}
+	return "other"
 }
 
 // Handler serves the Prometheus exposition format for scraping. Restrict it to

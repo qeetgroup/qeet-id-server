@@ -9,7 +9,7 @@ import (
 func TestNoStoreMarksListedRoutesOnly(t *testing.T) {
 	h := NoStore([]string{
 		"POST /v1/oauth/token",
-		"POST /v1/tenants/{tenantID}/clients/{id}/rotate-secret",
+		"POST /v1/organizations/{organizationID}/clients/{id}/rotate-secret",
 	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -18,10 +18,10 @@ func TestNoStoreMarksListedRoutesOnly(t *testing.T) {
 		want         bool
 	}{
 		{http.MethodPost, "/v1/oauth/token", true},
-		{http.MethodPost, "/v1/tenants/t-1/clients/c-1/rotate-secret", true},
+		{http.MethodPost, "/v1/organizations/t-1/clients/c-1/rotate-secret", true},
 		{http.MethodGet, "/v1/oauth/token", false},
 		{http.MethodPost, "/v1/oauth/token/extra", false},
-		{http.MethodPost, "/v1/tenants/t-1/clients", false},
+		{http.MethodPost, "/v1/organizations/t-1/clients", false},
 	} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))

@@ -1,0 +1,156 @@
+get:
+  operationId: listActivity
+  summary: Activity history
+  description: >-
+    Returns a cursor-paginated list of ActivityEvent derived from the
+    organization-scoped audit log, with total, how many match (counted up to 10,000;
+    total_capped says when there are more). Every filter, severity and category
+    included, is applied in the query, so every page but the last is full. An
+    unknown severity or category, or a malformed resource_id or ip, is refused
+    with 400. Organization is derived from the JWT principal only — never from URL or
+    body.
+  tags:
+    - Activity
+  parameters:
+    - name: cursor
+      in: query
+      required: false
+      description: >-
+        Opaque pagination cursor from a previous response next_cursor field.
+        Encodes the time and ID of the last event that page returned.
+      schema:
+        type: string
+    - name: limit
+      in: query
+      required: false
+      description: Page size, 1 to 200 (default 50). A larger value is lowered to 200; a smaller or malformed one gets the default.
+      schema:
+        type: integer
+        default: 50
+    - name: types
+      in: query
+      required: false
+      description: >-
+        Comma-separated list of exact event types (audit action values, e.g.
+        "user.created,user.deleted"). Omit to return all types.
+      schema:
+        type: string
+        example: user.created,user.deleted
+    - name: severity
+      in: query
+      required: false
+      description: >-
+        Comma-separated severities (info, success, warning, error, critical);
+        events of any of them. Severity is derived from the event type, not
+        stored. For a minimum, use min_severity.
+      schema:
+        type: string
+        pattern: "^(info|success|warning|error|critical)(,(info|success|warning|error|critical))*$"
+    - name: min_severity
+      in: query
+      required: false
+      description: Events of at least this severity.
+      schema:
+        type: string
+        enum: [info, success, warning, error, critical]
+    - name: category
+      in: query
+      required: false
+      description: >-
+        Comma-separated categories (authentication, authorization, security,
+        directory, developer, system); events of any of them. Derived from the
+        event type prefix.
+      schema:
+        type: string
+        pattern: "^(authentication|authorization|security|directory|developer|system)(,(authentication|authorization|security|directory|developer|system))*$"
+    - name: resource_type
+      in: query
+      required: false
+      description: Comma-separated resource types; events about any of them.
+      schema:
+        type: string
+    - name: resource_id
+      in: query
+      required: false
+      description: Events about this resource.
+      schema:
+        type: string
+        format: uuid
+    - name: ip
+      in: query
+      required: false
+      description: Events from this address.
+      schema:
+        type: string
+        anyOf:
+          - format: ipv4
+          - format: ipv6
+    - name: actor
+      in: query
+      required: false
+      description: Filter by actor user UUID.
+      schema:
+        type: string
+        format: uuid
+    - name: subject
+      in: query
+      required: false
+      description: >-
+        Identity timeline filter. When set, returns every event where the given
+        user UUID is the actor, the target of a 'user' resource event, or the
+        person another resource's event names in metadata.user_id (such as being
+        added to or removed from a group). Omit to return events for all
+        subjects.
+      schema:
+        type: string
+        format: uuid
+    - name: q
+      in: query
+      required: false
+      description: >-
+        Finds words of the action, resource type, actor type, user agent,
+        address and metadata, each split into words (auth.login_succeeded is
+        auth, login and succeeded), every plain word as a prefix; or the events
+        of an actor whose name contains it or whose email begins with it.
+        "Quoted phrases", -exclusions and OR are read as websearch_to_tsquery
+        reads them.
+      schema:
+        type: string
+    - name: from
+      in: query
+      required: false
+      description: Inclusive lower bound on event timestamp (RFC3339).
+      schema:
+        type: string
+        anyOf:
+          - format: date-time
+          - maxLength: 0
+        description: An RFC 3339 time; empty means none.
+    - name: to
+      in: query
+      required: false
+      description: Inclusive upper bound on event timestamp (RFC3339).
+      schema:
+        type: string
+        anyOf:
+          - format: date-time
+          - maxLength: 0
+        description: An RFC 3339 time; empty means none.
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Paginated activity events
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/ActivityResponse.yaml
+    "400":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

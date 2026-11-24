@@ -14,10 +14,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Checker decides whether a user holds a permission in a tenant. *Repository
+// Checker decides whether a user holds a permission in an organization. *Repository
 // and decide.Decider satisfy it.
 type Checker interface {
-	Check(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (bool, error)
+	Check(ctx context.Context, userID, organizationID uuid.UUID, permKey string) (bool, error)
 }
 
 type compiledRoute struct {
@@ -186,13 +186,13 @@ func ruling(ctx context.Context, c Checker, p *httpx.Principal, policy RoutePoli
 			if policy.ApplicationScope != "" {
 				challenge += `, scope="` + policy.ApplicationScope + `"`
 			}
-			return errs.ErrAuthInsufficientScope.WithDetail("this request needs the " + policy.ApplicationScope + " scope"), challenge, nil
+			return ErrAuthInsufficientScope.WithDetail("this request needs the " + policy.ApplicationScope + " scope"), challenge, nil
 		}
 		if policy.UserPermission != "" {
-			if p.TenantID == nil {
-				return errs.ErrForbidden.WithDetail("tenant scope required"), "", nil
+			if p.OrganizationID == nil {
+				return errs.ErrForbidden.WithDetail("organization scope required"), "", nil
 			}
-			allowed, err := c.Check(ctx, *p.UserID, *p.TenantID, policy.UserPermission)
+			allowed, err := c.Check(ctx, *p.UserID, *p.OrganizationID, policy.UserPermission)
 			if err != nil {
 				return nil, "", err
 			}
@@ -203,6 +203,12 @@ func ruling(ctx context.Context, c Checker, p *httpx.Principal, policy RoutePoli
 	case "api_key":
 		if !policy.AllowAPIKey || !machineScopeAllowed(p, policy) {
 			return errs.ErrRBACPermissionDenied, "", nil
+		}
+		if p.UserID != nil {
+			held, err := personHoldsKeyScope(ctx, c, p, policy)
+			if err != nil || !held {
+				return errs.ErrRBACPermissionDenied, "", err
+			}
 		}
 	case "service", "service_principal":
 		if !policy.AllowService || !machineScopeAllowed(p, policy) {
@@ -216,6 +222,29 @@ func ruling(ctx context.Context, c Checker, p *httpx.Principal, policy RoutePoli
 		return errs.ErrRBACPermissionDenied, "", nil
 	}
 	return nil, "", nil
+}
+
+// personHoldsKeyScope reports whether the person a personal key acts for
+// still holds a permission the key carries for the route, so the key does only
+// what both its scopes and their permissions now allow. A route whose handler
+// checks a vault scope needs their secret.read.
+func personHoldsKeyScope(ctx context.Context, c Checker, p *httpx.Principal, policy RoutePolicy) (bool, error) {
+	if p.OrganizationID == nil {
+		return false, nil
+	}
+	wants := policy.MachineScopes
+	if policy.HandlerAuthorizedMachine {
+		wants = []string{"secret.read"}
+	}
+	for _, want := range wants {
+		if !policy.HandlerAuthorizedMachine && !slices.Contains(p.Scopes, want) {
+			continue
+		}
+		if held, err := c.Check(ctx, *p.UserID, *p.OrganizationID, want); err != nil || held {
+			return held, err
+		}
+	}
+	return false, nil
 }
 
 func machineScopeAllowed(p *httpx.Principal, policy RoutePolicy) bool {

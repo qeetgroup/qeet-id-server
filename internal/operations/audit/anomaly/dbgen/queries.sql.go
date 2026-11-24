@@ -10,19 +10,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getActorBaseline = `-- name: GetActorBaseline :one
 SELECT event_count, actions, hours, ips
 FROM audit.actor_baselines
-WHERE tenant_id = $1 AND actor_user_id = $2
+WHERE organization_id = $1 AND actor_user_id = $2
 FOR UPDATE
 `
 
 type GetActorBaselineParams struct {
-	TenantID    uuid.UUID
-	ActorUserID uuid.UUID
+	OrganizationID uuid.UUID
+	ActorUserID    uuid.UUID
 }
 
 type GetActorBaselineRow struct {
@@ -32,11 +31,11 @@ type GetActorBaselineRow struct {
 	Ips        []byte
 }
 
-// Read the rolling counter baseline for one (tenant, actor) pair inside the
+// Read the rolling counter baseline for one (organization, actor) pair inside the
 // caller's transaction.  FOR UPDATE serialises concurrent sweeps on the same
 // actor so the fold step is applied exactly once per event.
 func (q *Queries) GetActorBaseline(ctx context.Context, arg GetActorBaselineParams) (GetActorBaselineRow, error) {
-	row := q.db.QueryRow(ctx, getActorBaseline, arg.TenantID, arg.ActorUserID)
+	row := q.db.QueryRow(ctx, getActorBaseline, arg.OrganizationID, arg.ActorUserID)
 	var i GetActorBaselineRow
 	err := row.Scan(
 		&i.EventCount,
@@ -50,7 +49,7 @@ func (q *Queries) GetActorBaseline(ctx context.Context, arg GetActorBaselinePara
 const getAnomalySettings = `-- name: GetAnomalySettings :one
 
 SELECT enabled, score_threshold, min_baseline_events
-FROM audit.anomaly_settings WHERE tenant_id = $1
+FROM audit.anomaly_settings WHERE organization_id = $1
 `
 
 type GetAnomalySettingsRow struct {
@@ -65,10 +64,10 @@ type GetAnomalySettingsRow struct {
 // (with/without status filter) following the sqlc idiomatic pattern used
 // throughout the codebase for optional filters, rather than building the
 // WHERE clause dynamically in Go.
-// Load per-tenant anomaly detection settings; returns ErrNoRows when no row
+// Load per-organization anomaly detection settings; returns ErrNoRows when no row
 // exists (the service falls back to package-level defaults in that case).
-func (q *Queries) GetAnomalySettings(ctx context.Context, tenantID uuid.UUID) (GetAnomalySettingsRow, error) {
-	row := q.db.QueryRow(ctx, getAnomalySettings, tenantID)
+func (q *Queries) GetAnomalySettings(ctx context.Context, organizationID uuid.UUID) (GetAnomalySettingsRow, error) {
+	row := q.db.QueryRow(ctx, getAnomalySettings, organizationID)
 	var i GetAnomalySettingsRow
 	err := row.Scan(&i.Enabled, &i.ScoreThreshold, &i.MinBaselineEvents)
 	return i, err
@@ -79,7 +78,7 @@ SELECT
     count(*) FILTER (WHERE status = 'open')                                          AS open_count,
     count(*) FILTER (WHERE status = 'resolved' AND resolved_at > NOW() - INTERVAL '7 days') AS resolved_7d,
     count(*) FILTER (WHERE status = 'open' AND score >= 0.85)                        AS high_score
-FROM audit.anomalies WHERE tenant_id = $1
+FROM audit.anomalies WHERE organization_id = $1
 `
 
 type GetAnomalySummaryRow struct {
@@ -89,33 +88,33 @@ type GetAnomalySummaryRow struct {
 }
 
 // Count open, recently-resolved, and high-score open anomalies for the
-// tenant in a single pass (dashboard KPI cards).
-func (q *Queries) GetAnomalySummary(ctx context.Context, tenantID uuid.UUID) (GetAnomalySummaryRow, error) {
-	row := q.db.QueryRow(ctx, getAnomalySummary, tenantID)
+// organization in a single pass (dashboard KPI cards).
+func (q *Queries) GetAnomalySummary(ctx context.Context, organizationID uuid.UUID) (GetAnomalySummaryRow, error) {
+	row := q.db.QueryRow(ctx, getAnomalySummary, organizationID)
 	var i GetAnomalySummaryRow
 	err := row.Scan(&i.OpenCount, &i.Resolved7d, &i.HighScore)
 	return i, err
 }
 
 const insertAnomaly = `-- name: InsertAnomaly :exec
-INSERT INTO audit.anomalies (tenant_id, event_id, actor_user_id, score, reasons)
+INSERT INTO audit.anomalies (organization_id, event_id, actor_user_id, score, reasons)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (event_id) DO NOTHING
 `
 
 type InsertAnomalyParams struct {
-	TenantID    uuid.UUID
-	EventID     uuid.UUID
-	ActorUserID pgtype.UUID
-	Score       float64
-	Reasons     []string
+	OrganizationID uuid.UUID
+	EventID        uuid.UUID
+	ActorUserID    *uuid.UUID
+	Score          float64
+	Reasons        []string
 }
 
 // Persist a scored deviation for admin review.  ON CONFLICT DO NOTHING is
 // idempotent so a sweep retry can never create duplicate anomaly rows.
 func (q *Queries) InsertAnomaly(ctx context.Context, arg InsertAnomalyParams) error {
 	_, err := q.db.Exec(ctx, insertAnomaly,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.EventID,
 		arg.ActorUserID,
 		arg.Score,
@@ -126,43 +125,56 @@ func (q *Queries) InsertAnomaly(ctx context.Context, arg InsertAnomalyParams) er
 
 const listAnomalies = `-- name: ListAnomalies :many
 SELECT
-    a.id, a.tenant_id, a.event_id, a.actor_user_id, u.email,
+    a.id, a.organization_id, a.event_id, a.actor_user_id, u.email,
     a.score, a.reasons, a.status, a.resolved_at, a.resolved_by, a.created_at,
     e.action, e.resource_type, COALESCE(host(e.ip), '') AS ip, e.created_at AS event_at
 FROM audit.anomalies a
 JOIN audit.events e ON e.id = a.event_id
-LEFT JOIN "user".users u ON u.id = a.actor_user_id
-WHERE a.tenant_id = $1
-ORDER BY a.created_at DESC
-LIMIT $2
+LEFT JOIN account.users u ON u.id = a.actor_user_id
+WHERE a.organization_id = $1
+  AND ($2::text IS NULL OR a.status = $2)
+  AND ($3::timestamptz IS NULL OR a.created_at < $3
+       OR (a.created_at = $3 AND a.id < $4::uuid))
+ORDER BY a.created_at DESC, a.id DESC
+LIMIT $5
 `
 
 type ListAnomaliesParams struct {
-	TenantID uuid.UUID
-	RowLimit int32
+	OrganizationID uuid.UUID
+	Status         *string
+	BeforeTs       *time.Time
+	BeforeID       *uuid.UUID
+	RowLimit       int32
 }
 
 type ListAnomaliesRow struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	EventID      uuid.UUID
-	ActorUserID  pgtype.UUID
-	Email        *string
-	Score        float64
-	Reasons      []string
-	Status       string
-	ResolvedAt   pgtype.Timestamptz
-	ResolvedBy   pgtype.UUID
-	CreatedAt    time.Time
-	Action       string
-	ResourceType string
-	Ip           interface{}
-	EventAt      time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	EventID        uuid.UUID
+	ActorUserID    *uuid.UUID
+	Email          *string
+	Score          float64
+	Reasons        []string
+	Status         string
+	ResolvedAt     *time.Time
+	ResolvedBy     *uuid.UUID
+	CreatedAt      time.Time
+	Action         string
+	ResourceType   string
+	Ip             interface{}
+	EventAt        time.Time
 }
 
-// List all anomalies (open and resolved) for a tenant, most recent first.
+// List an organization's anomalies, most recent first: those with status, or
+// all of them when it is NULL.
 func (q *Queries) ListAnomalies(ctx context.Context, arg ListAnomaliesParams) ([]ListAnomaliesRow, error) {
-	rows, err := q.db.Query(ctx, listAnomalies, arg.TenantID, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listAnomalies,
+		arg.OrganizationID,
+		arg.Status,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -172,81 +184,7 @@ func (q *Queries) ListAnomalies(ctx context.Context, arg ListAnomaliesParams) ([
 		var i ListAnomaliesRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
-			&i.EventID,
-			&i.ActorUserID,
-			&i.Email,
-			&i.Score,
-			&i.Reasons,
-			&i.Status,
-			&i.ResolvedAt,
-			&i.ResolvedBy,
-			&i.CreatedAt,
-			&i.Action,
-			&i.ResourceType,
-			&i.Ip,
-			&i.EventAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listAnomaliesFiltered = `-- name: ListAnomaliesFiltered :many
-SELECT
-    a.id, a.tenant_id, a.event_id, a.actor_user_id, u.email,
-    a.score, a.reasons, a.status, a.resolved_at, a.resolved_by, a.created_at,
-    e.action, e.resource_type, COALESCE(host(e.ip), '') AS ip, e.created_at AS event_at
-FROM audit.anomalies a
-JOIN audit.events e ON e.id = a.event_id
-LEFT JOIN "user".users u ON u.id = a.actor_user_id
-WHERE a.tenant_id = $1 AND a.status = $2
-ORDER BY a.created_at DESC
-LIMIT $3
-`
-
-type ListAnomaliesFilteredParams struct {
-	TenantID uuid.UUID
-	Status   string
-	RowLimit int32
-}
-
-type ListAnomaliesFilteredRow struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	EventID      uuid.UUID
-	ActorUserID  pgtype.UUID
-	Email        *string
-	Score        float64
-	Reasons      []string
-	Status       string
-	ResolvedAt   pgtype.Timestamptz
-	ResolvedBy   pgtype.UUID
-	CreatedAt    time.Time
-	Action       string
-	ResourceType string
-	Ip           interface{}
-	EventAt      time.Time
-}
-
-// List anomalies for a tenant filtered by status, most recent first.
-func (q *Queries) ListAnomaliesFiltered(ctx context.Context, arg ListAnomaliesFilteredParams) ([]ListAnomaliesFilteredRow, error) {
-	rows, err := q.db.Query(ctx, listAnomaliesFiltered, arg.TenantID, arg.Status, arg.RowLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListAnomaliesFilteredRow{}
-	for rows.Next() {
-		var i ListAnomaliesFilteredRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.EventID,
 			&i.ActorUserID,
 			&i.Email,
@@ -272,7 +210,7 @@ func (q *Queries) ListAnomaliesFiltered(ctx context.Context, arg ListAnomaliesFi
 }
 
 const listUnscoredAuditEvents = `-- name: ListUnscoredAuditEvents :many
-SELECT id, tenant_id, actor_user_id, action, COALESCE(host(ip), '') AS ip, created_at
+SELECT id, organization_id, actor_user_id, action, COALESCE(host(ip), '') AS ip, created_at
 FROM audit.events
 WHERE scored_at IS NULL
 ORDER BY created_at, id
@@ -281,12 +219,12 @@ FOR UPDATE SKIP LOCKED
 `
 
 type ListUnscoredAuditEventsRow struct {
-	ID          uuid.UUID
-	TenantID    pgtype.UUID
-	ActorUserID pgtype.UUID
-	Action      string
-	Ip          interface{}
-	CreatedAt   time.Time
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
+	ActorUserID    *uuid.UUID
+	Action         string
+	Ip             interface{}
+	CreatedAt      time.Time
 }
 
 // Pick a batch of unscored audit events in chronological order.
@@ -304,7 +242,7 @@ func (q *Queries) ListUnscoredAuditEvents(ctx context.Context, batchSize int32) 
 		var i ListUnscoredAuditEventsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.ActorUserID,
 			&i.Action,
 			&i.Ip,
@@ -320,6 +258,22 @@ func (q *Queries) ListUnscoredAuditEvents(ctx context.Context, batchSize int32) 
 	return items, nil
 }
 
+const lockAuditEventForScoring = `-- name: LockAuditEventForScoring :one
+SELECT (scored_at IS NOT NULL)::boolean AS scored
+FROM audit.events
+WHERE id = $1
+FOR UPDATE SKIP LOCKED
+`
+
+// Locks an event for scoring, reporting whether it is already scored; no row
+// when another instance holds it.
+func (q *Queries) LockAuditEventForScoring(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, lockAuditEventForScoring, id)
+	var scored bool
+	err := row.Scan(&scored)
+	return scored, err
+}
+
 const markAuditEventScored = `-- name: MarkAuditEventScored :exec
 UPDATE audit.events SET scored_at = NOW() WHERE id = $1
 `
@@ -333,20 +287,20 @@ func (q *Queries) MarkAuditEventScored(ctx context.Context, id uuid.UUID) error 
 const resolveAnomaly = `-- name: ResolveAnomaly :execrows
 UPDATE audit.anomalies
 SET status = 'resolved', resolved_at = NOW(), resolved_by = $1
-WHERE id = $2 AND tenant_id = $3 AND status = 'open'
+WHERE id = $2 AND organization_id = $3 AND status = 'open'
 `
 
 type ResolveAnomalyParams struct {
-	ResolvedBy pgtype.UUID
-	ID         uuid.UUID
-	TenantID   uuid.UUID
+	ResolvedBy     *uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // Mark an open anomaly as resolved by a specific user.  Returns 0 rows
 // affected when the anomaly is already resolved, not found, or belongs to a
-// different tenant.
+// different organization.
 func (q *Queries) ResolveAnomaly(ctx context.Context, arg ResolveAnomalyParams) (int64, error) {
-	result, err := q.db.Exec(ctx, resolveAnomaly, arg.ResolvedBy, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, resolveAnomaly, arg.ResolvedBy, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -355,9 +309,9 @@ func (q *Queries) ResolveAnomaly(ctx context.Context, arg ResolveAnomalyParams) 
 
 const upsertActorBaseline = `-- name: UpsertActorBaseline :exec
 INSERT INTO audit.actor_baselines
-    (tenant_id, actor_user_id, event_count, actions, hours, ips, updated_at)
+    (organization_id, actor_user_id, event_count, actions, hours, ips, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, NOW())
-ON CONFLICT (tenant_id, actor_user_id) DO UPDATE SET
+ON CONFLICT (organization_id, actor_user_id) DO UPDATE SET
     event_count = EXCLUDED.event_count,
     actions     = EXCLUDED.actions,
     hours       = EXCLUDED.hours,
@@ -366,18 +320,18 @@ ON CONFLICT (tenant_id, actor_user_id) DO UPDATE SET
 `
 
 type UpsertActorBaselineParams struct {
-	TenantID    uuid.UUID
-	ActorUserID uuid.UUID
-	EventCount  int64
-	Actions     []byte
-	Hours       []byte
-	Ips         []byte
+	OrganizationID uuid.UUID
+	ActorUserID    uuid.UUID
+	EventCount     int64
+	Actions        []byte
+	Hours          []byte
+	Ips            []byte
 }
 
 // Write (or create) the baseline counters after folding one event in.
 func (q *Queries) UpsertActorBaseline(ctx context.Context, arg UpsertActorBaselineParams) error {
 	_, err := q.db.Exec(ctx, upsertActorBaseline,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ActorUserID,
 		arg.EventCount,
 		arg.Actions,
@@ -389,9 +343,9 @@ func (q *Queries) UpsertActorBaseline(ctx context.Context, arg UpsertActorBaseli
 
 const upsertAnomalySettings = `-- name: UpsertAnomalySettings :exec
 INSERT INTO audit.anomaly_settings
-    (tenant_id, enabled, score_threshold, min_baseline_events, updated_at)
+    (organization_id, enabled, score_threshold, min_baseline_events, updated_at)
 VALUES ($1, $2, $3, $4, NOW())
-ON CONFLICT (tenant_id) DO UPDATE SET
+ON CONFLICT (organization_id) DO UPDATE SET
     enabled             = EXCLUDED.enabled,
     score_threshold     = EXCLUDED.score_threshold,
     min_baseline_events = EXCLUDED.min_baseline_events,
@@ -399,16 +353,16 @@ ON CONFLICT (tenant_id) DO UPDATE SET
 `
 
 type UpsertAnomalySettingsParams struct {
-	TenantID          uuid.UUID
+	OrganizationID    uuid.UUID
 	Enabled           bool
 	ScoreThreshold    float64
 	MinBaselineEvents int32
 }
 
-// Create or replace per-tenant anomaly detection settings.
+// Create or replace per-organization anomaly detection settings.
 func (q *Queries) UpsertAnomalySettings(ctx context.Context, arg UpsertAnomalySettingsParams) error {
 	_, err := q.db.Exec(ctx, upsertAnomalySettings,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Enabled,
 		arg.ScoreThreshold,
 		arg.MinBaselineEvents,

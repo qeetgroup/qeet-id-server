@@ -1,0 +1,176 @@
+delete:
+  operationId: deleteScimUser
+  description: >-
+    Deprovisions a user by id for the organization identified by the SCIM bearer
+    token, soft-deleting the account after confirming it belongs to the organization
+    and ending every way it signs in (sessions, hosted-login sessions,
+    remembered devices, application grants, pending authorizations and unused
+    recovery links), with Qeet acting as the SCIM server. As an
+    administrator's deletion does, it revokes the admin-portal links and
+    pending invitations the user issued and records the critical
+    user.integrations_left event listing the integrations they created; the
+    SCIM response is unchanged. Mounted at the root
+    under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope
+    rather than the standard Qeet error shape. An account that owns the
+    organization is never deleted by the directory (403).
+  summary: "[scim] Delete user"
+  tags:
+    - SCIM
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - scimBearer: []
+  responses:
+    "204":
+      description: Deprovisioned
+    "401":
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
+    "404":
+      $ref: ../../components/responses/SCIMNotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+get:
+  operationId: getScimUser
+  description: >-
+    Returns a single provisioned user by id for the organization identified by the
+    SCIM bearer token, with Qeet acting as the SCIM server. Mounted at the root
+    under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope
+    rather than the standard Qeet error shape.
+  summary: "[scim] Get user"
+  tags:
+    - SCIM
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - scimBearer: []
+  responses:
+    "200":
+      description: User
+      content:
+        application/scim+json:
+          schema:
+            $ref: ../../components/schemas/SCIMUser.yaml
+    "401":
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
+    "404":
+      $ref: ../../components/responses/SCIMNotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+patch:
+  operationId: patchScimUser
+  description: >-
+    Applies a SCIM PatchOp to a user for the organization identified by the SCIM
+    bearer token; setting active to false (a boolean, or the string Entra sends)
+    is the deprovisioning path IdPs rely on and suspends the account, ending
+    every way it signs in as an administrator's suspension does; displayName,
+    name.givenName/familyName/formatted, externalId and userName (or the primary
+    email) are applied too, a new userName only on a domain the organization has
+    verified (400 invalidValue otherwise), counted verified, with links sent to
+    the old address ending; and displayName may also be updated, with Qeet
+    acting as the SCIM server. Mounted at the root under /scim/v2, not under
+    /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet
+    error shape. An account that owns the organization is never changed or
+    deleted by the directory (403). A new userName for an account that administers the organization (any
+    administrative permission, directly or through a group) is refused with
+    403 and nothing changes: its address is changed in the console, as single
+    sign-on never moves it either. Setting active to true lifts only a
+    suspension the directory set: one an administrator, a policy or another
+    directory set stands, while the rest of the change applies.
+  summary: "[scim] Patch user (deprovision)"
+  tags:
+    - SCIM
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - scimBearer: []
+  requestBody:
+    required: true
+    content:
+      application/scim+json:
+        schema:
+          $ref: ../../components/schemas/SCIMPatchOp.yaml
+  responses:
+    "200":
+      description: Patched
+      content:
+        application/scim+json:
+          schema:
+            $ref: ../../components/schemas/SCIMUser.yaml
+    "400":
+      $ref: ../../components/responses/SCIMBadRequest.yaml
+    "401":
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
+    "404":
+      $ref: ../../components/responses/SCIMNotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+put:
+  operationId: replaceScimUser
+  description: >-
+    Replaces a user's attributes wholesale with the supplied SCIM representation
+    for the organization identified by the SCIM bearer token, with Qeet acting as the
+    SCIM server. Use PATCH for targeted changes such as deprovisioning. Mounted
+    at the root under /scim/v2; errors use the RFC 7644 SCIM error envelope, not
+    the standard Qeet error shape. An account that owns the organization is
+    never changed or deleted by the directory (403). A new userName for an account that administers the organization (any
+    administrative permission, directly or through a group) is refused with
+    403 and nothing changes: its address is changed in the console, as single
+    sign-on never moves it either. Setting active to true
+    lifts only a suspension the directory set: one an administrator, a policy or
+    another directory set stands, while the rest of the change applies.
+  summary: "[scim] Replace user"
+  tags:
+    - SCIM
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - scimBearer: []
+  requestBody:
+    required: true
+    content:
+      application/scim+json:
+        schema:
+          $ref: ../../components/schemas/SCIMUser.yaml
+  responses:
+    "200":
+      description: Replaced
+      content:
+        application/scim+json:
+          schema:
+            $ref: ../../components/schemas/SCIMUser.yaml
+    "400":
+      $ref: ../../components/responses/SCIMBadRequest.yaml
+    "401":
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
+    "404":
+      $ref: ../../components/responses/SCIMNotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

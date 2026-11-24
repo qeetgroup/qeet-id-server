@@ -1,0 +1,6 @@
+name: cursor
+in: query
+required: false
+schema:
+  type: string
+description: Opaque pagination cursor from a prior response's next_cursor.

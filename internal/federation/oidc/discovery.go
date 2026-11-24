@@ -27,7 +27,7 @@ func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 		// relying party compares them with.
 		"issuer":                                h.Service.issuer.JWTIssuer(),
 		"authorization_endpoint":                base + "/v1/oauth/authorize",
-		"token_endpoint":                        base + "/v1/oauth/token-code",
+		"token_endpoint":                        base + "/v1/oauth/token",
 		"device_authorization_endpoint":         base + "/v1/oauth/device_authorization",
 		"userinfo_endpoint":                     base + "/v1/oauth/userinfo",
 		"jwks_uri":                              base + "/.well-known/jwks.json",
@@ -47,7 +47,7 @@ func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 		"frontchannel_logout_supported":         true,
 		"frontchannel_logout_session_supported": true,
 		"request_uri_parameter_supported":       false,
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", grantTypeTokenExchange, grantTypeCIBA},
+		"grant_types_supported":                 []string{"authorization_code", "refresh_token", grantTypeDeviceCode, grantTypeTokenExchange, grantTypeCIBA, grantTypeClientCredentials},
 		// OpenID CIBA — poll mode only (no ping/push notification_endpoint).
 		"backchannel_token_delivery_modes_supported": []string{"poll"},
 		"backchannel_authentication_endpoint":        base + "/v1/oauth/bc-authorize",
@@ -72,15 +72,14 @@ func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 // asks for a refresh token (see issuesRefreshToken).
 var scopesSupported = []string{"openid", "profile", "email", "phone", scopeOfflineAccess}
 
-// protectedResourceMetadata implements RFC 9728 §3 — OAuth 2.0 Protected
-// Resource Metadata. MCP authorization servers must advertise this document
-// so MCP clients can discover the resource's authorization server and
-// supported token types without out-of-band configuration.
+// protectedResourceMetadata serves RFC 9728 §3 OAuth 2.0 Protected Resource Metadata, which MCP
+// clients read to discover the resource's authorization server and token types without out-of-band
+// configuration. The authorization server is named by its issuer, as the tokens carry it.
 func (h *Handler) protectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
 	base := httpx.PublicOrigin(r, h.PublicBaseURL)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"resource":                              base,
-		"authorization_servers":                 []string{base},
+		"authorization_servers":                 []string{h.Service.issuer.JWTIssuer()},
 		"bearer_methods_supported":              []string{"header"},
 		"resource_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
 		"resource_documentation":                "https://docs.qeet.in/id/api-reference",
@@ -90,8 +89,8 @@ func (h *Handler) protectedResourceMetadata(w http.ResponseWriter, r *http.Reque
 
 // jwks publishes the public signing keys (active + any retired key still in its
 // rotation grace window) so any relying party can verify Qeet-issued ID/access
-// tokens. Keys are ES256 over EC P-256; each `kid` matches the token's `kid`
-// header (an RFC 7638 JWK thumbprint).
+// tokens. A key is EC P-256 (ES256) or RSA (RS256); each `kid` matches the
+// token's `kid` header (an RFC 7638 JWK thumbprint).
 func (h *Handler) jwks(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"keys": h.Service.issuer.JWKS()})
 }

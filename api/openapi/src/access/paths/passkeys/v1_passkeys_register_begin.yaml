@@ -1,0 +1,42 @@
+post:
+  operationId: beginPasskeyRegistration
+  summary: Register begin
+  tags:
+    - Passkeys
+  security:
+    - bearerAuth: []
+    - ssoCookie: []
+  description: >-
+    Starts adding a passkey for the signed-in user and returns the WebAuthn
+    creation options with a single-use ceremony id (valid five minutes, bound to
+    this user). Also accepts the hosted-login session cookie (qe_ls) in place of
+    a bearer token; that call, being a cookie session, needs the CSRF token
+    (X-CSRF-Token echoing the qe_csrf cookie) and an allowed Origin. Refused
+    with 403 passkey.disabled when the user's organization has passkeys switched
+    off.
+  responses:
+    "201":
+      description: Created
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - publicKey
+              - session_id
+            properties:
+              publicKey:
+                $ref: ../../../shared/schemas/PublicKeyCredentialCreationOptions.yaml
+              session_id:
+                type: string
+                format: uuid
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

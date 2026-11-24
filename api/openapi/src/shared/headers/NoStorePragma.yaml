@@ -1,0 +1,5 @@
+description: no-cache, the same instruction for HTTP/1.0 caches.
+schema:
+  type: string
+  enum:
+    - no-cache

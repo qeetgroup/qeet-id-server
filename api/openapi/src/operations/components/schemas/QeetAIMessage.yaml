@@ -1,0 +1,29 @@
+type: object
+description: >-
+  One turn in a qeetai conversation. `content` is an array of Anthropic content
+  blocks (text / tool_use / tool_result) stored verbatim.
+properties:
+  id:
+    type: string
+    format: uuid
+  organization_id:
+    type: string
+    format: uuid
+  conversation_id:
+    type: string
+    format: uuid
+  role:
+    type: string
+    enum:
+      - user
+      - assistant
+      - tool
+  content:
+    type: array
+    description: Anthropic content-block array.
+    items:
+      type: object
+      additionalProperties: true
+  created_at:
+    type: string
+    format: date-time

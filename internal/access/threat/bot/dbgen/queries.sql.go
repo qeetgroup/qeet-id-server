@@ -7,17 +7,34 @@ package dbgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getBotEventStats = `-- name: GetBotEventStats :one
+const countBotEvents = `-- name: CountBotEvents :one
+SELECT count(*) FROM auth.bot_events
+WHERE organization_id = $1 AND ($2::text = '' OR verdict = $2::text)
+`
 
+type CountBotEventsParams struct {
+	OrganizationID uuid.UUID
+	Verdict        string
+}
+
+// The organization's detections, of @verdict unless it is empty.
+func (q *Queries) CountBotEvents(ctx context.Context, arg CountBotEventsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countBotEvents, arg.OrganizationID, arg.Verdict)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const getBotEventStats = `-- name: GetBotEventStats :one
 SELECT
     COUNT(*) FILTER (WHERE verdict = 'blocked'   AND created_at >= NOW() - INTERVAL '24 hours') AS blocked_24h,
     COUNT(*) FILTER (WHERE verdict = 'challenged' AND created_at >= NOW() - INTERVAL '24 hours') AS challenged_24h
-FROM auth.bot_events WHERE tenant_id = $1
+FROM auth.bot_events WHERE organization_id = $1
 `
 
 type GetBotEventStatsRow struct {
@@ -25,11 +42,8 @@ type GetBotEventStatsRow struct {
 	Challenged24h int64
 }
 
-// ListBotEvents is intentionally hand-written in bot.go because COALESCE(host(ip),”)
-// causes sqlc to generate interface{} for the column type, making type-safe scanning
-// impossible without runtime assertions.
-func (q *Queries) GetBotEventStats(ctx context.Context, tenantID uuid.UUID) (GetBotEventStatsRow, error) {
-	row := q.db.QueryRow(ctx, getBotEventStats, tenantID)
+func (q *Queries) GetBotEventStats(ctx context.Context, organizationID uuid.UUID) (GetBotEventStatsRow, error) {
+	row := q.db.QueryRow(ctx, getBotEventStats, organizationID)
 	var i GetBotEventStatsRow
 	err := row.Scan(&i.Blocked24h, &i.Challenged24h)
 	return i, err
@@ -37,7 +51,7 @@ func (q *Queries) GetBotEventStats(ctx context.Context, tenantID uuid.UUID) (Get
 
 const getBotSettings = `-- name: GetBotSettings :one
 SELECT ua_check, honeypot, captcha, signature, score_threshold
-FROM auth.bot_settings WHERE tenant_id = $1
+FROM auth.bot_settings WHERE organization_id = $1
 `
 
 type GetBotSettingsRow struct {
@@ -48,8 +62,8 @@ type GetBotSettingsRow struct {
 	ScoreThreshold float32
 }
 
-func (q *Queries) GetBotSettings(ctx context.Context, tenantID uuid.UUID) (GetBotSettingsRow, error) {
-	row := q.db.QueryRow(ctx, getBotSettings, tenantID)
+func (q *Queries) GetBotSettings(ctx context.Context, organizationID uuid.UUID) (GetBotSettingsRow, error) {
+	row := q.db.QueryRow(ctx, getBotSettings, organizationID)
 	var i GetBotSettingsRow
 	err := row.Scan(
 		&i.UaCheck,
@@ -61,33 +75,138 @@ func (q *Queries) GetBotSettings(ctx context.Context, tenantID uuid.UUID) (GetBo
 	return i, err
 }
 
-const getUserTenantByEmail = `-- name: GetUserTenantByEmail :one
+const getUserOrganizationByEmail = `-- name: GetUserOrganizationByEmail :one
 
-SELECT id, tenant_id FROM "user".users
-WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND tenant_id IS NOT NULL
+SELECT id, organization_id FROM account.users
+WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND organization_id IS NOT NULL
 LIMIT 1
 `
 
-type GetUserTenantByEmailRow struct {
-	ID       uuid.UUID
-	TenantID pgtype.UUID
+type GetUserOrganizationByEmailRow struct {
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
 }
 
-// Queries for the threat-detection/bot domain.
-// Static queries are compiled by sqlc into ./dbgen.
-// InsertBotEvent is intentionally hand-written in bot.go because it uses
-// NULLIF($2,”)::inet — the inet cast makes sqlc parameter-type inference
-// ambiguous; correctness takes priority over coverage.
-func (q *Queries) GetUserTenantByEmail(ctx context.Context, lower string) (GetUserTenantByEmailRow, error) {
-	row := q.db.QueryRow(ctx, getUserTenantByEmail, lower)
-	var i GetUserTenantByEmailRow
-	err := row.Scan(&i.ID, &i.TenantID)
+// Queries for the threat-detection/bot domain, compiled by sqlc into ./dbgen.
+func (q *Queries) GetUserOrganizationByEmail(ctx context.Context, lower string) (GetUserOrganizationByEmailRow, error) {
+	row := q.db.QueryRow(ctx, getUserOrganizationByEmail, lower)
+	var i GetUserOrganizationByEmailRow
+	err := row.Scan(&i.ID, &i.OrganizationID)
 	return i, err
+}
+
+const insertBotEvent = `-- name: InsertBotEvent :exec
+INSERT INTO auth.bot_events (organization_id, ip, user_agent, score, verdict, user_id)
+VALUES ($1, NULLIF($2::text, '')::inet, $3, $4, $5, $6)
+`
+
+type InsertBotEventParams struct {
+	OrganizationID uuid.UUID
+	Ip             string
+	UserAgent      string
+	Score          float32
+	Verdict        string
+	UserID         *uuid.UUID
+}
+
+// An empty @ip is recorded as NULL.
+func (q *Queries) InsertBotEvent(ctx context.Context, arg InsertBotEventParams) error {
+	_, err := q.db.Exec(ctx, insertBotEvent,
+		arg.OrganizationID,
+		arg.Ip,
+		arg.UserAgent,
+		arg.Score,
+		arg.Verdict,
+		arg.UserID,
+	)
+	return err
+}
+
+const listBotEvents = `-- name: ListBotEvents :many
+SELECT b.id, COALESCE(host(b.ip), '')::text AS ip, b.user_agent, b.score, b.verdict, b.created_at, b.user_id,
+       u.email AS user_email,
+       COALESCE((
+           SELECT CASE e.action WHEN 'auth.login_succeeded' THEN 'signed_in' ELSE 'failed' END
+           FROM audit.events e
+           WHERE e.organization_id = b.organization_id AND e.actor_user_id = b.user_id
+             AND e.action IN ('auth.login_succeeded', 'auth.sign_in_failed')
+             AND e.ip IS NOT DISTINCT FROM b.ip
+             AND e.created_at >= b.created_at AND e.created_at < b.created_at + ($1::text)::interval
+           ORDER BY e.created_at LIMIT 1), 'unknown')::text AS outcome
+FROM auth.bot_events b
+LEFT JOIN account.users u ON u.id = b.user_id
+WHERE b.organization_id = $2 AND ($3::text = '' OR b.verdict = $3::text)
+  AND ($4::timestamptz IS NULL
+       OR (b.created_at, b.id) < ($4::timestamptz, $5::uuid))
+ORDER BY b.created_at DESC, b.id DESC
+LIMIT $6
+`
+
+type ListBotEventsParams struct {
+	OutcomeWindow  string
+	OrganizationID uuid.UUID
+	Verdict        string
+	BeforeTs       *time.Time
+	BeforeID       *uuid.UUID
+	Lim            int32
+}
+
+type ListBotEventsRow struct {
+	ID        uuid.UUID
+	Ip        string
+	UserAgent string
+	Score     float32
+	Verdict   string
+	CreatedAt time.Time
+	UserID    *uuid.UUID
+	UserEmail *string
+	Outcome   string
+}
+
+// A page of CountBotEvents' detections, newest first, before the cursor
+// (before_ts, before_id) when it is set; ip is ” when none was recorded. The
+// outcome is how the account's first sign-in from the same address within
+// @outcome_window of the detection ended.
+func (q *Queries) ListBotEvents(ctx context.Context, arg ListBotEventsParams) ([]ListBotEventsRow, error) {
+	rows, err := q.db.Query(ctx, listBotEvents,
+		arg.OutcomeWindow,
+		arg.OrganizationID,
+		arg.Verdict,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBotEventsRow{}
+	for rows.Next() {
+		var i ListBotEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ip,
+			&i.UserAgent,
+			&i.Score,
+			&i.Verdict,
+			&i.CreatedAt,
+			&i.UserID,
+			&i.UserEmail,
+			&i.Outcome,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockBotSettings = `-- name: LockBotSettings :one
 SELECT ua_check, honeypot, captcha, signature, score_threshold
-FROM auth.bot_settings WHERE tenant_id = $1
+FROM auth.bot_settings WHERE organization_id = $1
 FOR UPDATE
 `
 
@@ -101,8 +220,8 @@ type LockBotSettingsRow struct {
 
 // LockBotSettings is GetBotSettings holding the row until the update that
 // replaces it commits.
-func (q *Queries) LockBotSettings(ctx context.Context, tenantID uuid.UUID) (LockBotSettingsRow, error) {
-	row := q.db.QueryRow(ctx, lockBotSettings, tenantID)
+func (q *Queries) LockBotSettings(ctx context.Context, organizationID uuid.UUID) (LockBotSettingsRow, error) {
+	row := q.db.QueryRow(ctx, lockBotSettings, organizationID)
 	var i LockBotSettingsRow
 	err := row.Scan(
 		&i.UaCheck,
@@ -115,9 +234,9 @@ func (q *Queries) LockBotSettings(ctx context.Context, tenantID uuid.UUID) (Lock
 }
 
 const upsertBotSettings = `-- name: UpsertBotSettings :exec
-INSERT INTO auth.bot_settings (tenant_id, ua_check, honeypot, captcha, signature, score_threshold, updated_at)
+INSERT INTO auth.bot_settings (organization_id, ua_check, honeypot, captcha, signature, score_threshold, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, NOW())
-ON CONFLICT (tenant_id) DO UPDATE SET
+ON CONFLICT (organization_id) DO UPDATE SET
     ua_check        = EXCLUDED.ua_check,
     honeypot        = EXCLUDED.honeypot,
     captcha         = EXCLUDED.captcha,
@@ -127,7 +246,7 @@ ON CONFLICT (tenant_id) DO UPDATE SET
 `
 
 type UpsertBotSettingsParams struct {
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 	UaCheck        bool
 	Honeypot       bool
 	Captcha        bool
@@ -137,7 +256,7 @@ type UpsertBotSettingsParams struct {
 
 func (q *Queries) UpsertBotSettings(ctx context.Context, arg UpsertBotSettingsParams) error {
 	_, err := q.db.Exec(ctx, upsertBotSettings,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.UaCheck,
 		arg.Honeypot,
 		arg.Captcha,

@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	qeetaimanifest "github.com/qeetgroup/qeet-id-server/api/qeetai"
 )
 
 // manifestTools reads every tool in the embedded manifest, with the fields
@@ -25,7 +23,7 @@ func manifestTools(t *testing.T) []struct {
 			Mutates     *bool   `json:"mutates"`
 		} `json:"tools"`
 	}
-	if err := json.Unmarshal(qeetaimanifest.ToolsManifestJSON, &m); err != nil {
+	if err := json.Unmarshal(toolsManifest, &m); err != nil {
 		t.Fatalf("parse manifest: %v", err)
 	}
 	return m.Tools

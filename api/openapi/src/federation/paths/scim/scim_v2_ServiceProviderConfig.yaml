@@ -1,0 +1,28 @@
+get:
+  operationId: getScimServiceProviderConfig
+  description: >-
+    Returns the SCIM 2.0 ServiceProviderConfig advertising Qeet's supported SCIM
+    capabilities as a SCIM server, where PATCH and filter are supported while
+    bulk, sort, changePassword and etag are not, along with the organization
+    bearer-token authentication scheme. Requires the SCIM bearer token and is
+    mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644
+    SCIM error envelope.
+  summary: "[scim] ServiceProviderConfig"
+  tags:
+    - SCIM
+  security:
+    - scimBearer: []
+  responses:
+    "200":
+      description: SCIM metadata
+      content:
+        application/scim+json:
+          schema:
+            type: object
+            additionalProperties: true
+    "401":
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

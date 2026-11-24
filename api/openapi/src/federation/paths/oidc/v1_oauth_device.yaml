@@ -1,0 +1,43 @@
+get:
+  operationId: getDeviceVerification
+  summary: Device verification context
+  description: >-
+    Returns the requesting client's display name and requested scopes for a
+    pending device-authorization, looked up by user_code, so the hosted-login
+    /device page can render the approval screen. SSO-cookie gated.
+  tags:
+    - OIDC
+  parameters:
+    - in: query
+      name: user_code
+      required: true
+      schema:
+        type: string
+      description: The human-typed user_code (e.g. BCDF-GHJK).
+  security:
+    - ssoCookie: []
+  responses:
+    "200":
+      description: Device verification context
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - client_name
+              - scopes
+            properties:
+              client_name:
+                type: string
+              scopes:
+                type: array
+                items:
+                  type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

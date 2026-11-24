@@ -1,0 +1,15 @@
+type: object
+description: Whether the invitation's email went out. The invitation exists either way.
+properties:
+  status:
+    type: string
+    enum:
+      - sent
+      - not_sent
+  code:
+    type: string
+    description: >-
+      Why not, when not_sent: email.suppressed, email.provider_unavailable or
+      email.send_failed.
+  message:
+    type: string

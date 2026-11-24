@@ -1,0 +1,59 @@
+get:
+  operationId: listEmailTemplates
+  summary: List templates
+  tags:
+    - Email Templates
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Lists the organization-scoped catalogue and overrides. Capabilities indicate
+    rich-text/localization support and whether a mail transport is configured
+    for test delivery. Every template is sent with the organization's version
+    (delivery_scope organization): email verification codes to people signed in
+    to the organization, password reset links to accounts whose organization it
+    is, magic links, invitations, and sign-in codes sent by email. A code sent
+    by SMS, and one that confirms a change to an account's security, keeps the
+    platform's wording.
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+              - capabilities
+            properties:
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/EmailResolvedTemplate.yaml
+              capabilities:
+                type: object
+                required:
+                  - rich_text
+                  - localization
+                  - test_email
+                properties:
+                  rich_text:
+                    type: boolean
+                  localization:
+                    type: boolean
+                  test_email:
+                    type: boolean
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

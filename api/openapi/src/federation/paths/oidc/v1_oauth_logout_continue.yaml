@@ -1,0 +1,25 @@
+get:
+  operationId: continueSignOut
+  summary: Continue after sign-out
+  description: >-
+    Sends the browser on to the post-logout address a sign-out validated, from
+    the signed ticket the hosted signed-out page was given after loading the
+    applications' front-channel pages. An invalid or expired ticket goes to the
+    hosted signed-out page instead. Never a redirect to an address the ticket
+    doesn't sign.
+  tags:
+    - OIDC
+  security: []
+  parameters:
+    - in: query
+      name: ticket
+      required: true
+      schema:
+        type: string
+  responses:
+    "302":
+      description: Redirect to the validated post-logout address, or the signed-out page
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,7 +1,7 @@
-// Package password hashes secrets with Argon2id and verifies both Argon2id and
-// legacy bcrypt hashes; after a successful Verify, NeedsRehash says when to store
-// a fresh Hash. It protects passwords, client secrets, API keys and MFA recovery
-// codes alike.
+// Package password hashes the secrets people choose (passwords, MFA recovery
+// codes) with Argon2id, and random machine secrets (API keys, client secrets)
+// with SHA-256. After a successful Verify, NeedsRehash says when to store a
+// fresh Hash.
 package password
 
 import (
@@ -19,7 +19,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"golang.org/x/crypto/argon2"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -68,8 +67,9 @@ var hasher atomic.Pointer[limiter]
 
 func init() { Configure(Limits{}) }
 
-// Configure sets the hashing limits; call it before serving. A hash already
-// running or waiting keeps the limits it started under.
+// Configure sets the hashing limits. The server runs with the defaults, set at
+// init; a test may tighten them. A hash already running or waiting keeps the
+// limits it started under.
 func Configure(l Limits) {
 	if l.Concurrency <= 0 {
 		l.Concurrency = runtime.GOMAXPROCS(0)
@@ -165,9 +165,9 @@ func Hash(plain string) (string, error) {
 	), nil
 }
 
-// Verify reports whether plain matches the stored hash, transparently handling
-// both Argon2id and legacy bcrypt encodings. It waits for a hasher slot as
-// long as it takes; a request should use VerifyWithin.
+// Verify reports whether plain matches the stored Argon2id hash; any other
+// encoding matches nothing. It waits for a hasher slot as long as it takes; a
+// request should use VerifyWithin.
 func Verify(hash, plain string) bool {
 	ok, _ := verify(context.Background(), hash, plain, false)
 	return ok
@@ -180,29 +180,10 @@ func VerifyWithin(ctx context.Context, hash, plain string) (bool, error) {
 	return verify(ctx, hash, plain, true)
 }
 
-func verify(ctx context.Context, hash, plain string, bounded bool) (bool, error) {
-	switch {
-	case strings.HasPrefix(hash, "$argon2id$"):
-		return verifyArgon2id(ctx, hash, plain, bounded)
-	case strings.HasPrefix(hash, "$2"): // bcrypt: $2a$ / $2b$ / $2y$
-		var ok bool
-		err := run(ctx, bounded, func() {
-			ok = bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain)) == nil
-		})
-		return ok, err
-	default:
-		return false, nil
-	}
-}
-
-// NeedsRehash reports whether a stored hash should be re-hashed with the
-// current Argon2id parameters — true for legacy bcrypt and for Argon2id hashes
-// produced with weaker params. Call after a successful Verify and, if true,
-// store a fresh Hash of the same plaintext.
+// NeedsRehash reports whether a stored hash was made with weaker Argon2id
+// parameters than the current ones. Call after a successful Verify and, if
+// true, store a fresh Hash of the same plaintext.
 func NeedsRehash(hash string) bool {
-	if !strings.HasPrefix(hash, "$argon2id$") {
-		return true
-	}
 	mem, time, threads, _, _, err := decodeArgon2id(hash)
 	if err != nil {
 		return true
@@ -210,7 +191,7 @@ func NeedsRehash(hash string) bool {
 	return mem < argonMemKiB || time < argonTime || threads != argonThreads
 }
 
-func verifyArgon2id(ctx context.Context, hash, plain string, bounded bool) (bool, error) {
+func verify(ctx context.Context, hash, plain string, bounded bool) (bool, error) {
 	mem, time, threads, salt, want, err := decodeArgon2id(hash)
 	if err != nil {
 		return false, nil //nolint:nilerr // a malformed hash matches nothing
@@ -227,7 +208,7 @@ func verifyArgon2id(ctx context.Context, hash, plain string, bounded bool) (bool
 func decodeArgon2id(hash string) (mem, time uint32, threads uint8, salt, key []byte, err error) {
 	// Expected layout: ["", "argon2id", "v=19", "m=..,t=..,p=..", salt, key].
 	parts := strings.Split(hash, "$")
-	if len(parts) != 6 || parts[1] != "argon2id" {
+	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" {
 		return 0, 0, 0, nil, nil, errors.New("bad argon2id format")
 	}
 	var version int

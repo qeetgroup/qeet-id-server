@@ -15,9 +15,6 @@ type ProfileMapper interface {
 	StoreProfile(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, string, map[string]any) error
 }
 
-// SetProfileMapper sets the mapper applied to provisioned users.
-func (service *Service) SetProfileMapper(mapper ProfileMapper) { service.mapper = mapper }
-
 func (payload *scimUserPayload) UnmarshalJSON(raw []byte) error {
 	type plainPayload scimUserPayload
 	var decoded plainPayload
@@ -28,11 +25,8 @@ func (payload *scimUserPayload) UnmarshalJSON(raw []byte) error {
 	return json.Unmarshal(raw, &payload.Source)
 }
 
-func (service *Service) profile(ctx context.Context, tenantID uuid.UUID, source map[string]any, partial bool) (map[string]any, error) {
-	if service.mapper == nil {
-		return nil, nil
-	}
-	return service.mapper.MapProfile(ctx, tenantID, "scim:"+tenantID.String(), source, partial)
+func (service *Service) profile(ctx context.Context, organizationID uuid.UUID, source map[string]any, partial bool) (map[string]any, error) {
+	return service.mapper.MapProfile(ctx, organizationID, "scim:"+organizationID.String(), source, partial)
 }
 
 func patchProfileSource(body patchBody) map[string]any {

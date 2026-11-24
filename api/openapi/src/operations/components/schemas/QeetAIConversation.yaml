@@ -1,0 +1,30 @@
+type: object
+description: A named qeetai conversation thread (organization + user scoped).
+required:
+  - id
+  - organization_id
+  - user_id
+  - title
+  - pinned
+  - created_at
+  - updated_at
+properties:
+  id:
+    type: string
+    format: uuid
+  organization_id:
+    type: string
+    format: uuid
+  user_id:
+    type: string
+    format: uuid
+  title:
+    type: string
+  pinned:
+    type: boolean
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time

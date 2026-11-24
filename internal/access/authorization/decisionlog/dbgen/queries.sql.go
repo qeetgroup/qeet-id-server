@@ -10,33 +10,81 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const insertDecisions = `-- name: InsertDecisions :exec
+INSERT INTO auth.authz_decisions
+    (organization_id, decided_at, source, caller_type, caller_id, caller_client, subject, resource, action, allowed, model, rule, reason_code)
+SELECT ($1::uuid[])[i], ($2::timestamptz[])[i], ($3::text[])[i], ($4::text[])[i],
+       NULLIF(($5::text[])[i], '')::uuid, ($6::text[])[i], ($7::text[])[i],
+       ($8::text[])[i], ($9::text[])[i], ($10::boolean[])[i], ($11::text[])[i],
+       ($12::text[])[i], ($13::text[])[i]
+FROM generate_subscripts($1::uuid[], 1) AS i
+`
+
+type InsertDecisionsParams struct {
+	OrganizationIds []uuid.UUID
+	DecidedAt       []time.Time
+	Sources         []string
+	CallerTypes     []string
+	CallerIds       []string
+	CallerClients   []string
+	Subjects        []string
+	Resources       []string
+	Actions         []string
+	Allowed         []bool
+	Models          []string
+	Rules           []string
+	ReasonCodes     []string
+}
+
+// Writes a batch of decisions given column by column, the i-th decision from
+// the i-th element of each array; an empty caller ID is none. COPY isn't
+// allowed on a table with row-level security, so it is an INSERT.
+func (q *Queries) InsertDecisions(ctx context.Context, arg InsertDecisionsParams) error {
+	_, err := q.db.Exec(ctx, insertDecisions,
+		arg.OrganizationIds,
+		arg.DecidedAt,
+		arg.Sources,
+		arg.CallerTypes,
+		arg.CallerIds,
+		arg.CallerClients,
+		arg.Subjects,
+		arg.Resources,
+		arg.Actions,
+		arg.Allowed,
+		arg.Models,
+		arg.Rules,
+		arg.ReasonCodes,
+	)
+	return err
+}
 
 const listDecisions = `-- name: ListDecisions :many
 
 SELECT id, decided_at, source, caller_type, caller_id, caller_client, subject, resource, action,
        allowed, model, rule, reason_code
 FROM auth.authz_decisions
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND ($2::text IS NULL OR subject = $2)
   AND ($3::text IS NULL OR source = $3)
   AND ($4::boolean IS NULL OR allowed = $4)
   AND decided_at >= $5
-  AND (decided_at, id) < ($6::timestamptz, $7::uuid)
+  AND ($6::timestamptz IS NULL
+       OR (decided_at, id) < ($6::timestamptz, $7::uuid))
 ORDER BY decided_at DESC, id DESC
 LIMIT $8
 `
 
 type ListDecisionsParams struct {
-	TenantID uuid.UUID
-	Subject  *string
-	Source   *string
-	Allowed  *bool
-	Since    time.Time
-	BeforeTs time.Time
-	BeforeID uuid.UUID
-	RowLimit int32
+	OrganizationID uuid.UUID
+	Subject        *string
+	Source         *string
+	Allowed        *bool
+	Since          time.Time
+	BeforeTs       *time.Time
+	BeforeID       *uuid.UUID
+	RowLimit       int32
 }
 
 type ListDecisionsRow struct {
@@ -44,7 +92,7 @@ type ListDecisionsRow struct {
 	DecidedAt    time.Time
 	Source       string
 	CallerType   string
-	CallerID     pgtype.UUID
+	CallerID     *uuid.UUID
 	CallerClient string
 	Subject      string
 	Resource     string
@@ -55,13 +103,13 @@ type ListDecisionsRow struct {
 	ReasonCode   string
 }
 
-// Queries for the decision-log domain. Batches are written by insertDecisions
-// (decisionlog.go): sqlc cannot type an unnest of many arrays.
-// ListDecisions returns a page of the tenant's decisions, newest first,
-// before the cursor, of the subject, source and answer when given.
+// Queries for the decision-log domain, compiled by sqlc into ./dbgen.
+// ListDecisions returns a page of the organization's decisions, newest first,
+// before the cursor (before_ts, before_id) when it is set, of the subject,
+// source and answer when given.
 func (q *Queries) ListDecisions(ctx context.Context, arg ListDecisionsParams) ([]ListDecisionsRow, error) {
 	rows, err := q.db.Query(ctx, listDecisions,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Subject,
 		arg.Source,
 		arg.Allowed,

@@ -4,43 +4,66 @@ package domainverify
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
+
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
+
+// newService returns the domain service on a plan that includes custom
+// domains, with the platform's owner check and member permissions.
+func newService(t *testing.T) *Service {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	svc, err := NewService(pool, Deps{
+		Gate: allPlans{}, Owners: rbac.NewRepository(pool), MemberPermissions: identitylink.MemberPermissions(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// allPlans is a plan gate that allows every feature.
+type allPlans struct{}
+
+func (allPlans) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
 
 // txtRecords answers every TXT lookup with its records.
 type txtRecords []string
 
 func (r txtRecords) LookupTXT(context.Context, string) ([]string, error) { return r, nil }
 
-// TestDomainsStayInTheirTenant checks that one tenant can neither read nor
-// change another tenant's domain, nor verify a domain that tenant has already
+// TestDomainsStayInTheirOrganization checks that one organization can neither read nor
+// change another organization's domain, nor verify a domain that organization has already
 // verified.
-func TestDomainsStayInTheirTenant(t *testing.T) {
+func TestDomainsStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
-	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
-	adminB := dbtest.User(t, tenantB, tenantB)
+	svc := newService(t)
+	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
+	adminB := dbtest.User(t, organizationB, organizationB)
 	name := dbtest.Unique("acme") + ".example.test"
-	domainA, err := svc.Add(ctx, tenantA, name, audit.Actor{Type: "system"})
+	domainA, err := svc.Add(ctx, organizationA, name, audit.Actor{Type: "system"})
 	if err != nil {
 		t.Fatalf("add domain in A: %v", err)
 	}
 	svc.resolver = txtRecords{domainA.VerificationToken}
-	if _, err := svc.Verify(ctx, domainA.ID, tenantA, audit.Actor{Type: "system"}); err != nil {
+	if _, err := svc.Verify(ctx, domainA.ID, organizationA, audit.Actor{Type: "system"}); err != nil {
 		t.Fatalf("verify domain in A: %v", err)
 	}
 
-	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Service: svc}).Mount)
-	inB := "/tenants/" + tenantB.String() + "/domains"
+	asB := dbtest.Serve(dbtest.Principal(adminB.ID, organizationB), (&Handler{Service: svc}).Mount)
+	inB := "/organizations/" + organizationB.String() + "/domains"
 	for _, tc := range []struct {
 		method, path string
 		body         any
@@ -49,31 +72,31 @@ func TestDomainsStayInTheirTenant(t *testing.T) {
 		{http.MethodPatch, inB + "/" + domainA.ID.String(), map[string]any{"sso_enabled": true, "jit_enabled": true}, http.StatusNotFound},
 		{http.MethodPost, inB + "/" + domainA.ID.String() + "/verify", nil, http.StatusNotFound},
 		{http.MethodDelete, inB + "/" + domainA.ID.String(), nil, http.StatusNotFound},
-		{http.MethodGet, "/tenants/" + tenantA.String() + "/domains", nil, http.StatusForbidden},
+		{http.MethodGet, "/organizations/" + organizationA.String() + "/domains", nil, http.StatusForbidden},
 	} {
 		if rec := dbtest.Do(t, asB, tc.method, tc.path, tc.body); rec.Code != tc.want {
-			t.Errorf("tenant B %s %s: status %d, want %d (%s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
+			t.Errorf("organization B %s %s: status %d, want %d (%s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
 		}
 	}
 	if ids := dbtest.IDs(t, dbtest.Do(t, asB, http.MethodGet, inB, nil)); slices.Contains(ids, domainA.ID) {
-		t.Error("tenant B's domain list includes tenant A's")
+		t.Error("organization B's domain list includes organization A's")
 	}
 
 	// B may add the same name, but can't verify it while A holds it.
-	domainB, err := svc.Add(ctx, tenantB, name, audit.Actor{Type: "system"})
+	domainB, err := svc.Add(ctx, organizationB, name, audit.Actor{Type: "system"})
 	if err != nil {
 		t.Fatalf("add the same domain in B: %v", err)
 	}
 	svc.resolver = txtRecords{domainB.VerificationToken}
 	if rec := dbtest.Do(t, asB, http.MethodPost, inB+"/"+domainB.ID.String()+"/verify", nil); rec.Code != http.StatusConflict {
-		t.Errorf("tenant B verifies tenant A's domain: status %d, want 409 (%s)", rec.Code, rec.Body.String())
+		t.Errorf("organization B verifies organization A's domain: status %d, want 409 (%s)", rec.Code, rec.Body.String())
 	}
 
 	if n := dbtest.Count(t, `
-		SELECT count(*) FROM tenant.domains
+		SELECT count(*) FROM organization.domains
 		WHERE id = $1 AND verified_at IS NOT NULL AND NOT sso_enabled AND NOT jit_enabled
 	`, domainA.ID); n != 1 {
-		t.Error("tenant B changed tenant A's domain")
+		t.Error("organization B changed organization A's domain")
 	}
 }
 
@@ -94,40 +117,48 @@ func (r *countingResolver) LookupTXT(context.Context, string) ([]string, error) 
 func TestLoginDomainKeepsItsLastCheck(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	dns := &countingResolver{}
-	svc := NewService(pool)
-	svc.resolver, svc.web = dns, nil
+	svc := newService(t)
+	svc.resolver, svc.web = dns, &http.Client{Transport: unreachable{}}
 	setHost := func(id uuid.UUID, host string) {
-		if _, err := pool.Exec(ctx, `INSERT INTO tenant.branding (tenant_id, custom_domain) VALUES ($1, $2)
-			ON CONFLICT (tenant_id) DO UPDATE SET custom_domain = EXCLUDED.custom_domain`, id, host); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO organization.branding (organization_id, custom_domain) VALUES ($1, $2)
+			ON CONFLICT (organization_id) DO UPDATE SET custom_domain = EXCLUDED.custom_domain`, id, host); err != nil {
 			t.Fatal(err)
 		}
 	}
-	setHost(tenant, "auth.acme.example")
+	setHost(organization, "auth.acme.example")
 	setHost(other, "auth.other.example")
 
-	first, err := svc.LoginDomain(ctx, tenant)
+	first, err := svc.LoginDomain(ctx, organization)
 	if err != nil || first.CheckedAt == nil || dns.lookups != 1 {
 		t.Fatalf("first read: %+v, %v, %d lookups; want it checked once, with its time", first, err, dns.lookups)
 	}
-	again, err := svc.LoginDomain(ctx, tenant)
+	again, err := svc.LoginDomain(ctx, organization)
 	if err != nil || dns.lookups != 1 || again.CheckedAt == nil || !again.CheckedAt.Equal(*first.CheckedAt) || again.Status != first.Status {
 		t.Errorf("second read: %+v, %v, %d lookups; want the kept check, not a new one", again, err, dns.lookups)
 	}
-	dns.records = []string{"qeetid-verify=" + shortTenant(tenant)}
-	checked, err := svc.CheckLoginDomain(ctx, tenant)
+	dns.records = []string{"qeetid-verify=" + shortOrganization(organization)}
+	checked, err := svc.CheckLoginDomain(ctx, organization)
 	if err != nil || dns.lookups != 2 || !checked.DNSVerified || !checked.CheckedAt.After(*first.CheckedAt) {
 		t.Errorf("a new check: %+v, %v, %d lookups; want it run and newer", checked, err, dns.lookups)
 	}
-	if read, _ := svc.LoginDomain(ctx, tenant); dns.lookups != 2 || !read.DNSVerified {
+	if read, _ := svc.LoginDomain(ctx, organization); dns.lookups != 2 || !read.DNSVerified {
 		t.Errorf("a read after the new check: %+v, %d lookups; want the new check kept", read, dns.lookups)
 	}
-	setHost(tenant, "login.acme.example")
-	if read, _ := svc.LoginDomain(ctx, tenant); dns.lookups != 3 || read.LoginDomain != "login.acme.example" {
+	setHost(organization, "login.acme.example")
+	if read, _ := svc.LoginDomain(ctx, organization); dns.lookups != 3 || read.LoginDomain != "login.acme.example" {
 		t.Errorf("after the address changed: %+v, %d lookups; want it checked again", read, dns.lookups)
 	}
 	if read, _ := svc.LoginDomain(ctx, other); dns.lookups != 4 || read.LoginDomain != "auth.other.example" {
-		t.Errorf("another organisation's read: %+v, %d lookups; want its own check", read, dns.lookups)
+		t.Errorf("another organization's read: %+v, %d lookups; want its own check", read, dns.lookups)
 	}
+}
+
+// unreachable is a transport no request gets through, as for a hostname
+// whose login no one serves.
+type unreachable struct{}
+
+func (unreachable) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("unreachable")
 }

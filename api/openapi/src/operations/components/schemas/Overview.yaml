@@ -1,0 +1,112 @@
+type: object
+description: >-
+  The fixed-window KPIs and trends; with from, to or days, also range, the
+  sign-ins day by day over that range.
+required:
+  - failed_logins_hourly_24h
+  - failed_trend_14d
+  - generated_at
+  - kpis
+  - login_activity_14d
+  - login_methods_mix
+  - login_trend_14d
+  - mfa_methods_adoption
+  - mfa_trend_14d
+  - user_trend_14d
+  - weekly_activity_8w
+properties:
+  failed_logins_hourly_24h:
+    type: array
+    items:
+      $ref: ./HourlyPoint.yaml
+  failed_trend_14d:
+    type: array
+    items:
+      $ref: ./TrendPoint.yaml
+  generated_at:
+    type: string
+    format: date-time
+  kpis:
+    type: object
+    required:
+      - avg_sessions_per_user
+      - dau
+      - failed_logins_24h
+      - logins_today
+      - mau
+      - mfa_adoption_pct
+      - stickiness_pct
+      - total_users
+    properties:
+      avg_sessions_per_user:
+        $ref: ./Metric.yaml
+      dau:
+        $ref: ./Metric.yaml
+      failed_logins_24h:
+        $ref: ./Metric.yaml
+      logins_today:
+        $ref: ./Metric.yaml
+      mau:
+        $ref: ./Metric.yaml
+      mfa_adoption_pct:
+        $ref: ./Metric.yaml
+      stickiness_pct:
+        $ref: ./Metric.yaml
+      total_users:
+        $ref: ./Metric.yaml
+  login_activity_14d:
+    type: array
+    items:
+      $ref: ./ActivityPoint.yaml
+  login_methods_mix:
+    type: array
+    items:
+      $ref: ./MethodSlice.yaml
+  login_trend_14d:
+    type: array
+    items:
+      $ref: ./TrendPoint.yaml
+  mfa_methods_adoption:
+    type: array
+    items:
+      $ref: ./MethodCount.yaml
+  mfa_trend_14d:
+    type: array
+    items:
+      $ref: ./TrendPoint.yaml
+  user_trend_14d:
+    type: array
+    items:
+      $ref: ./TrendPoint.yaml
+  weekly_activity_8w:
+    type: array
+    items:
+      $ref: ./WeeklyActivityPoint.yaml
+  range:
+    type: object
+    description: >-
+      The sign-ins day by day (UTC) over the chosen range, without organization
+      switches; present when from, to or days was given.
+    properties:
+      from:
+        type: string
+        format: date-time
+      to:
+        type: string
+        format: date-time
+      method:
+        type: string
+      days:
+        type: array
+        items:
+          type: object
+          properties:
+            date:
+              type: string
+              example: "2026-10-29"
+            sign_ins:
+              type: integer
+            people:
+              type: integer
+            failed:
+              type: integer

@@ -9,15 +9,15 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// editableRole locks tenantID's role roleID for a change: ErrNotFound for a
-// role that isn't the tenant's, ErrRBACSystemRoleFixed for a built-in one.
-func editableRole(ctx context.Context, q *dbgen.Queries, tenantID, roleID uuid.UUID) (dbgen.RbacRole, error) {
-	row, err := q.LockRole(ctx, dbgen.LockRoleParams{ID: roleID, TenantID: tenantID})
+// editableRole locks organizationID's role roleID for a change: ErrNotFound for a
+// role that isn't the organization's, ErrRBACSystemRoleFixed for a built-in one.
+func editableRole(ctx context.Context, q *dbgen.Queries, organizationID, roleID uuid.UUID) (dbgen.RbacRole, error) {
+	row, err := q.LockRole(ctx, dbgen.LockRoleParams{ID: roleID, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return row, errs.ErrNotFound
 	}
@@ -25,16 +25,16 @@ func editableRole(ctx context.Context, q *dbgen.Queries, tenantID, roleID uuid.U
 		return row, err
 	}
 	if row.IsSystem {
-		return row, errs.ErrRBACSystemRoleFixed
+		return row, ErrSystemRoleFixed
 	}
 	return row, nil
 }
 
-// SetPermissions makes permIDs the whole of tenantID's role roleID's
+// SetPermissions makes permIDs the whole of organizationID's role roleID's
 // permissions in one transaction, audited as one role.permissions_set naming
 // what was added and removed, and returns them. mayGrant says which
 // permissions the caller may add or take away; a built-in role is refused.
-func (s *Service) SetPermissions(ctx context.Context, tenantID, roleID uuid.UUID, permIDs []uuid.UUID, mayGrant func(string) bool, actor audit.Actor) ([]Permission, error) {
+func (s *Service) SetPermissions(ctx context.Context, organizationID, roleID uuid.UUID, permIDs []uuid.UUID, mayGrant func(string) bool, actor audit.Actor) ([]Permission, error) {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -42,7 +42,7 @@ func (s *Service) SetPermissions(ctx context.Context, tenantID, roleID uuid.UUID
 	defer tx.Rollback(ctx)
 	q := s.repo.q.WithTx(tx)
 
-	if _, err := editableRole(ctx, q, tenantID, roleID); err != nil {
+	if _, err := editableRole(ctx, q, organizationID, roleID); err != nil {
 		return nil, err
 	}
 	want, err := q.PermissionsByID(ctx, permIDs)
@@ -87,7 +87,7 @@ func (s *Service) SetPermissions(ctx context.Context, tenantID, roleID uuid.UUID
 	if err := q.GrantPermissions(ctx, dbgen.GrantPermissionsParams{RoleID: roleID, PermissionIds: added}); err != nil {
 		return nil, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.permissions_set", "role", roleID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "role.permissions_set", "role", roleID,
 		map[string]any{"added": nonNil(addedKeys), "removed": nonNil(removedKeys)})); err != nil {
 		return nil, err
 	}
@@ -97,10 +97,10 @@ func (s *Service) SetPermissions(ctx context.Context, tenantID, roleID uuid.UUID
 	return out, nil
 }
 
-// UpdateRole renames tenantID's custom role roleID or changes its
+// UpdateRole renames organizationID's custom role roleID or changes its
 // description, where name or description is set, audited as role.updated
 // naming what changed. A built-in role is refused.
-func (s *Service) UpdateRole(ctx context.Context, tenantID, roleID uuid.UUID, name, description *string, actor audit.Actor) (*Role, error) {
+func (s *Service) UpdateRole(ctx context.Context, organizationID, roleID uuid.UUID, name, description *string, actor audit.Actor) (*Role, error) {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -108,11 +108,11 @@ func (s *Service) UpdateRole(ctx context.Context, tenantID, roleID uuid.UUID, na
 	defer tx.Rollback(ctx)
 	q := s.repo.q.WithTx(tx)
 
-	old, err := editableRole(ctx, q, tenantID, roleID)
+	old, err := editableRole(ctx, q, organizationID, roleID)
 	if err != nil {
 		return nil, err
 	}
-	next := dbgen.UpdateRoleParams{ID: roleID, TenantID: tenantID, Name: old.Name, Description: old.Description}
+	next := dbgen.UpdateRoleParams{ID: roleID, OrganizationID: organizationID, Name: old.Name, Description: old.Description}
 	changes := map[string]any{}
 	if name != nil && *name != old.Name {
 		next.Name = *name
@@ -127,13 +127,13 @@ func (s *Service) UpdateRole(ctx context.Context, tenantID, roleID uuid.UUID, na
 		return &role, nil
 	}
 	row, err := q.UpdateRole(ctx, next)
-	if pgxerr.IsUnique(err) {
-		return nil, errs.ErrRBACRoleNameExists
+	if postgres.IsUnique(err) {
+		return nil, ErrRoleNameExists
 	}
 	if err != nil {
 		return nil, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.updated", "role", roleID, changes)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "role.updated", "role", roleID, changes)); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -143,11 +143,11 @@ func (s *Service) UpdateRole(ctx context.Context, tenantID, roleID uuid.UUID, na
 	return &role, nil
 }
 
-// DeleteRole deletes tenantID's custom role roleID, audited as role.deleted.
-// It is refused with ErrRBACRoleInUse, counting them, while people, groups or
+// DeleteRole deletes organizationID's custom role roleID, audited as role.deleted.
+// It is refused with ErrRoleInUse, counting them, while people, groups or
 // open invitations hold it: someone whose only role it is would leave the
-// organisation with it. A built-in role is refused.
-func (s *Service) DeleteRole(ctx context.Context, tenantID, roleID uuid.UUID, actor audit.Actor) error {
+// organization with it. A built-in role is refused.
+func (s *Service) DeleteRole(ctx context.Context, organizationID, roleID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
 		return err
@@ -155,23 +155,23 @@ func (s *Service) DeleteRole(ctx context.Context, tenantID, roleID uuid.UUID, ac
 	defer tx.Rollback(ctx)
 	q := s.repo.q.WithTx(tx)
 
-	role, err := editableRole(ctx, q, tenantID, roleID)
+	role, err := editableRole(ctx, q, organizationID, roleID)
 	if err != nil {
 		return err
 	}
-	use, err := q.RoleUse(ctx, dbgen.RoleUseParams{RoleID: roleID, TenantID: tenantID})
+	use, err := q.RoleUse(ctx, dbgen.RoleUseParams{RoleID: roleID, OrganizationID: organizationID})
 	if err != nil {
 		return err
 	}
 	if use.People > 0 || use.Groups > 0 || use.Invitations > 0 {
-		return errs.ErrRBACRoleInUse.WithMetadata(map[string]any{
+		return ErrRoleInUse.WithMetadata(map[string]any{
 			"people": use.People, "groups": use.Groups, "invitations": use.Invitations,
 		})
 	}
-	if err := q.DeleteRole(ctx, dbgen.DeleteRoleParams{ID: roleID, TenantID: tenantID}); err != nil {
+	if err := q.DeleteRole(ctx, dbgen.DeleteRoleParams{ID: roleID, OrganizationID: organizationID}); err != nil {
 		return err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.deleted", "role", roleID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "role.deleted", "role", roleID,
 		map[string]any{"name": role.Name})); err != nil {
 		return err
 	}

@@ -1,0 +1,60 @@
+package group
+
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// TestNewServiceNeedsASeatGuard checks that the group service can't be built
+// without the seat guard a role-carrying group is held to.
+func TestNewServiceNeedsASeatGuard(t *testing.T) {
+	if svc, err := NewService(&pgxpool.Pool{}, nil); err == nil {
+		t.Fatalf("NewService without a seat guard: %v, nil; want an error", svc)
+	}
+}
+
+// TestUpdateInputTellsAMissingParentFromNull checks that UpdateInput tells a
+// missing parent_id (keep the parent) from an explicit null (make it top-level).
+func TestUpdateInputTellsAMissingParentFromNull(t *testing.T) {
+	id := uuid.New()
+	for _, c := range []struct {
+		body    string
+		set     bool
+		id      *uuid.UUID
+		name    *string
+		wantErr bool
+	}{
+		{body: `{}`},
+		{body: `{"name": "Platform"}`, name: new("Platform")},
+		{body: `{"parent_id": null}`, set: true},
+		{body: `{"parent_id": "` + id.String() + `"}`, set: true, id: &id},
+		{body: `{"parent_id": "not-a-uuid"}`, wantErr: true},
+	} {
+		var in UpdateInput
+		err := json.Unmarshal([]byte(c.body), &in)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("%s: decoded without error", c.body)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", c.body, err)
+		}
+		if in.ParentID.Set != c.set {
+			t.Errorf("%s: Set = %v, want %v", c.body, in.ParentID.Set, c.set)
+		}
+		if (in.ParentID.ID == nil) != (c.id == nil) || (c.id != nil && *in.ParentID.ID != *c.id) {
+			t.Errorf("%s: ID = %v, want %v", c.body, in.ParentID.ID, c.id)
+		}
+		if (in.Name == nil) != (c.name == nil) || (c.name != nil && *in.Name != *c.name) {
+			t.Errorf("%s: Name = %v, want %v", c.body, in.Name, c.name)
+		}
+		if in.Description != nil {
+			t.Errorf("%s: Description = %q, want unset", c.body, *in.Description)
+		}
+	}
+}

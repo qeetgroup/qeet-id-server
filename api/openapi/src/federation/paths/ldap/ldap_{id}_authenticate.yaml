@@ -1,0 +1,150 @@
+post:
+  operationId: authenticateLdap
+  summary: Authenticate (public)
+  tags:
+    - LDAP
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - username
+            - password
+          properties:
+            username:
+              type: string
+              minLength: 1
+            password:
+              type: string
+              format: password
+  description: >-
+    Signs a person in with their directory username and password and answers
+    with a token pair, or with a challenge to complete at POST /v1/auth/mfa as
+    for a password sign-in. The connection's organization's network rules apply
+    first (403 auth.address_not_allowed, whatever the password), then the
+    password is checked by a bind against the connection's directory, under the
+    sign-in lockout, login hook, risk and second-factor rules of that
+    organization, as a password sign-in is. The lockout counts a username
+    case-insensitively, ignoring extra spaces. A wrong username or password is
+    refused with 401 ldap.invalid_credentials and counted by the lockout like a
+    wrong password. A locked account answers 429 auth.account_locked whatever
+    the password (a throttled source network, 429 too_many_requests), and when
+    the lockout counters cannot be read or written the sign-in is refused with
+    503 auth.sign_in_unavailable. A disabled connection is refused with 403
+    ldap.connection_disabled, and a draft one, still being set up, with 403
+    ldap.connection_draft; one whose organization's plan no longer includes LDAP
+    is refused with 402 billing.upgrade_required, before the directory is asked.
+    A sign-in that needs another step (a second factor, setting one up, or a
+    risk confirmation by an emailed code) answers with that challenge, as POST
+    /v1/auth/login does; the session it completes is recorded as an ldap_mfa
+    sign-in. A directory account whose email belongs to an account outside the
+    connection's organization is refused with 403 ldap.account_not_in_organization,
+    and an account that is not active with 403 auth.account_inactive. An empty
+    username or password is refused with 400 ldap.credentials_required, and a
+    connection that does not verify the directory's certificate with 422
+    ldap.tls_verify_required. A connection saved without TLS (ldap:// with
+    start_tls off) is refused with 422 ldap.tls_required before the directory
+    is asked, so no password is sent in the clear, and the refusal is recorded
+    in the organization's audit trail (ldap.connection_refused). The account signed in must have the connection's
+    organization as its home (403 ldap.account_not_in_organization), and an existing
+    one adopted by email a verified address, or one the organization's directory
+    provisioned (SCIM), which is then marked verified (403
+    ldap.account_unverified otherwise). A directory entry is linked to the
+    connection that bound it. An address not yet linked is adopted or given an
+    account only on a domain the organization has verified (the most specific
+    verified domain decides, 403 ldap.email_domain_unverified otherwise), and an
+    account that owns the organization or holds any permission there but the
+    reads organization.read, user.read, role.read, group.read, connection.read,
+    apikey.read, webhook.read, billing.read, policy.read, audit.read and
+    analytics.read is not adopted by its address (403
+    ldap.account_administers): it keeps its own credentials. A new account is
+    created only while the domain that manages the address has jit_enabled on;
+    otherwise an address with no account is refused with 403
+    ldap.jit_not_allowed and nothing is created. Existing members are adopted
+    either way. Every sign-in then brings the account in step with the
+    directory, each change audited: its display name; its address, when the
+    directory's is on a domain the organization has verified, is no other
+    account's, and the account doesn't administer the organization (recovery
+    links sent to the old address then stop working); and its groups, as GET
+    /v1/organizations/{organizationID}/ldap/{id}/group-mappings describes.
+  responses:
+    "200":
+      description: >-
+        Signed in with a token pair, or a challenge to complete at POST
+        /v1/auth/mfa (the MFAChallenge of the authentication API).
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: ../../../shared/schemas/TokenPair.yaml
+              - $ref: ../../../shared/schemas/MFAChallenge.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      description: >-
+        The directory refused the username or password
+        (`ldap.invalid_credentials`).
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Error.yaml
+    "402":
+      description: >-
+        The organization's plan does not include LDAP
+        (`billing.upgrade_required`).
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Error.yaml
+    "403":
+      description: >-
+        The organization does not allow sign-in from this network
+        (`auth.address_not_allowed`), the connection is disabled or still a
+        draft (`ldap.connection_disabled`, `ldap.connection_draft`), or the
+        account may not sign in here (`ldap.account_not_in_organization`,
+        `ldap.account_unverified`, `ldap.email_domain_unverified`,
+        `ldap.account_administers`, `ldap.jit_not_allowed`,
+        `auth.account_inactive`).
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Error.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      description: >-
+        The account is locked (`auth.account_locked`), the source network is
+        throttled, or the rate limit is exceeded (`too_many_requests`). A locked
+        account gets the same answer whatever the password.
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Error.yaml
+    "503":
+      description: >-
+        The sign-in lockout could not be evaluated, so the attempt was refused
+        (`auth.sign_in_unavailable`, retryable).
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Error.yaml

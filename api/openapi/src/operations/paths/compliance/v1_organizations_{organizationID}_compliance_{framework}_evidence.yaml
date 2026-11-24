@@ -1,0 +1,86 @@
+post:
+  operationId: generateComplianceEvidence
+  summary: Generate compliance evidence
+  description: >-
+    Runs all controls for the framework against live organization state (MFA policy,
+    audit log, RBAC, retention, SIEM config, secrets vault, etc.), persists an
+    immutable evidence run, and returns the full per-control report. framework
+    must be 'soc2' or 'iso27001'.
+  tags:
+    - Compliance
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: framework
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+          - soc2
+          - iso27001
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "201":
+      description: >-
+        Evidence run generated; body contains the full control-by-control
+        report.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/EvidenceRun.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+get:
+  operationId: listComplianceEvidence
+  summary: List compliance evidence runs
+  description: >-
+    Returns previous evidence runs for the framework, most recent first.
+    Controls are omitted; call GET .../compliance/evidence/{id} for the full
+    report.
+  tags:
+    - Compliance
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: framework
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+          - soc2
+          - iso27001
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: List of evidence runs (controls omitted).
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/EvidenceRun.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

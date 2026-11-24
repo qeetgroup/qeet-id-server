@@ -1,0 +1,47 @@
+post:
+  operationId: finishPasskeyRegistration
+  summary: Register finish
+  tags:
+    - Passkeys
+  security:
+    - bearerAuth: []
+    - ssoCookie: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/registerFinishInput.yaml
+  description: >-
+    Verifies the attestation and stores the passkey. An optional `name` is
+    cleaned and checked as in Rename passkey (422 when too long, before the
+    ceremony is used, so it can be finished again with a corrected name);
+    without one the passkey is named after the enrolling browser, for example
+    "Chrome on macOS", or "Passkey". The passkey sign-up finish calls name the
+    passkey the same way. The passkey belongs to the signed-in user (and so to
+    their organization); the body cannot name another. The ceremony id is
+    single-use and only the user it was issued to can finish it: an expired or
+    already-used one is refused (400 auth.session_expired), another user's with
+    400 passkey.session_mismatch. Refused with 403 passkey.disabled when the
+    user's organization has switched passkeys off since the ceremony began.
+    Accepts the hosted-login session cookie like Register begin, with the same
+    CSRF requirement. The new passkey is audited as passkey.registered (its id
+    and name) in the audit trail of the organization the session is in, and the
+    account holder is emailed that a passkey was added.
+  responses:
+    "204":
+      description: Created
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

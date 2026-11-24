@@ -1,0 +1,53 @@
+post:
+  operationId: startPortalSamlTestSignIn
+  summary: Begin a test sign-in (portal)
+  description: >-
+    Starts a real sign-in through the connection in the IT admin's browser that
+    signs nobody in: no account is created or changed and no session is issued,
+    and a draft connection can be tested. Requires the link's capabilities to
+    include saml; the connection must belong to the organization bound to the portal
+    session. Send the browser to redirect_url. The IdP's answer is validated
+    exactly as a sign-in's (signature, issuer, audience, destination, validity
+    period, correlation, replay) and only in the browser that began the test;
+    the browser then returns to the hosted enterprise-setup page with
+    `#saml_test={test id}&saml_connection={connection id}` in its fragment, and
+    the result is read from the test-sign-in endpoint below. The test waits ten
+    minutes for the answer, and the result is kept for an hour. Audited as
+    saml.test_sign_in_started. An IdP SSO URL that is not an absolute https URL
+    answers 422 saml.sso_url_invalid, a certificate that does not parse 422
+    saml.certificate_invalid.
+  tags:
+    - Admin Portal
+  security:
+    - adminPortalCookie: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    "201":
+      description: Test begun; send the browser to redirect_url
+      headers:
+        Set-Cookie:
+          description: Binds the test to this browser.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/SAMLTestSignIn.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

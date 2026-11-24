@@ -1,0 +1,84 @@
+//go:build integration
+
+package verification
+
+import (
+	"errors"
+	"regexp"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
+)
+
+// TestEmailVerification checks that the code mailed to the address on file
+// verifies it, that a wrong code doesn't, and that the code works once.
+func TestEmailVerification(t *testing.T) {
+	ctx := dbtest.Context(t)
+	mail := &dbtest.Mailbox{}
+	svc := newService(t, mail)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
+	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: &organization}
+	verified := func() int {
+		return dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email_verified_at IS NOT NULL`, a.ID)
+	}
+
+	if err := svc.StartEmail(ctx, a.ID, "", who); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	msg := mail.Last(t)
+	code := regexp.MustCompile(`\b\d{6}\b`).FindString(msg.Body)
+	if msg.To != a.Email || code == "" {
+		t.Fatalf("verification mail to %s with body %q; want a code to %s", msg.To, msg.Body, a.Email)
+	}
+
+	wrong := "000000"
+	if code == wrong {
+		wrong = "111111"
+	}
+	if err := svc.ConfirmEmail(ctx, a.ID, wrong, who); !errors.Is(err, ErrVerifyCodeInvalid) {
+		t.Errorf("wrong code: %v, want %v", err, ErrVerifyCodeInvalid)
+	}
+	if verified() != 0 {
+		t.Fatal("a wrong code verified the address")
+	}
+	if err := svc.ConfirmEmail(ctx, a.ID, code, who); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if verified() != 1 {
+		t.Fatal("the right code did not verify the address")
+	}
+	if err := svc.ConfirmEmail(ctx, a.ID, code, who); !errors.Is(err, ErrVerifyCodeUsed) {
+		t.Errorf("second use of the code: %v, want %v", err, ErrVerifyCodeUsed)
+	}
+}
+
+// TestEmailVerificationNamesItsTemplate checks that the code names the
+// verify_email template of the session's organization, if any.
+func TestEmailVerificationNamesItsTemplate(t *testing.T) {
+	ctx := dbtest.Context(t)
+	mail := &dbtest.Mailbox{}
+	svc := newService(t, mail)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
+	for _, session := range []*uuid.UUID{&organization, nil} {
+		who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: session}
+		if err := svc.StartEmail(ctx, a.ID, "", who); err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		msg := mail.Last(t)
+		want := ""
+		if session != nil {
+			want = organization.String()
+		}
+		code := regexp.MustCompile(`\b\d{6}\b`).FindString(msg.Body)
+		if msg.TemplateKey != "verify_email" || msg.OrganizationID != want || code == "" ||
+			msg.TemplateVariables["code"] != code || msg.TemplateVariables["ttl"] == "" {
+			t.Errorf("session in %v: template %q of organization %q with %v; want verify_email of %q with the code %s and its lifetime",
+				session, msg.TemplateKey, msg.OrganizationID, msg.TemplateVariables, want, code)
+		}
+	}
+}

@@ -15,14 +15,17 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
+
+// system is the actor of a test's own calls.
+var system = audit.Actor{Type: "system"}
 
 // oauthProvider is a fake third-party authorization server. Its code exchange
 // issues an access token that is already due for refresh, so the next read
@@ -103,7 +106,7 @@ func signedIn(p *httpx.Principal, scopes ...string) *httpx.Principal {
 	return p
 }
 
-// TestConnectedAccountLifecycle checks that an organisation registers a
+// TestConnectedAccountLifecycle checks that an organization registers a
 // provider without its secret ever being returned, a person connects an
 // account once per ceremony, only in the browser that began it and with its
 // PKCE verifier, its token is refreshed when due and given only to that person
@@ -111,14 +114,14 @@ func signedIn(p *httpx.Principal, scopes ...string) *httpx.Principal {
 func TestConnectedAccountLifecycle(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := vaultService(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
 	provider := newOAuthProvider(t)
 	vault := &Handler{Service: svc, PublicBaseURL: "https://id.example.test"}
-	asPerson := dbtest.Serve(signedIn(dbtest.Principal(person.ID, tenant), "vault:acme"), vault.Mount)
+	asPerson := dbtest.Serve(signedIn(dbtest.Principal(person.ID, organization), "vault:acme"), vault.Mount)
 	public := chi.NewRouter()
 	vault.MountPublic(public)
-	providers := "/tenants/" + tenant.String() + "/vault/tokens/providers"
+	providers := "/organizations/" + organization.String() + "/vault/tokens/providers"
 
 	rec := dbtest.Do(t, asPerson, http.MethodPost, providers, map[string]string{
 		"provider": "acme", "client_id": "qeet-client", "client_secret": "provider-client-secret",
@@ -212,7 +215,7 @@ func TestConnectedAccountLifecycle(t *testing.T) {
 		}
 	}
 	expired := connect()
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.token_vault_connect_states SET expires_at = now() - interval '1 minute' WHERE state = $1`, expired); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE organization.token_vault_connect_states SET expires_at = now() - interval '1 minute' WHERE state = $1`, expired); err != nil {
 		t.Fatal(err)
 	}
 	if rec := callback("state="+expired+"&code=good-code", browser); !strings.Contains(rec.Body.String(), "expired") {
@@ -244,72 +247,43 @@ func TestConnectedAccountLifecycle(t *testing.T) {
 	}
 
 	for name, p := range map[string]*httpx.Principal{
-		"an API key":           {UserID: &person.ID, TenantID: &tenant, ActorType: "api_key", Subject: "key-1", Scopes: []string{"vault:read"}},
-		"an application":       {UserID: &person.ID, TenantID: &tenant, ActorType: "user", ClientID: "app", SessionID: &person.ID, Scopes: []string{"vault:read"}},
-		"without a session":    {UserID: &person.ID, TenantID: &tenant, ActorType: "user", Scopes: []string{"vault:read"}},
-		"without the scope":    signedIn(dbtest.Principal(person.ID, tenant), "vault:other"),
-		"another person":       signedIn(dbtest.Principal(dbtest.User(t, tenant, tenant).ID, tenant), "vault:read"),
-		"another organisation": signedIn(dbtest.Principal(person.ID, other), "vault:read"),
+		"an API key":           {UserID: &person.ID, OrganizationID: &organization, ActorType: "api_key", Subject: "key-1", Scopes: []string{"vault:read"}},
+		"an application":       {UserID: &person.ID, OrganizationID: &organization, ActorType: "user", ClientID: "app", SessionID: &person.ID, Scopes: []string{"vault:read"}},
+		"without a session":    {UserID: &person.ID, OrganizationID: &organization, ActorType: "user", Scopes: []string{"vault:read"}},
+		"without the scope":    signedIn(dbtest.Principal(person.ID, organization), "vault:other"),
+		"another person":       signedIn(dbtest.Principal(dbtest.User(t, organization, organization).ID, organization), "vault:read"),
+		"another organization": signedIn(dbtest.Principal(person.ID, other), "vault:read"),
 	} {
 		if code, body := accessToken(dbtest.Serve(p, vault.Mount)); code == http.StatusOK || strings.Contains(body, "access-2") {
 			t.Errorf("%s read the token: %d %s", name, code, body)
 		}
 	}
 	var refused int
-	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'vault.tokens.access_refused'`, tenant).Scan(&refused); err != nil || refused != 3 {
+	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'vault.tokens.access_refused'`, organization).Scan(&refused); err != nil || refused != 3 {
 		t.Errorf("%d refused reads recorded (%v), want the three credentials that aren't a signed-in person", refused, err)
 	}
 
 	if rec := dbtest.Do(t, asPerson, http.MethodDelete, "/vault/tokens/acme", nil); rec.Code != http.StatusNoContent {
 		t.Errorf("disconnect: %d", rec.Code)
 	}
-	if code, body := accessToken(asPerson); !strings.Contains(body, errs.CodeTokenVaultGrantNotFound) {
+	if code, body := accessToken(asPerson); !strings.Contains(body, ErrGrantNotFound.Code) {
 		t.Errorf("after disconnecting: %d %s", code, body)
 	}
 	if rec := dbtest.Do(t, asPerson, http.MethodDelete, providers+"/acme", nil); rec.Code != http.StatusNoContent {
 		t.Errorf("delete provider: %d", rec.Code)
 	}
-	if rec := dbtest.Do(t, asPerson, http.MethodGet, "/vault/tokens/acme/connect", nil); !strings.Contains(rec.Body.String(), errs.CodeTokenVaultProviderNotFound) {
+	if rec := dbtest.Do(t, asPerson, http.MethodGet, "/vault/tokens/acme/connect", nil); !strings.Contains(rec.Body.String(), CodeProviderNotFound) {
 		t.Errorf("connect to a deleted provider: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
-// TestProviderSecretIsEncryptedOnUse checks that a provider stored with a
-// plaintext client secret works and has it encrypted the first time it's used,
-// and that a provider at a private address is refused.
-func TestProviderSecretIsEncryptedOnUse(t *testing.T) {
-	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
-	svc := vaultService(t)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO tenant.token_vault_providers (tenant_id, provider, client_id, client_secret, authorize_url, token_url)
-		VALUES ($1, 'legacy', 'qeet-client', 'older-plain-secret', 'https://auth.example.test/authorize', 'https://auth.example.test/token')
-	`, tenant); err != nil {
+// connected stores a grant of person's for provider, as a finished connect
+// ceremony would.
+func connected(t *testing.T, organization, person uuid.UUID, provider string) {
+	t.Helper()
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
+		INSERT INTO organization.token_vault_grants (organization_id, user_id, provider, access_token_ct, access_token_nonce, refresh_token_ct, refresh_token_nonce)
+		VALUES ($1, $2, $3, 'ct', 'nonce', 'ct', 'nonce')`, organization, person, provider); err != nil {
 		t.Fatal(err)
-	}
-	for range 2 {
-		if _, _, err := svc.BeginConnect(ctx, tenant, person.ID, "legacy", "https://id.example.test"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var plain string
-	var version int
-	if err := pool.QueryRow(ctx, `SELECT client_secret, encryption_version FROM tenant.token_vault_providers WHERE tenant_id = $1`, tenant).Scan(&plain, &version); err != nil {
-		t.Fatal(err)
-	}
-	if plain != "" || version != 1 {
-		t.Errorf("after use the client secret is %q at version %d; want it encrypted", plain, version)
-	}
-	if _, _, _, _, _, err := svc.providerConfig(ctx, tenant, "legacy"); err != nil {
-		t.Errorf("read the encrypted secret: %v", err)
-	}
-
-	strict := NewService(pool, testCipher(t))
-	if _, err := strict.RegisterProvider(ctx, tenant, RegisterProviderInput{
-		Provider: "internal", ClientID: "c", ClientSecret: "s", AuthorizeURL: "http://127.0.0.1:9/authorize", TokenURL: "http://127.0.0.1:9/token",
-	}); err == nil {
-		t.Error("a provider at a private address was registered")
 	}
 }

@@ -1,0 +1,35 @@
+get:
+  operationId: getSamlSpMetadata
+  description: >-
+    Returns Qeet's Service Provider metadata XML for a specific connection,
+    comprising the SP entity id, the HTTP-POST Assertion Consumer Service
+    location and, under KeyDescriptor use="encryption", the connection's own
+    certificate for the IdP to encrypt assertions to (made the first time the
+    metadata is fetched; its private key is stored envelope-encrypted), for an
+    external IdP administrator to configure the trust. Mounted at the root, not
+    under /v1, and unauthenticated. Qeet acts as the Service Provider here; this
+    is distinct from the IdP-side metadata at /saml/idp/{organizationID}/metadata.
+  summary: SP metadata (public)
+  tags:
+    - SAML
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security: []
+  responses:
+    "200":
+      description: SP metadata XML
+      content:
+        application/samlmetadata+xml:
+          schema:
+            type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

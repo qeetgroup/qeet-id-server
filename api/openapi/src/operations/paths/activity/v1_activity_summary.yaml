@@ -1,0 +1,129 @@
+get:
+  operationId: getActivitySummary
+  summary: Activity summary
+  description: >-
+    Aggregate counts over the same filters as the history endpoint (types,
+    actor, subject, from/to, q, resource_type, resource_id, ip, category,
+    severity and min_severity), so category and severity together total the
+    events of both; by_severity and by_category then show the spread within what
+    the filters match. Without an explicit `from` the window defaults to the
+    last 24h; it is capped at 366 days, with buckets of up to a week. Organization is
+    derived from the JWT principal only.
+  tags:
+    - Activity
+  parameters:
+    - name: types
+      in: query
+      required: false
+      description: Comma-separated exact event types (audit action values).
+      schema:
+        type: string
+    - name: actor
+      in: query
+      required: false
+      description: Filter by actor user UUID.
+      schema:
+        type: string
+        format: uuid
+    - name: subject
+      in: query
+      required: false
+      description: >-
+        Identity-timeline filter (actor, user-resource target, or the person
+        named in metadata.user_id).
+      schema:
+        type: string
+        format: uuid
+    - name: q
+      in: query
+      required: false
+      description: Search, as for the history.
+      schema:
+        type: string
+    - name: from
+      in: query
+      required: false
+      description: Inclusive lower bound (RFC3339); defaults to now-24h.
+      schema:
+        type: string
+        anyOf:
+          - format: date-time
+          - maxLength: 0
+        description: An RFC 3339 time; empty means none.
+    - name: to
+      in: query
+      required: false
+      description: Inclusive upper bound (RFC3339); defaults to now.
+      schema:
+        type: string
+        anyOf:
+          - format: date-time
+          - maxLength: 0
+        description: An RFC 3339 time; empty means none.
+    - name: category
+      in: query
+      required: false
+      description: Comma-separated categories, as for the history.
+      schema:
+        type: string
+        pattern: "^(authentication|authorization|security|directory|developer|system)(,(authentication|authorization|security|directory|developer|system))*$"
+    - name: severity
+      in: query
+      required: false
+      description: Comma-separated severities, as for the history.
+      schema:
+        type: string
+        pattern: "^(info|success|warning|error|critical)(,(info|success|warning|error|critical))*$"
+    - name: min_severity
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [info, success, warning, error, critical]
+    - name: resource_type
+      in: query
+      required: false
+      schema:
+        type: string
+    - name: resource_id
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+    - name: ip
+      in: query
+      required: false
+      schema:
+        type: string
+        anyOf:
+          - format: ipv4
+          - format: ipv6
+    - name: bucket
+      in: query
+      required: false
+      description: >-
+        Sparkline bucket width in seconds (60–86400). Omit to auto-size to ~48
+        buckets across the window.
+      schema:
+        type: integer
+        minimum: 60
+        maximum: 86400
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Aggregate activity summary
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/ActivitySummaryResponse.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

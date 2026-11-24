@@ -10,8 +10,62 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const claimablePushPairing = `-- name: ClaimablePushPairing :one
+SELECT p.id, p.user_id, p.organization_id, u.email
+FROM auth.mfa_push_pairings p
+JOIN account.users u ON u.id = p.user_id
+WHERE p.code_hash = $1 AND p.used_at IS NULL AND p.expires_at > NOW()
+  AND u.status = 'active' AND u.deleted_at IS NULL
+FOR UPDATE OF p
+`
+
+type ClaimablePushPairingRow struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+	Email          string
+}
+
+// The live pairing code with this hash of an active account, locked for the
+// claim that uses it up.
+func (q *Queries) ClaimablePushPairing(ctx context.Context, codeHash string) (ClaimablePushPairingRow, error) {
+	row := q.db.QueryRow(ctx, claimablePushPairing, codeHash)
+	var i ClaimablePushPairingRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.OrganizationID,
+		&i.Email,
+	)
+	return i, err
+}
+
+const clearAttemptBudget = `-- name: ClearAttemptBudget :exec
+DELETE FROM auth.mfa_attempt_budgets WHERE user_id = $1 AND purpose = $2
+`
+
+type ClearAttemptBudgetParams struct {
+	UserID  uuid.UUID
+	Purpose string
+}
+
+func (q *Queries) ClearAttemptBudget(ctx context.Context, arg ClearAttemptBudgetParams) error {
+	_, err := q.db.Exec(ctx, clearAttemptBudget, arg.UserID, arg.Purpose)
+	return err
+}
+
+const closeUndeliveredPushChallenge = `-- name: CloseUndeliveredPushChallenge :exec
+UPDATE auth.mfa_push_challenges SET status = 'expired', expires_at = LEAST(expires_at, NOW())
+WHERE id = $1 AND status = 'pending'
+`
+
+// Closes a pending request no phone accepted.
+func (q *Queries) CloseUndeliveredPushChallenge(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, closeUndeliveredPushChallenge, id)
+	return err
+}
 
 const confirmMFATOTP = `-- name: ConfirmMFATOTP :exec
 
@@ -23,6 +77,28 @@ UPDATE auth.mfa_totp SET confirmed_at = NOW() WHERE user_id = $1
 func (q *Queries) ConfirmMFATOTP(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, confirmMFATOTP, userID)
 	return err
+}
+
+const consumeTOTPStep = `-- name: ConsumeTOTPStep :execrows
+
+UPDATE auth.mfa_totp SET last_used_step = $1
+WHERE user_id = $2 AND (last_used_step IS NULL OR last_used_step < $1)
+`
+
+type ConsumeTOTPStepParams struct {
+	Step   *int64
+	UserID uuid.UUID
+}
+
+// ── Authenticator app (totp.go) ──────────────────────────────────────────────
+// Marks a TOTP time step used: no row when that step or a later one already
+// was, so one code never authenticates twice.
+func (q *Queries) ConsumeTOTPStep(ctx context.Context, arg ConsumeTOTPStepParams) (int64, error) {
+	result, err := q.db.Exec(ctx, consumeTOTPStep, arg.Step, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteMFAOTPFactors = `-- name: DeleteMFAOTPFactors :exec
@@ -69,6 +145,22 @@ func (q *Queries) DeleteOTPFactor(ctx context.Context, arg DeleteOTPFactorParams
 	return result.RowsAffected(), nil
 }
 
+const deleteOtherPushDevicesWithToken = `-- name: DeleteOtherPushDevicesWithToken :exec
+DELETE FROM auth.mfa_push_devices WHERE user_id = $1 AND push_token_hash = $2 AND id <> $3
+`
+
+type DeleteOtherPushDevicesWithTokenParams struct {
+	UserID        uuid.UUID
+	PushTokenHash string
+	ID            uuid.UUID
+}
+
+// Removes the user's other links holding the same push token.
+func (q *Queries) DeleteOtherPushDevicesWithToken(ctx context.Context, arg DeleteOtherPushDevicesWithTokenParams) error {
+	_, err := q.db.Exec(ctx, deleteOtherPushDevicesWithToken, arg.UserID, arg.PushTokenHash, arg.ID)
+	return err
+}
+
 const deletePushDevice = `-- name: DeletePushDevice :execrows
 DELETE FROM auth.mfa_push_devices WHERE id = $1 AND user_id = $2
 `
@@ -93,7 +185,7 @@ DELETE FROM auth.mfa_push_devices WHERE id = $1 AND user_id = $2 AND device_toke
 type DeletePushDeviceByCredentialParams struct {
 	ID              uuid.UUID
 	UserID          uuid.UUID
-	DeviceTokenHash *string
+	DeviceTokenHash string
 }
 
 // DeletePushDeviceByCredential removes a linked phone that proves it is that
@@ -104,6 +196,45 @@ func (q *Queries) DeletePushDeviceByCredential(ctx context.Context, arg DeletePu
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const ensureAttemptBudget = `-- name: EnsureAttemptBudget :exec
+
+INSERT INTO auth.mfa_attempt_budgets (user_id, purpose) VALUES ($1, $2)
+ON CONFLICT DO NOTHING
+`
+
+type EnsureAttemptBudgetParams struct {
+	UserID  uuid.UUID
+	Purpose string
+}
+
+// ── Attempt budgets (attempts.go) ────────────────────────────────────────────
+func (q *Queries) EnsureAttemptBudget(ctx context.Context, arg EnsureAttemptBudgetParams) error {
+	_, err := q.db.Exec(ctx, ensureAttemptBudget, arg.UserID, arg.Purpose)
+	return err
+}
+
+const expireLiveOTPCodes = `-- name: ExpireLiveOTPCodes :exec
+UPDATE auth.mfa_otp_codes SET expires_at = NOW()
+WHERE factor_id = $1 AND used_at IS NULL AND expires_at > NOW()
+`
+
+// Ends the factor's unused codes, so only the newest works.
+func (q *Queries) ExpireLiveOTPCodes(ctx context.Context, factorID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, expireLiveOTPCodes, factorID)
+	return err
+}
+
+const expireLivePushPairings = `-- name: ExpireLivePushPairings :exec
+UPDATE auth.mfa_push_pairings SET expires_at = NOW()
+WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW()
+`
+
+// Ends the user's unused pairing codes, so only the newest works.
+func (q *Queries) ExpireLivePushPairings(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, expireLivePushPairings, userID)
+	return err
 }
 
 const expirePushChallenge = `-- name: ExpirePushChallenge :exec
@@ -142,12 +273,10 @@ const getMFATOTPConfirmed = `-- name: GetMFATOTPConfirmed :one
 SELECT confirmed_at FROM auth.mfa_totp WHERE user_id = $1
 `
 
-// GetMFATOTPConfirmed returns confirmed_at (nullable). Callers check .Valid to test
-// enrollment. Returning the full timestamp avoids sqlc's interface{} inference for
-// IS NOT NULL expressions.
-func (q *Queries) GetMFATOTPConfirmed(ctx context.Context, userID uuid.UUID) (pgtype.Timestamptz, error) {
+// GetMFATOTPConfirmed returns confirmed_at: nil while the app is unconfirmed.
+func (q *Queries) GetMFATOTPConfirmed(ctx context.Context, userID uuid.UUID) (*time.Time, error) {
 	row := q.db.QueryRow(ctx, getMFATOTPConfirmed, userID)
-	var confirmed_at pgtype.Timestamptz
+	var confirmed_at *time.Time
 	err := row.Scan(&confirmed_at)
 	return confirmed_at, err
 }
@@ -215,7 +344,7 @@ type GetOTPFactorForChallengeParams struct {
 type GetOTPFactorForChallengeRow struct {
 	Channel     string
 	Destination string
-	VerifiedAt  pgtype.Timestamptz
+	VerifiedAt  *time.Time
 }
 
 func (q *Queries) GetOTPFactorForChallenge(ctx context.Context, arg GetOTPFactorForChallengeParams) (GetOTPFactorForChallengeRow, error) {
@@ -280,6 +409,56 @@ func (q *Queries) GetPushChallengeForUpdate(ctx context.Context, id uuid.UUID) (
 		&i.MatchNumber,
 	)
 	return i, err
+}
+
+const getPushPairing = `-- name: GetPushPairing :one
+SELECT expires_at, used_at, device_id FROM auth.mfa_push_pairings WHERE id = $1 AND user_id = $2
+`
+
+type GetPushPairingParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+type GetPushPairingRow struct {
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	DeviceID  *uuid.UUID
+}
+
+func (q *Queries) GetPushPairing(ctx context.Context, arg GetPushPairingParams) (GetPushPairingRow, error) {
+	row := q.db.QueryRow(ctx, getPushPairing, arg.ID, arg.UserID)
+	var i GetPushPairingRow
+	err := row.Scan(&i.ExpiresAt, &i.UsedAt, &i.DeviceID)
+	return i, err
+}
+
+const getTOTPSecret = `-- name: GetTOTPSecret :one
+SELECT secret_ct, secret_nonce, confirmed_at FROM auth.mfa_totp WHERE user_id = $1
+`
+
+type GetTOTPSecretRow struct {
+	SecretCt    []byte
+	SecretNonce []byte
+	ConfirmedAt *time.Time
+}
+
+func (q *Queries) GetTOTPSecret(ctx context.Context, userID uuid.UUID) (GetTOTPSecretRow, error) {
+	row := q.db.QueryRow(ctx, getTOTPSecret, userID)
+	var i GetTOTPSecretRow
+	err := row.Scan(&i.SecretCt, &i.SecretNonce, &i.ConfirmedAt)
+	return i, err
+}
+
+const hasPushDevice = `-- name: HasPushDevice :one
+SELECT EXISTS (SELECT 1 FROM auth.mfa_push_devices WHERE user_id = $1)::bool
+`
+
+func (q *Queries) HasPushDevice(ctx context.Context, userID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hasPushDevice, userID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const insertMFAOTPCode = `-- name: InsertMFAOTPCode :exec
@@ -361,23 +540,72 @@ func (q *Queries) InsertPushChallenge(ctx context.Context, arg InsertPushChallen
 	return i, err
 }
 
-const isTenantMember = `-- name: IsTenantMember :one
-SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1 AND ur.tenant_id = $2)
-     OR EXISTS (SELECT 1 FROM "user".users u WHERE u.id = $1 AND u.tenant_id = $2 AND u.deleted_at IS NULL))::bool
+const insertPushPairing = `-- name: InsertPushPairing :one
+INSERT INTO auth.mfa_push_pairings (user_id, organization_id, code_hash, expires_at)
+VALUES ($1, $2, $3, NOW() + make_interval(secs => $4::float8))
+RETURNING id, expires_at
 `
 
-type IsTenantMemberParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+type InsertPushPairingParams struct {
+	UserID         uuid.UUID
+	OrganizationID *uuid.UUID
+	CodeHash       string
+	TtlSeconds     float64
 }
 
-// IsTenantMember says whether the user belongs to the organisation: holds a
-// role in it, or has it as their home organisation.
-func (q *Queries) IsTenantMember(ctx context.Context, arg IsTenantMemberParams) (bool, error) {
-	row := q.db.QueryRow(ctx, isTenantMember, arg.UserID, arg.TenantID)
+type InsertPushPairingRow struct {
+	ID        uuid.UUID
+	ExpiresAt time.Time
+}
+
+func (q *Queries) InsertPushPairing(ctx context.Context, arg InsertPushPairingParams) (InsertPushPairingRow, error) {
+	row := q.db.QueryRow(ctx, insertPushPairing,
+		arg.UserID,
+		arg.OrganizationID,
+		arg.CodeHash,
+		arg.TtlSeconds,
+	)
+	var i InsertPushPairingRow
+	err := row.Scan(&i.ID, &i.ExpiresAt)
+	return i, err
+}
+
+const isOrganizationMember = `-- name: IsOrganizationMember :one
+SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1 AND ur.organization_id = $2)
+     OR EXISTS (SELECT 1 FROM account.users u WHERE u.id = $1 AND u.organization_id = $2 AND u.deleted_at IS NULL))::bool
+`
+
+type IsOrganizationMemberParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// IsOrganizationMember says whether the user belongs to the organization: holds a
+// role in it, or has it as their home organization.
+func (q *Queries) IsOrganizationMember(ctx context.Context, arg IsOrganizationMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isOrganizationMember, arg.UserID, arg.OrganizationID)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const linkedPushDevice = `-- name: LinkedPushDevice :one
+SELECT id FROM auth.mfa_push_devices
+WHERE id = $1 AND user_id = $2 AND device_token_hash = $3 AND device_token_expires_at > NOW()
+`
+
+type LinkedPushDeviceParams struct {
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	DeviceTokenHash string
+}
+
+// The user's linked phone, when it presents its unexpired device credential.
+func (q *Queries) LinkedPushDevice(ctx context.Context, arg LinkedPushDeviceParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, linkedPushDevice, arg.ID, arg.UserID, arg.DeviceTokenHash)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const listOTPFactors = `-- name: ListOTPFactors :many
@@ -400,6 +628,58 @@ func (q *Queries) ListOTPFactors(ctx context.Context, userID uuid.UUID) ([]AuthM
 			&i.Channel,
 			&i.Destination,
 			&i.VerifiedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingPushChallenges = `-- name: ListPendingPushChallenges :many
+SELECT id, user_id, action, context, status, expires_at, created_at
+FROM auth.mfa_push_challenges
+WHERE user_id = $1 AND status = 'pending' AND expires_at > NOW()
+ORDER BY created_at DESC
+LIMIT $2
+`
+
+type ListPendingPushChallengesParams struct {
+	UserID   uuid.UUID
+	RowLimit int32
+}
+
+type ListPendingPushChallengesRow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Action    string
+	Context   []byte
+	Status    string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+// The user's requests still waiting for an answer, newest first.
+func (q *Queries) ListPendingPushChallenges(ctx context.Context, arg ListPendingPushChallengesParams) ([]ListPendingPushChallengesRow, error) {
+	rows, err := q.db.Query(ctx, listPendingPushChallenges, arg.UserID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPendingPushChallengesRow{}
+	for rows.Next() {
+		var i ListPendingPushChallengesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Action,
+			&i.Context,
+			&i.Status,
+			&i.ExpiresAt,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -457,6 +737,46 @@ func (q *Queries) ListPushDevices(ctx context.Context, userID uuid.UUID) ([]List
 	return items, nil
 }
 
+const listPushTargets = `-- name: ListPushTargets :many
+SELECT platform, push_token_ct, push_token_nonce, push_token_hash
+FROM auth.mfa_push_devices
+WHERE user_id = $1 AND device_token_expires_at > NOW()
+`
+
+type ListPushTargetsRow struct {
+	Platform       string
+	PushTokenCt    []byte
+	PushTokenNonce []byte
+	PushTokenHash  string
+}
+
+// The sealed push tokens of the user's phones whose device credential hasn't
+// expired.
+func (q *Queries) ListPushTargets(ctx context.Context, userID uuid.UUID) ([]ListPushTargetsRow, error) {
+	rows, err := q.db.Query(ctx, listPushTargets, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPushTargetsRow{}
+	for rows.Next() {
+		var i ListPushTargetsRow
+		if err := rows.Scan(
+			&i.Platform,
+			&i.PushTokenCt,
+			&i.PushTokenNonce,
+			&i.PushTokenHash,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnusedRecoveryCodes = `-- name: ListUnusedRecoveryCodes :many
 SELECT id, code_hash FROM auth.mfa_recovery_codes
 WHERE user_id = $1 AND used_at IS NULL
@@ -488,12 +808,108 @@ func (q *Queries) ListUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID)
 	return items, nil
 }
 
+const lockAttemptBudget = `-- name: LockAttemptBudget :one
+SELECT failed_attempts, window_started_at, locked_until
+FROM auth.mfa_attempt_budgets WHERE user_id = $1 AND purpose = $2
+FOR UPDATE
+`
+
+type LockAttemptBudgetParams struct {
+	UserID  uuid.UUID
+	Purpose string
+}
+
+type LockAttemptBudgetRow struct {
+	FailedAttempts  int16
+	WindowStartedAt time.Time
+	LockedUntil     *time.Time
+}
+
+func (q *Queries) LockAttemptBudget(ctx context.Context, arg LockAttemptBudgetParams) (LockAttemptBudgetRow, error) {
+	row := q.db.QueryRow(ctx, lockAttemptBudget, arg.UserID, arg.Purpose)
+	var i LockAttemptBudgetRow
+	err := row.Scan(&i.FailedAttempts, &i.WindowStartedAt, &i.LockedUntil)
+	return i, err
+}
+
+const lockLinkedPushDevice = `-- name: LockLinkedPushDevice :one
+SELECT id FROM auth.mfa_push_devices
+WHERE id = $1 AND user_id = $2 AND device_token_hash = $3 AND device_token_expires_at > NOW()
+FOR UPDATE
+`
+
+type LockLinkedPushDeviceParams struct {
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	DeviceTokenHash string
+}
+
+// LinkedPushDevice, locked for the change it makes.
+func (q *Queries) LockLinkedPushDevice(ctx context.Context, arg LockLinkedPushDeviceParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockLinkedPushDevice, arg.ID, arg.UserID, arg.DeviceTokenHash)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockOTPFactor = `-- name: LockOTPFactor :exec
+
+SELECT 1 FROM auth.mfa_otp_factors WHERE id = $1 FOR UPDATE
+`
+
+// ── Email and SMS codes (otp.go, login.go) ───────────────────────────────────
+// Holds the factor until the code being sent to it commits, so two sends
+// can't both pass the wait.
+func (q *Queries) LockOTPFactor(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockOTPFactor, id)
+	return err
+}
+
+const lockTOTPConfirmed = `-- name: LockTOTPConfirmed :one
+SELECT (confirmed_at IS NOT NULL)::bool AS confirmed FROM auth.mfa_totp WHERE user_id = $1 FOR UPDATE
+`
+
+// Whether the user's app is confirmed, its row locked for the setup that
+// replaces it.
+func (q *Queries) LockTOTPConfirmed(ctx context.Context, userID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, lockTOTPConfirmed, userID)
+	var confirmed bool
+	err := row.Scan(&confirmed)
+	return confirmed, err
+}
+
+const lockTOTPSetup = `-- name: LockTOTPSetup :one
+SELECT pending_secret_ct, pending_secret_nonce, pending_started_at, (confirmed_at IS NOT NULL)::bool AS confirmed
+FROM auth.mfa_totp WHERE user_id = $1 FOR UPDATE
+`
+
+type LockTOTPSetupRow struct {
+	PendingSecretCt    []byte
+	PendingSecretNonce []byte
+	PendingStartedAt   *time.Time
+	Confirmed          bool
+}
+
+// The app being set up beside a confirmed one (pending_*: none when NULL) and
+// whether one is confirmed, locked for the code that confirms it.
+func (q *Queries) LockTOTPSetup(ctx context.Context, userID uuid.UUID) (LockTOTPSetupRow, error) {
+	row := q.db.QueryRow(ctx, lockTOTPSetup, userID)
+	var i LockTOTPSetupRow
+	err := row.Scan(
+		&i.PendingSecretCt,
+		&i.PendingSecretNonce,
+		&i.PendingStartedAt,
+		&i.Confirmed,
+	)
+	return i, err
+}
+
 const loginFactorCounts = `-- name: LoginFactorCounts :one
 SELECT
     EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL) AS totp,
     (SELECT count(*) FROM auth.mfa_recovery_codes r WHERE r.user_id = $1 AND r.used_at IS NULL)::int AS recovery_codes,
-    CASE WHEN COALESCE((SELECT ap.passkey_enabled FROM "user".users u
-                        JOIN tenant.auth_policy ap ON ap.tenant_id = u.tenant_id
+    CASE WHEN COALESCE((SELECT ap.passkey_enabled FROM account.users u
+                        JOIN organization.auth_policy ap ON ap.organization_id = u.organization_id
                         WHERE u.id = $1), TRUE)
          THEN (SELECT count(*) FROM auth.passkey_credentials p WHERE p.user_id = $1)
          ELSE 0 END::int AS passkeys,
@@ -510,7 +926,7 @@ type LoginFactorCountsRow struct {
 
 // LoginFactorCounts says which second factors the user can meet a sign-in
 // challenge with: a confirmed authenticator app, unused recovery codes,
-// passkeys (while the user's organisation allows passkeys) and push devices.
+// passkeys (while the user's organization allows passkeys) and push devices.
 func (q *Queries) LoginFactorCounts(ctx context.Context, userID uuid.UUID) (LoginFactorCountsRow, error) {
 	row := q.db.QueryRow(ctx, loginFactorCounts, userID)
 	var i LoginFactorCountsRow
@@ -523,13 +939,18 @@ func (q *Queries) LoginFactorCounts(ctx context.Context, userID uuid.UUID) (Logi
 	return i, err
 }
 
-const markOTPCodeUsed = `-- name: MarkOTPCodeUsed :exec
+const markOTPCodeUsed = `-- name: MarkOTPCodeUsed :execrows
 UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL
 `
 
-func (q *Queries) MarkOTPCodeUsed(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markOTPCodeUsed, id)
-	return err
+// Spends an email or SMS code: one row only for the first of two concurrent
+// uses.
+func (q *Queries) MarkOTPCodeUsed(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markOTPCodeUsed, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const markOTPFactorVerified = `-- name: MarkOTPFactorVerified :exec
@@ -541,20 +962,102 @@ func (q *Queries) MarkOTPFactorVerified(ctx context.Context, id uuid.UUID) error
 	return err
 }
 
-const markRecoveryCodeUsed = `-- name: MarkRecoveryCodeUsed :exec
+const markRecoveryCodeUsed = `-- name: MarkRecoveryCodeUsed :execrows
 UPDATE auth.mfa_recovery_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL
 `
 
-func (q *Queries) MarkRecoveryCodeUsed(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markRecoveryCodeUsed, id)
-	return err
+// Spends a recovery code: one row only for the first of two concurrent uses.
+func (q *Queries) MarkRecoveryCodeUsed(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markRecoveryCodeUsed, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const oTPFactorHoldings = `-- name: OTPFactorHoldings :one
+SELECT count(*)::int AS held,
+       COALESCE(bool_or(channel = $1 AND destination = $2), FALSE)::bool AS already
+FROM auth.mfa_otp_factors WHERE user_id = $3
+`
+
+type OTPFactorHoldingsParams struct {
+	Channel     string
+	Destination string
+	UserID      uuid.UUID
+}
+
+type OTPFactorHoldingsRow struct {
+	Held    int32
+	Already bool
+}
+
+// How many email and SMS factors the user holds, and whether one is already
+// for this channel and destination.
+func (q *Queries) OTPFactorHoldings(ctx context.Context, arg OTPFactorHoldingsParams) (OTPFactorHoldingsRow, error) {
+	row := q.db.QueryRow(ctx, oTPFactorHoldings, arg.Channel, arg.Destination, arg.UserID)
+	var i OTPFactorHoldingsRow
+	err := row.Scan(&i.Held, &i.Already)
+	return i, err
+}
+
+const oTPSendHistory = `-- name: OTPSendHistory :one
+SELECT
+    COALESCE((SELECT max(c.created_at) FROM auth.mfa_otp_codes c WHERE c.factor_id = $1),
+             'epoch')::timestamptz AS factor_last,
+    (SELECT count(*) FROM auth.mfa_otp_codes c JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
+      WHERE f.user_id = $2 AND c.created_at > NOW() - INTERVAL '1 hour')::int AS user_hour,
+    COALESCE((SELECT min(c.created_at) FROM auth.mfa_otp_codes c JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
+      WHERE f.user_id = $2 AND c.created_at > NOW() - INTERVAL '1 hour'), 'epoch')::timestamptz AS user_oldest,
+    (SELECT count(*) FROM auth.mfa_otp_codes c JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
+      WHERE f.channel = $3 AND f.destination = $4 AND c.created_at > NOW() - INTERVAL '1 hour')::int AS destination_hour,
+    COALESCE((SELECT min(c.created_at) FROM auth.mfa_otp_codes c JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
+      WHERE f.channel = $3 AND f.destination = $4 AND c.created_at > NOW() - INTERVAL '1 hour'),
+             'epoch')::timestamptz AS destination_oldest
+`
+
+type OTPSendHistoryParams struct {
+	FactorID    uuid.UUID
+	UserID      uuid.UUID
+	Channel     string
+	Destination string
+}
+
+type OTPSendHistoryRow struct {
+	FactorLast        time.Time
+	UserHour          int32
+	UserOldest        time.Time
+	DestinationHour   int32
+	DestinationOldest time.Time
+}
+
+// When the factor's last code went, and the codes sent in the last hour to
+// the user's factors and to the destination (how many, and the oldest). A
+// time with no code to take it from is the epoch, long enough ago to impose
+// no wait.
+func (q *Queries) OTPSendHistory(ctx context.Context, arg OTPSendHistoryParams) (OTPSendHistoryRow, error) {
+	row := q.db.QueryRow(ctx, oTPSendHistory,
+		arg.FactorID,
+		arg.UserID,
+		arg.Channel,
+		arg.Destination,
+	)
+	var i OTPSendHistoryRow
+	err := row.Scan(
+		&i.FactorLast,
+		&i.UserHour,
+		&i.UserOldest,
+		&i.DestinationHour,
+		&i.DestinationOldest,
+	)
+	return i, err
 }
 
 const orgStepUpPolicy = `-- name: OrgStepUpPolicy :one
 SELECT EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds,
        (sp.step_up_methods IS NULL)::bool AS every_factor
 FROM (SELECT $1::uuid AS id) q
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = q.id
+LEFT JOIN organization.security_policies sp ON sp.organization_id = q.id
 `
 
 type OrgStepUpPolicyRow struct {
@@ -562,11 +1065,85 @@ type OrgStepUpPolicyRow struct {
 	EveryFactor   bool
 }
 
-func (q *Queries) OrgStepUpPolicy(ctx context.Context, tenantID uuid.UUID) (OrgStepUpPolicyRow, error) {
-	row := q.db.QueryRow(ctx, orgStepUpPolicy, tenantID)
+func (q *Queries) OrgStepUpPolicy(ctx context.Context, organizationID uuid.UUID) (OrgStepUpPolicyRow, error) {
+	row := q.db.QueryRow(ctx, orgStepUpPolicy, organizationID)
 	var i OrgStepUpPolicyRow
 	err := row.Scan(&i.WindowSeconds, &i.EveryFactor)
 	return i, err
+}
+
+const promotePendingTOTP = `-- name: PromotePendingTOTP :exec
+UPDATE auth.mfa_totp
+SET secret_ct = pending_secret_ct, secret_nonce = pending_secret_nonce,
+    confirmed_at = NOW(), last_used_step = $1,
+    pending_secret_ct = NULL, pending_secret_nonce = NULL, pending_started_at = NULL
+WHERE user_id = $2
+`
+
+type PromotePendingTOTPParams struct {
+	Step   *int64
+	UserID uuid.UUID
+}
+
+// Makes the app set up beside the confirmed one the user's app, its confirming
+// code's step burned.
+func (q *Queries) PromotePendingTOTP(ctx context.Context, arg PromotePendingTOTPParams) error {
+	_, err := q.db.Exec(ctx, promotePendingTOTP, arg.Step, arg.UserID)
+	return err
+}
+
+const purgeExpiredOTPCodes = `-- name: PurgeExpiredOTPCodes :execrows
+DELETE FROM auth.mfa_otp_codes WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.mfa_otp_codes c WHERE c.expires_at < $1 LIMIT $2))
+`
+
+type PurgeExpiredOTPCodesParams struct {
+	Cutoff  time.Time
+	MaxRows int32
+}
+
+func (q *Queries) PurgeExpiredOTPCodes(ctx context.Context, arg PurgeExpiredOTPCodesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredOTPCodes, arg.Cutoff, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeExpiredPushChallenges = `-- name: PurgeExpiredPushChallenges :execrows
+DELETE FROM auth.mfa_push_challenges WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.mfa_push_challenges c WHERE c.expires_at < $1 LIMIT $2))
+`
+
+type PurgeExpiredPushChallengesParams struct {
+	Cutoff  time.Time
+	MaxRows int32
+}
+
+func (q *Queries) PurgeExpiredPushChallenges(ctx context.Context, arg PurgeExpiredPushChallengesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredPushChallenges, arg.Cutoff, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeExpiredPushPairings = `-- name: PurgeExpiredPushPairings :execrows
+DELETE FROM auth.mfa_push_pairings WHERE ctid = ANY(ARRAY(
+    SELECT p.ctid FROM auth.mfa_push_pairings p WHERE p.expires_at < $1 LIMIT $2))
+`
+
+type PurgeExpiredPushPairingsParams struct {
+	Cutoff  time.Time
+	MaxRows int32
+}
+
+func (q *Queries) PurgeExpiredPushPairings(ctx context.Context, arg PurgeExpiredPushPairingsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredPushPairings, arg.Cutoff, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const pushChallengeForLogin = `-- name: PushChallengeForLogin :one
@@ -627,6 +1204,24 @@ func (q *Queries) PushChallengeForStepUp(ctx context.Context, arg PushChallengeF
 	return i, err
 }
 
+const pushDeviceByCredential = `-- name: PushDeviceByCredential :one
+SELECT id FROM auth.mfa_push_devices
+WHERE user_id = $1 AND device_token_hash = $2 AND device_token_expires_at > NOW()
+`
+
+type PushDeviceByCredentialParams struct {
+	UserID          uuid.UUID
+	DeviceTokenHash string
+}
+
+// The user's linked phone with this unexpired device credential.
+func (q *Queries) PushDeviceByCredential(ctx context.Context, arg PushDeviceByCredentialParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, pushDeviceByCredential, arg.UserID, arg.DeviceTokenHash)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const recentPushChallenges = `-- name: RecentPushChallenges :one
 SELECT count(*) FILTER (WHERE created_at > NOW() - INTERVAL '10 minutes')::int AS sent,
        count(*) FILTER (WHERE status = 'denied')::int AS denied
@@ -645,6 +1240,27 @@ func (q *Queries) RecentPushChallenges(ctx context.Context, userID uuid.UUID) (R
 	row := q.db.QueryRow(ctx, recentPushChallenges, userID)
 	var i RecentPushChallengesRow
 	err := row.Scan(&i.Sent, &i.Denied)
+	return i, err
+}
+
+const recentPushPairings = `-- name: RecentPushPairings :one
+
+SELECT count(*)::int AS issued, COALESCE(min(created_at), NOW())::timestamptz AS oldest FROM auth.mfa_push_pairings
+WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'
+`
+
+type RecentPushPairingsRow struct {
+	Issued int32
+	Oldest time.Time
+}
+
+// ── Pairing codes (pairing.go) ───────────────────────────────────────────────
+// How many pairing codes the user was issued in the last hour, and when the
+// oldest of them was (now when there are none).
+func (q *Queries) RecentPushPairings(ctx context.Context, userID uuid.UUID) (RecentPushPairingsRow, error) {
+	row := q.db.QueryRow(ctx, recentPushPairings, userID)
+	var i RecentPushPairingsRow
+	err := row.Scan(&i.Issued, &i.Oldest)
 	return i, err
 }
 
@@ -670,13 +1286,156 @@ func (q *Queries) RecordStepUp(ctx context.Context, arg RecordStepUpParams) erro
 	return err
 }
 
+const refundAttempt = `-- name: RefundAttempt :exec
+UPDATE auth.mfa_attempt_budgets
+SET failed_attempts = GREATEST(failed_attempts - 1, 0), locked_until = NULL
+WHERE user_id = $1 AND purpose = $2
+`
+
+type RefundAttemptParams struct {
+	UserID  uuid.UUID
+	Purpose string
+}
+
+// Hands back one attempt, lifting the lock it may have set.
+func (q *Queries) RefundAttempt(ctx context.Context, arg RefundAttemptParams) error {
+	_, err := q.db.Exec(ctx, refundAttempt, arg.UserID, arg.Purpose)
+	return err
+}
+
+const resetFailureStreaks = `-- name: ResetFailureStreaks :execrows
+DELETE FROM auth.mfa_failure_streaks WHERE user_id = $1
+`
+
+func (q *Queries) ResetFailureStreaks(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resetFailureStreaks, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetLivePushPairings = `-- name: ResetLivePushPairings :execrows
+DELETE FROM auth.mfa_push_pairings WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW()
+`
+
+func (q *Queries) ResetLivePushPairings(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resetLivePushPairings, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetOTPFactors = `-- name: ResetOTPFactors :execrows
+DELETE FROM auth.mfa_otp_factors WHERE user_id = $1
+`
+
+func (q *Queries) ResetOTPFactors(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resetOTPFactors, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetPendingPushChallenges = `-- name: ResetPendingPushChallenges :execrows
+DELETE FROM auth.mfa_push_challenges WHERE user_id = $1 AND status = 'pending'
+`
+
+func (q *Queries) ResetPendingPushChallenges(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resetPendingPushChallenges, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetPushDevices = `-- name: ResetPushDevices :execrows
+DELETE FROM auth.mfa_push_devices WHERE user_id = $1
+`
+
+func (q *Queries) ResetPushDevices(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resetPushDevices, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetRecoveryCodes = `-- name: ResetRecoveryCodes :execrows
+DELETE FROM auth.mfa_recovery_codes WHERE user_id = $1
+`
+
+func (q *Queries) ResetRecoveryCodes(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resetRecoveryCodes, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetStepUps = `-- name: ResetStepUps :execrows
+DELETE FROM auth.mfa_verifications WHERE user_id = $1
+`
+
+func (q *Queries) ResetStepUps(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resetStepUps, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetTOTP = `-- name: ResetTOTP :execrows
+
+DELETE FROM auth.mfa_totp WHERE user_id = $1
+`
+
+// Resetting a person's second factors (ResetForUser), each kind counted.
+func (q *Queries) ResetTOTP(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resetTOTP, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetTrustedDevices = `-- name: ResetTrustedDevices :execrows
+DELETE FROM auth.trusted_devices WHERE user_id = $1
+`
+
+func (q *Queries) ResetTrustedDevices(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resetTrustedDevices, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retirePushToken = `-- name: RetirePushToken :exec
+UPDATE auth.mfa_push_devices SET device_token_expires_at = NOW()
+WHERE user_id = $1 AND push_token_hash = $2 AND device_token_expires_at > NOW()
+`
+
+type RetirePushTokenParams struct {
+	UserID        uuid.UUID
+	PushTokenHash string
+}
+
+// Expires the device credential of the phone with this push token.
+func (q *Queries) RetirePushToken(ctx context.Context, arg RetirePushTokenParams) error {
+	_, err := q.db.Exec(ctx, retirePushToken, arg.UserID, arg.PushTokenHash)
+	return err
+}
+
 const sessionSignedInRecently = `-- name: SessionSignedInRecently :one
 SELECT COALESCE(s.signed_in_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes'), FALSE)::bool AS recent,
        EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds
 FROM (SELECT $1::uuid AS id, $2::uuid AS user_id) q
 LEFT JOIN auth.sessions s ON s.id = q.id AND s.user_id = q.user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+LEFT JOIN organization.security_policies sp ON sp.organization_id = s.organization_id
 `
 
 type SessionSignedInRecentlyParams struct {
@@ -689,15 +1448,63 @@ type SessionSignedInRecentlyRow struct {
 	WindowSeconds int64
 }
 
-// OrgStepUpPolicy is how long a step-up lasts in an organisation and whether
-// it counts every factor type (no organisation, or none set: 5 minutes, yes).
+// OrgStepUpPolicy is how long a step-up lasts in an organization and whether
+// it counts every factor type (no organization, or none set: 5 minutes, yes).
 // SessionSignedInRecently says whether the user's live session continues a
-// sign-in made within its organisation's step-up window, and that window.
+// sign-in made within its organization's step-up window, and that window.
 func (q *Queries) SessionSignedInRecently(ctx context.Context, arg SessionSignedInRecentlyParams) (SessionSignedInRecentlyRow, error) {
 	row := q.db.QueryRow(ctx, sessionSignedInRecently, arg.SessionID, arg.UserID)
 	var i SessionSignedInRecentlyRow
 	err := row.Scan(&i.Recent, &i.WindowSeconds)
 	return i, err
+}
+
+const setAttemptBudget = `-- name: SetAttemptBudget :exec
+UPDATE auth.mfa_attempt_budgets
+SET failed_attempts = $1, window_started_at = $2, locked_until = $3
+WHERE user_id = $4 AND purpose = $5
+`
+
+type SetAttemptBudgetParams struct {
+	FailedAttempts  int16
+	WindowStartedAt time.Time
+	LockedUntil     *time.Time
+	UserID          uuid.UUID
+	Purpose         string
+}
+
+func (q *Queries) SetAttemptBudget(ctx context.Context, arg SetAttemptBudgetParams) error {
+	_, err := q.db.Exec(ctx, setAttemptBudget,
+		arg.FailedAttempts,
+		arg.WindowStartedAt,
+		arg.LockedUntil,
+		arg.UserID,
+		arg.Purpose,
+	)
+	return err
+}
+
+const setPushDeviceToken = `-- name: SetPushDeviceToken :exec
+UPDATE auth.mfa_push_devices
+SET push_token_ct = $1, push_token_nonce = $2, push_token_hash = $3
+WHERE id = $4
+`
+
+type SetPushDeviceTokenParams struct {
+	PushTokenCt    []byte
+	PushTokenNonce []byte
+	PushTokenHash  string
+	ID             uuid.UUID
+}
+
+func (q *Queries) SetPushDeviceToken(ctx context.Context, arg SetPushDeviceTokenParams) error {
+	_, err := q.db.Exec(ctx, setPushDeviceToken,
+		arg.PushTokenCt,
+		arg.PushTokenNonce,
+		arg.PushTokenHash,
+		arg.ID,
+	)
+	return err
 }
 
 const spendPushChallenge = `-- name: SpendPushChallenge :exec
@@ -709,19 +1516,58 @@ func (q *Queries) SpendPushChallenge(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const stagePendingTOTP = `-- name: StagePendingTOTP :exec
+UPDATE auth.mfa_totp
+SET pending_secret_ct = $1, pending_secret_nonce = $2, pending_started_at = NOW()
+WHERE user_id = $3
+`
+
+type StagePendingTOTPParams struct {
+	PendingSecretCt    []byte
+	PendingSecretNonce []byte
+	UserID             uuid.UUID
+}
+
+// Sets up a new app beside the confirmed one, until a code from it confirms it.
+func (q *Queries) StagePendingTOTP(ctx context.Context, arg StagePendingTOTPParams) error {
+	_, err := q.db.Exec(ctx, stagePendingTOTP, arg.PendingSecretCt, arg.PendingSecretNonce, arg.UserID)
+	return err
+}
+
+const startTOTP = `-- name: StartTOTP :exec
+INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce)
+VALUES ($1, $2, $3)
+ON CONFLICT (user_id) DO UPDATE SET
+    secret_ct = EXCLUDED.secret_ct, secret_nonce = EXCLUDED.secret_nonce,
+    confirmed_at = NULL, pending_secret_ct = NULL, pending_secret_nonce = NULL,
+    pending_started_at = NULL
+`
+
+type StartTOTPParams struct {
+	UserID      uuid.UUID
+	SecretCt    []byte
+	SecretNonce []byte
+}
+
+// Sets up the user's first app, unconfirmed, in place of any unconfirmed one.
+func (q *Queries) StartTOTP(ctx context.Context, arg StartTOTPParams) error {
+	_, err := q.db.Exec(ctx, startTOTP, arg.UserID, arg.SecretCt, arg.SecretNonce)
+	return err
+}
+
 const stepUpFactorsHeld = `-- name: StepUpFactorsHeld :one
 SELECT
     EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL)::bool AS totp,
     EXISTS (SELECT 1 FROM auth.mfa_otp_factors f WHERE f.user_id = $1 AND f.verified_at IS NOT NULL)::bool AS otp,
     (EXISTS (SELECT 1 FROM auth.passkey_credentials c WHERE c.user_id = $1)
-     AND COALESCE((SELECT ap.passkey_enabled FROM tenant.auth_policy ap WHERE ap.tenant_id = $2::uuid), TRUE))::bool AS passkeys,
+     AND COALESCE((SELECT ap.passkey_enabled FROM organization.auth_policy ap WHERE ap.organization_id = $2::uuid), TRUE))::bool AS passkeys,
     EXISTS (SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = $1)::bool AS push,
-    (SELECT sp.step_up_methods FROM tenant.security_policies sp WHERE sp.tenant_id = $2::uuid)::text[] AS step_up_methods
+    (SELECT sp.step_up_methods FROM organization.security_policies sp WHERE sp.organization_id = $2::uuid)::text[] AS step_up_methods
 `
 
 type StepUpFactorsHeldParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type StepUpFactorsHeldRow struct {
@@ -734,10 +1580,10 @@ type StepUpFactorsHeldRow struct {
 
 // StepUpFactorsHeld says which kinds of factor the user could step up with —
 // a confirmed authenticator app (or its recovery codes), a confirmed email or
-// SMS factor, a passkey while the organisation allows passkeys — and which
-// factor types the organisation counts (NULL: every one).
+// SMS factor, a passkey while the organization allows passkeys — and which
+// factor types the organization counts (NULL: every one).
 func (q *Queries) StepUpFactorsHeld(ctx context.Context, arg StepUpFactorsHeldParams) (StepUpFactorsHeldRow, error) {
-	row := q.db.QueryRow(ctx, stepUpFactorsHeld, arg.UserID, arg.TenantID)
+	row := q.db.QueryRow(ctx, stepUpFactorsHeld, arg.UserID, arg.OrganizationID)
 	var i StepUpFactorsHeldRow
 	err := row.Scan(
 		&i.Totp,
@@ -759,7 +1605,7 @@ FROM (SELECT $1::uuid AS id, $2::uuid AS user_id) q
 LEFT JOIN auth.sessions s ON s.id = q.id AND s.user_id = q.user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
 LEFT JOIN auth.mfa_verifications v ON v.session_id = s.id
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+LEFT JOIN organization.security_policies sp ON sp.organization_id = s.organization_id
 `
 
 type StepUpStateParams struct {
@@ -768,7 +1614,7 @@ type StepUpStateParams struct {
 }
 
 type StepUpStateRow struct {
-	VerifiedAt    pgtype.Timestamptz
+	VerifiedAt    *time.Time
 	Method        *string
 	Fresh         bool
 	MethodCounts  bool
@@ -776,9 +1622,9 @@ type StepUpStateRow struct {
 	StepUpMethods []string
 }
 
-// StepUpState is a session's step-up as its organisation judges it: fresh
-// while inside the organisation's window, and counted only when met by a
-// factor type the organisation accepts (step_up_methods NULL: any). A session
+// StepUpState is a session's step-up as its organization judges it: fresh
+// while inside the organization's window, and counted only when met by a
+// factor type the organization accepts (step_up_methods NULL: any). A session
 // that has ended reads as never stepped up.
 func (q *Queries) StepUpState(ctx context.Context, arg StepUpStateParams) (StepUpStateRow, error) {
 	row := q.db.QueryRow(ctx, stepUpState, arg.SessionID, arg.UserID)
@@ -831,4 +1677,119 @@ func (q *Queries) UpsertMFAOTPFactor(ctx context.Context, arg UpsertMFAOTPFactor
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const upsertPushDevice = `-- name: UpsertPushDevice :one
+
+INSERT INTO auth.mfa_push_devices
+    (user_id, name, push_token_ct, push_token_nonce, push_token_hash,
+     platform, device_token_hash, device_token_expires_at)
+VALUES ($1, $2, $3, $4, $5,
+        $6, $7, NOW() + make_interval(secs => $8::float8))
+ON CONFLICT (user_id, push_token_hash) DO UPDATE SET
+    name = EXCLUDED.name,
+    push_token_ct = EXCLUDED.push_token_ct,
+    push_token_nonce = EXCLUDED.push_token_nonce,
+    platform = EXCLUDED.platform,
+    device_token_hash = EXCLUDED.device_token_hash,
+    device_token_expires_at = EXCLUDED.device_token_expires_at,
+    last_seen_at = NOW()
+RETURNING id, user_id, name, platform, created_at, last_seen_at
+`
+
+type UpsertPushDeviceParams struct {
+	UserID          uuid.UUID
+	Name            string
+	PushTokenCt     []byte
+	PushTokenNonce  []byte
+	PushTokenHash   string
+	Platform        string
+	DeviceTokenHash string
+	TtlSeconds      float64
+}
+
+type UpsertPushDeviceRow struct {
+	ID         uuid.UUID
+	UserID     uuid.UUID
+	Name       string
+	Platform   string
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+}
+
+// ── Linked phones (push.go, pushstepup.go) ───────────────────────────────────
+// Links a phone, or links it again with a new device credential.
+func (q *Queries) UpsertPushDevice(ctx context.Context, arg UpsertPushDeviceParams) (UpsertPushDeviceRow, error) {
+	row := q.db.QueryRow(ctx, upsertPushDevice,
+		arg.UserID,
+		arg.Name,
+		arg.PushTokenCt,
+		arg.PushTokenNonce,
+		arg.PushTokenHash,
+		arg.Platform,
+		arg.DeviceTokenHash,
+		arg.TtlSeconds,
+	)
+	var i UpsertPushDeviceRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.Platform,
+		&i.CreatedAt,
+		&i.LastSeenAt,
+	)
+	return i, err
+}
+
+const usePushPairing = `-- name: UsePushPairing :exec
+UPDATE auth.mfa_push_pairings SET used_at = NOW(), device_id = $1 WHERE id = $2
+`
+
+type UsePushPairingParams struct {
+	DeviceID *uuid.UUID
+	ID       uuid.UUID
+}
+
+func (q *Queries) UsePushPairing(ctx context.Context, arg UsePushPairingParams) error {
+	_, err := q.db.Exec(ctx, usePushPairing, arg.DeviceID, arg.ID)
+	return err
+}
+
+const withdrawOTPCode = `-- name: WithdrawOTPCode :exec
+DELETE FROM auth.mfa_otp_codes WHERE factor_id = $1 AND code_hash = $2
+`
+
+type WithdrawOTPCodeParams struct {
+	FactorID uuid.UUID
+	CodeHash string
+}
+
+// Removes a code the provider did not take.
+func (q *Queries) WithdrawOTPCode(ctx context.Context, arg WithdrawOTPCodeParams) error {
+	_, err := q.db.Exec(ctx, withdrawOTPCode, arg.FactorID, arg.CodeHash)
+	return err
+}
+
+const withdrawPushPairing = `-- name: WithdrawPushPairing :one
+WITH withdrawn AS (
+    UPDATE auth.mfa_push_pairings SET expires_at = LEAST(expires_at, NOW())
+    WHERE id = $1 AND user_id = $2 AND used_at IS NULL
+    RETURNING id
+)
+SELECT EXISTS (SELECT 1 FROM auth.mfa_push_pairings p WHERE p.id = $1 AND p.user_id = $2)::bool AS found
+`
+
+type WithdrawPushPairingParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// Ends the user's pairing code unless it already linked a phone, and says
+// whether the code is the user's at all.
+func (q *Queries) WithdrawPushPairing(ctx context.Context, arg WithdrawPushPairingParams) (bool, error) {
+	row := q.db.QueryRow(ctx, withdrawPushPairing, arg.ID, arg.UserID)
+	var found bool
+	err := row.Scan(&found)
+	return found, err
 }

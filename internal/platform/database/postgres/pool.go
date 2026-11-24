@@ -41,7 +41,7 @@ func NewPool(ctx context.Context, url string, minConns, maxConns int32) (*pgxpoo
 		// runaway query frees its connection on its own.
 		"statement_timeout": "30000", // 30s
 		// A writer waiting on a lock should give up quickly rather than pile up
-		// behind one stuck transaction — see the per-tenant audit advisory lock.
+		// behind one stuck transaction — see the per-organization audit advisory lock.
 		"lock_timeout": "5000", // 5s
 		// An abandoned open transaction holds locks and a connection forever.
 		"idle_in_transaction_session_timeout": "60000", // 60s
@@ -52,9 +52,11 @@ func NewPool(ctx context.Context, url string, minConns, maxConns int32) (*pgxpoo
 	}
 
 	// Row-level security: every connection runs as AppRole, scoped to the
-	// organisation of the context that takes it (see rowsecurity.go).
+	// organization of the context that takes it (see rowsecurity.go).
 	cfg.AfterConnect = useAppRole
 	cfg.PrepareConn = prepareScope
+	// Each query of a traced request is a span (see tracing.go); a no-op while tracing is off.
+	cfg.ConnConfig.Tracer = queryTracer{}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

@@ -10,23 +10,22 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createCredential = `-- name: CreateCredential :one
 
-INSERT INTO auth.credentials (tenant_id, subject, type, claims, expires_at, user_id)
+INSERT INTO auth.credentials (organization_id, subject, type, claims, expires_at, user_id)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, issued_at
 `
 
 type CreateCredentialParams struct {
-	TenantID  uuid.UUID
-	Subject   string
-	Type      string
-	Claims    []byte
-	ExpiresAt pgtype.Timestamptz
-	UserID    pgtype.UUID
+	OrganizationID uuid.UUID
+	Subject        string
+	Type           string
+	Claims         []byte
+	ExpiresAt      *time.Time
+	UserID         *uuid.UUID
 }
 
 type CreateCredentialRow struct {
@@ -38,7 +37,7 @@ type CreateCredentialRow struct {
 // All queries are static; signing/verification logic stays in the Service layer.
 func (q *Queries) CreateCredential(ctx context.Context, arg CreateCredentialParams) (CreateCredentialRow, error) {
 	row := q.db.QueryRow(ctx, createCredential,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Subject,
 		arg.Type,
 		arg.Claims,
@@ -56,27 +55,27 @@ SELECT revoked_at FROM auth.credentials WHERE id = $1
 
 // GetCredentialRevocation checks the revocation registry for a presented
 // JWT-VC (jti = credential id). The caller refuses a credential with no record.
-func (q *Queries) GetCredentialRevocation(ctx context.Context, id uuid.UUID) (pgtype.Timestamptz, error) {
+func (q *Queries) GetCredentialRevocation(ctx context.Context, id uuid.UUID) (*time.Time, error) {
 	row := q.db.QueryRow(ctx, getCredentialRevocation, id)
-	var revoked_at pgtype.Timestamptz
+	var revoked_at *time.Time
 	err := row.Scan(&revoked_at)
 	return revoked_at, err
 }
 
-const isOrganisationMember = `-- name: IsOrganisationMember :one
-SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1 AND ur.tenant_id = $2)
-     OR EXISTS (SELECT 1 FROM "user".users u WHERE u.id = $1 AND u.tenant_id = $2 AND u.deleted_at IS NULL))::bool
+const isOrganizationMember = `-- name: IsOrganizationMember :one
+SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1 AND ur.organization_id = $2)
+     OR EXISTS (SELECT 1 FROM account.users u WHERE u.id = $1 AND u.organization_id = $2 AND u.deleted_at IS NULL))::bool
 `
 
-type IsOrganisationMemberParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+type IsOrganizationMemberParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-// IsOrganisationMember says whether the person belongs to the organisation:
-// holds a role in it, or has it as their home organisation.
-func (q *Queries) IsOrganisationMember(ctx context.Context, arg IsOrganisationMemberParams) (bool, error) {
-	row := q.db.QueryRow(ctx, isOrganisationMember, arg.UserID, arg.TenantID)
+// IsOrganizationMember says whether the person belongs to the organization:
+// holds a role in it, or has it as their home organization.
+func (q *Queries) IsOrganizationMember(ctx context.Context, arg IsOrganizationMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isOrganizationMember, arg.UserID, arg.OrganizationID)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -86,8 +85,8 @@ const listCredentials = `-- name: ListCredentials :many
 SELECT c.id, c.subject, c.type, c.issued_at, c.expires_at, c.revoked_at,
        c.user_id, u.email AS user_email, u.display_name AS user_display_name
 FROM auth.credentials c
-LEFT JOIN "user".users u ON u.id = c.user_id
-WHERE c.tenant_id = $1 ORDER BY c.issued_at DESC LIMIT 200
+LEFT JOIN account.users u ON u.id = c.user_id
+WHERE c.organization_id = $1 ORDER BY c.issued_at DESC LIMIT 1001
 `
 
 type ListCredentialsRow struct {
@@ -95,15 +94,16 @@ type ListCredentialsRow struct {
 	Subject         string
 	Type            string
 	IssuedAt        time.Time
-	ExpiresAt       pgtype.Timestamptz
-	RevokedAt       pgtype.Timestamptz
-	UserID          pgtype.UUID
+	ExpiresAt       *time.Time
+	RevokedAt       *time.Time
+	UserID          *uuid.UUID
 	UserEmail       *string
 	UserDisplayName *string
 }
 
-func (q *Queries) ListCredentials(ctx context.Context, tenantID uuid.UUID) ([]ListCredentialsRow, error) {
-	rows, err := q.db.Query(ctx, listCredentials, tenantID)
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
+func (q *Queries) ListCredentials(ctx context.Context, organizationID uuid.UUID) ([]ListCredentialsRow, error) {
+	rows, err := q.db.Query(ctx, listCredentials, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -134,16 +134,16 @@ func (q *Queries) ListCredentials(ctx context.Context, tenantID uuid.UUID) ([]Li
 
 const revokeCredential = `-- name: RevokeCredential :execrows
 UPDATE auth.credentials SET revoked_at = NOW()
-WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL
 `
 
 type RevokeCredentialParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) RevokeCredential(ctx context.Context, arg RevokeCredentialParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeCredential, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, revokeCredential, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}

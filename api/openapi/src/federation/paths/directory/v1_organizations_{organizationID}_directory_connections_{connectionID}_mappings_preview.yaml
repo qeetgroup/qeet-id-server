@@ -1,0 +1,130 @@
+post:
+  operationId: previewProfileMappings
+  summary: Preview the saved mappings with source data
+  description: >-
+    Requires connection.read. Uses the provisioning engine, without persisting
+    the source or changing users. Source input is capped at 64 KiB.
+  tags:
+    - Directory
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: connectionID
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[^/\\]+$'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - source
+          properties:
+            source:
+              type: object
+              additionalProperties: true
+  responses:
+    "200":
+      description: Transformed profile, per-rule preview values and validation issues
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              valid:
+                type: boolean
+              profile:
+                type: object
+                additionalProperties: true
+              values:
+                type: object
+                additionalProperties: true
+              effective:
+                type: object
+                description: >-
+                  Every field the person would get, with its value and where it
+                  came from: a mapping, or the connection's own default where no
+                  mapping sets it (SCIM userName and displayName; an LDAP
+                  connection's email and name attributes, mail and cn unless
+                  set).
+                additionalProperties:
+                  type: object
+                  required:
+                    - value
+                    - from
+                    - attribute
+                  properties:
+                    value: {}
+                    from:
+                      type: string
+                      enum:
+                        - mapping
+                        - default
+                    attribute:
+                      type: string
+                      description: The source attribute it was read from.
+              issues:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - mapping_id
+                    - field
+                    - code
+                    - message
+                  properties:
+                    mapping_id:
+                      type: string
+                      format: uuid
+                      description: >-
+                        The mapping at fault; the nil UUID for
+                        directory.mapping_preview_too_large.
+                    field:
+                      type: string
+                      description: >-
+                        Target profile field of the mapping at fault; empty for
+                        directory.mapping_preview_too_large.
+                    code:
+                      type: string
+                      description: Stable reason for the issue; word it from this.
+                      enum:
+                        - directory.mapping_preview_too_large
+                        - directory.mapping_source_invalid
+                        - directory.mapping_source_credential
+                        - directory.mapping_target_unsupported
+                        - directory.mapping_target_duplicate
+                        - directory.mapping_value_type_mismatch
+                        - directory.mapping_transform_unsupported
+                        - directory.mapping_pattern_unexpected
+                        - directory.mapping_pattern_invalid
+                        - directory.mapping_source_missing
+                        - directory.mapping_source_empty
+                        - directory.mapping_value_not_string
+                        - directory.mapping_value_not_array
+                        - directory.mapping_value_too_long
+                        - directory.mapping_value_too_many
+                        - directory.mapping_value_unmatched
+                        - directory.mapping_email_invalid
+                        - directory.mapping_display_name_too_long
+                    message:
+                      type: string
+                      description: English text kept for compatibility; it may change.
+    "400":
+      description: Invalid source JSON
+    "401":
+      description: Authentication required
+    "403":
+      description: Organization mismatch or missing connection.read
+    "404":
+      description: Connection not found
+    "413":
+      description: Source exceeds the supported size
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

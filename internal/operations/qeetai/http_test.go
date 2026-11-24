@@ -10,12 +10,18 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
+
+// noPlan includes the assistant in no plan.
+type noPlan struct{}
+
+func (noPlan) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return false, nil }
 
 // stubResolver is a ProviderResolver that reports a fixed config source without
 // touching a database, so handler gate/status tests run in memory.
@@ -39,7 +45,9 @@ type stubStore struct {
 	turns        int // turns begun and not yet released
 }
 
-func (s *stubStore) Pool() *pgxpool.Pool { return nil }
+func (s *stubStore) RecordMessageSent(context.Context, uuid.UUID, uuid.UUID, audit.Actor) error {
+	return nil
+}
 
 func (s *stubStore) CreateConversation(_ context.Context, _, _ uuid.UUID, _ CreateConversationInput) (*Conversation, error) {
 	return nil, nil
@@ -68,8 +76,8 @@ func (s *stubStore) BeginTurn(_ context.Context, _, _ uuid.UUID) (func(), error)
 
 // newHandlerRequest builds a POST .../messages request with the chi URL param
 // and the JWT principal injected into the request context, so the handler's
-// requireTenantUser and parseConversationID helpers work without a real router.
-func newHandlerRequest(tenantID, userID, convID uuid.UUID, body string) *http.Request {
+// requireOrganizationUser and parseConversationID helpers work without a real router.
+func newHandlerRequest(organizationID, userID, convID uuid.UUID, body string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/qeetai/conversations/"+convID.String()+"/messages",
 		strings.NewReader(body))
@@ -80,8 +88,8 @@ func newHandlerRequest(tenantID, userID, convID uuid.UUID, body string) *http.Re
 	rctx.URLParams.Add("conversationID", convID.String())
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-	// Inject JWT principal (requireTenantUser calls httpx.RequireTenant/RequireUser).
-	p := &httpx.Principal{TenantID: &tenantID, UserID: &userID}
+	// Inject JWT principal (requireOrganizationUser calls httpx.RequireOrganization/RequireUser).
+	p := &httpx.Principal{OrganizationID: &organizationID, UserID: &userID}
 	req = req.WithContext(httpx.WithPrincipal(req.Context(), p))
 
 	return req
@@ -90,7 +98,7 @@ func newHandlerRequest(tenantID, userID, convID uuid.UUID, body string) *http.Re
 // TestStreamMessages_IDOROwnershipCheck checks that posting to another user's
 // conversation returns 404 and writes no message.
 func TestStreamMessages_IDOROwnershipCheck(t *testing.T) {
-	tenantID := uuid.New()
+	organizationID := uuid.New()
 	userA := uuid.New()
 	convOwnedByUserB := uuid.New()
 
@@ -99,10 +107,10 @@ func TestStreamMessages_IDOROwnershipCheck(t *testing.T) {
 
 	h := &Handler{
 		Service:  svc,
-		Resolver: stubResolver{source: SourceTenant},
+		Resolver: stubResolver{source: SourceOrganization},
 	}
 
-	req := newHandlerRequest(tenantID, userA, convOwnedByUserB, `{"message":"injected prompt"}`)
+	req := newHandlerRequest(organizationID, userA, convOwnedByUserB, `{"message":"injected prompt"}`)
 	rr := httptest.NewRecorder()
 
 	h.streamMessages(rr, req)
@@ -120,7 +128,7 @@ func TestStreamMessages_IDOROwnershipCheck(t *testing.T) {
 // succeeds, and the handler proceeds past the gate (it will then fail when
 // trying to stream from a nil Orchestrator, but the 404 is NOT returned).
 func TestStreamMessages_AuthorizedUserCanStream(t *testing.T) {
-	tenantID := uuid.New()
+	organizationID := uuid.New()
 	userID := uuid.New()
 	convID := uuid.New()
 
@@ -130,10 +138,10 @@ func TestStreamMessages_AuthorizedUserCanStream(t *testing.T) {
 	h := &Handler{
 		Service:      svc,
 		Orchestrator: nil, // nil — run will panic, but that proves we got past the gate
-		Resolver:     stubResolver{source: SourceTenant},
+		Resolver:     stubResolver{source: SourceOrganization},
 	}
 
-	req := newHandlerRequest(tenantID, userID, convID, `{"message":"hello"}`)
+	req := newHandlerRequest(organizationID, userID, convID, `{"message":"hello"}`)
 	rr := httptest.NewRecorder()
 
 	// The handler will proceed past the ownership gate. With a nil Orchestrator
@@ -154,25 +162,61 @@ func TestStreamMessages_AuthorizedUserCanStream(t *testing.T) {
 // whose previous turn is still running is refused 409 before anything is
 // stored, and that a turn that runs releases the conversation when it ends.
 func TestStreamMessages_OneTurnAtATime(t *testing.T) {
-	tenantID, userID, convID := uuid.New(), uuid.New(), uuid.New()
-	busy := &stubStore{turnErr: errs.ErrQeetAITurnInProgress}
-	h := &Handler{Service: busy, Resolver: stubResolver{source: SourceTenant}}
+	organizationID, userID, convID := uuid.New(), uuid.New(), uuid.New()
+	busy := &stubStore{turnErr: ErrTurnInProgress}
+	h := &Handler{Service: busy, Resolver: stubResolver{source: SourceOrganization}}
 	rr := httptest.NewRecorder()
-	h.streamMessages(rr, newHandlerRequest(tenantID, userID, convID, `{"message":"again"}`))
-	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), errs.CodeQeetAITurnInProgress) {
-		t.Errorf("a second turn: %d %s, want 409 %s", rr.Code, rr.Body.String(), errs.CodeQeetAITurnInProgress)
+	h.streamMessages(rr, newHandlerRequest(organizationID, userID, convID, `{"message":"again"}`))
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), CodeTurnInProgress) {
+		t.Errorf("a second turn: %d %s, want 409 %s", rr.Code, rr.Body.String(), CodeTurnInProgress)
 	}
 	if busy.appendCalled {
 		t.Error("a refused turn stored its message")
 	}
 
 	free := &stubStore{}
-	h = &Handler{Service: free, Resolver: stubResolver{source: SourceTenant}}
+	h = &Handler{Service: free, Resolver: stubResolver{source: SourceOrganization}}
 	func() {
 		defer func() { _ = recover() }() // the nil Orchestrator panics once the turn has begun
-		h.streamMessages(httptest.NewRecorder(), newHandlerRequest(tenantID, userID, convID, `{"message":"hello"}`))
+		h.streamMessages(httptest.NewRecorder(), newHandlerRequest(organizationID, userID, convID, `{"message":"hello"}`))
 	}()
 	if free.turns != 0 {
 		t.Errorf("%d turns still held after the request ended, want 0", free.turns)
+	}
+}
+
+// TestNewHandlerNeedsEachDependency checks that the handler is not built
+// without each of its dependencies, the plan gate on the platform key among
+// them.
+func TestNewHandlerNeedsEachDependency(t *testing.T) {
+	box, err := envelope.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := NewProviderConfig(nil, box, PlatformProvider{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{}
+	full := Handler{Service: svc, Orchestrator: NewOrchestrator(cfg, svc), Resolver: cfg, Config: cfg, Plan: noPlan{}, Admin: svc}
+	if _, err := NewHandler(full); err != nil {
+		t.Fatalf("built with every dependency: %v", err)
+	}
+	for name, without := range map[string]func(*Handler){
+		"service":      func(h *Handler) { h.Service = nil },
+		"orchestrator": func(h *Handler) { h.Orchestrator = nil },
+		"resolver":     func(h *Handler) { h.Resolver = nil },
+		"config":       func(h *Handler) { h.Config = nil },
+		"plan gate":    func(h *Handler) { h.Plan = nil },
+		"admin":        func(h *Handler) { h.Admin = nil },
+	} {
+		h := full
+		without(&h)
+		if _, err := NewHandler(h); err == nil {
+			t.Errorf("built without a %s", name)
+		}
+	}
+	if _, err := NewProviderConfig(nil, nil, PlatformProvider{}); err == nil {
+		t.Error("provider config built without a cipher")
 	}
 }

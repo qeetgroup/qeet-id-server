@@ -1,10 +1,9 @@
-package auth
+package authentication
 
 import (
 	"context"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
@@ -74,8 +73,8 @@ func purgeSessionBatch(ctx context.Context, pool *pgxpool.Pool, cutoff time.Time
 			continue
 		}
 		sess := sessionsignal.Session{ID: r.ID, UserID: r.UserID}
-		if r.TenantID.Valid {
-			sess.TenantID = uuid.UUID(r.TenantID.Bytes)
+		if r.OrganizationID != nil {
+			sess.OrganizationID = *r.OrganizationID
 		}
 		expired = append(expired, sess)
 	}

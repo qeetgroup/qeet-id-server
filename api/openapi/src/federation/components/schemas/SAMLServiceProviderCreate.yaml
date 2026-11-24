@@ -1,0 +1,77 @@
+type: object
+additionalProperties: false
+required:
+  - name
+  - entity_id
+  - acs_url
+properties:
+  name:
+    type: string
+    minLength: 1
+  entity_id:
+    type: string
+    minLength: 1
+  acs_url:
+    type: string
+    format: uri
+  name_id_format:
+    type:
+      - string
+      - "null"
+    description: >-
+      urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress (the default),
+      urn:oasis:names:tc:SAML:2.0:nameid-format:persistent or
+      urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified
+  name_id_attribute:
+    type:
+      - string
+      - "null"
+    description: >-
+      Where the NameID comes from — email, user_id, persistent_id or
+      metadata.<key>; by default persistent_id for a persistent NameID and email
+      otherwise
+  certificate:
+    type:
+      - string
+      - "null"
+    description: >-
+      The app's own certificate (PEM). It must be kept for
+      require_signed_requests, encrypt_assertions or both (422
+      saml.certificate_unused otherwise), and either needs one (422
+      saml.certificate_required); encryption needs an RSA key (422
+      saml.encryption_key_unsupported).
+  require_signed_requests:
+    type:
+      - boolean
+      - "null"
+    description: Refuse sign-in requests not signed with the certificate; off by default
+  encrypt_assertions:
+    type:
+      - boolean
+      - "null"
+    description: Encrypt each assertion to the certificate; off by default
+  attributes:
+    type:
+      - array
+      - "null"
+    maxItems: 50
+    description: >-
+      The attributes to send; absent sends the default email (from email) and
+      name (from display_name), an empty list none
+    items:
+      $ref: ./SAMLAttributeMapping.yaml
+  status:
+    type:
+      - string
+      - "null"
+    enum:
+      - draft
+      - active
+      - disabled
+      - null
+    description: The SP's state; refused with 422 saml.status_invalid otherwise.
+  assignment_required:
+    type:
+      - boolean
+      - "null"
+    description: Sign in only the people assigned to the SP; off by default

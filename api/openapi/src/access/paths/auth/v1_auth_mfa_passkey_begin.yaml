@@ -1,0 +1,52 @@
+post:
+  operationId: beginSignInMfaPasskey
+  summary: Begin a passkey second factor
+  description: >-
+    Starts a passkey assertion for the challenged person's own passkeys; only an
+    assertion from this ceremony completes the challenge. Used by both sign-in
+    flows.
+  tags:
+    - Auth
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - mfa_token
+          properties:
+            mfa_token:
+              type: string
+              minLength: 1
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - session_id
+              - publicKey
+            properties:
+              session_id:
+                type: string
+                format: uuid
+              publicKey:
+                type: object
+                additionalProperties: true
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

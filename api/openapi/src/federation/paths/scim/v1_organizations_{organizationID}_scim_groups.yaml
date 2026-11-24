@@ -1,0 +1,79 @@
+get:
+  operationId: listProvisionedGroups
+  summary: List provisioned groups
+  tags:
+    - SCIM
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: limit
+      in: query
+      required: false
+      description: Page size, 1 to 200. A larger value is lowered to 200; a smaller or malformed one gets the default.
+      schema:
+        type: integer
+    - name: cursor
+      in: query
+      required: false
+      description: The next_cursor of the previous page.
+      schema:
+        type: string
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Lists the groups the organization's identity provider made over SCIM, newest
+    first, a page at a time, each with its external id and its count of members.
+    Requires connection.read.
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+              - total
+            properties:
+              items:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - id
+                    - name
+                    - external_id
+                    - members
+                    - created_at
+                    - updated_at
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    name:
+                      type: string
+                    external_id:
+                      type:
+                        - string
+                        - "null"
+                    members:
+                      type: integer
+                    created_at:
+                      type: string
+                      format: date-time
+                    updated_at:
+                      type: string
+                      format: date-time
+              next_cursor:
+                type: string
+                description: Present when there is another page.
+              total:
+                type: integer
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,78 @@
+type: object
+additionalProperties: true
+properties:
+  id:
+    type: string
+    format: uuid
+  user_id:
+    type: string
+    format: uuid
+  organization_id:
+    type: string
+    format: uuid
+  ip:
+    type:
+      - string
+      - "null"
+  user_agent:
+    type:
+      - string
+      - "null"
+  created_at:
+    type: string
+    format: date-time
+  last_seen_at:
+    type: string
+    format: date-time
+    description: The session's last renewal, from which its idle timeout counts.
+  revoked_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  expires_at:
+    type: string
+    format: date-time
+    description: When the session ends however active it is.
+  idle_expires_at:
+    type: string
+    format: date-time
+    description: When the session ends unless renewed first (never after expires_at).
+  status:
+    type: string
+    enum:
+      - active
+      - revoked
+      - expired
+    description: >-
+      active, revoked (ended by sign-out or revocation) or expired (reached its
+      maximum age or idle timeout first). Only active sessions can be revoked.
+  device:
+    type: string
+    example: Chrome on macOS
+    description: >-
+      The device and browser in words, read from the user agent on the server
+      ("Unknown device" when it says nothing recognisable). Show this;
+      user_agent stays for support.
+  device_kind:
+    type: string
+    enum:
+      - desktop
+      - mobile
+      - tablet
+      - unknown
+  country:
+    type: string
+    example: IN
+    description: >-
+      Where the session was opened, approximately — the ISO 3166-1 alpha-2
+      country a trusted upstream proxy reported (GEO_COUNTRY_HEADER). Omitted
+      when the deployment supplies none.
+  city:
+    type: string
+    description: >-
+      The city the session was opened from, when the proxy names one
+      (GEO_CITY_HEADER); omitted otherwise.
+  current:
+    type: boolean
+    description: True for the session the listing request was made with.

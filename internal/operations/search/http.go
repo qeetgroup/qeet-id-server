@@ -2,13 +2,13 @@ package search
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // Handler serves the search endpoint.
@@ -24,10 +24,10 @@ func (h *Handler) Mount(r chi.Router) {
 
 // search serves GET /v1/search. q is required; types is an optional
 // comma-separated list of resource types; cursor comes from a previous
-// response; limit outside 1..50 becomes 20.
+// response; limit is 20 when unset, at most 50.
 func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
-	// Tenant comes from the authenticated principal, never the URL or body.
-	tenantID, err := httpx.RequireTenant(r)
+	// Organization comes from the authenticated principal, never the URL or body.
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -49,7 +49,7 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit := paging.Limit(r.URL.Query(), 20, 50)
 	cursor := r.URL.Query().Get("cursor")
 
 	// The route admits only user principals, so p.UserID is set and every type
@@ -57,7 +57,7 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	userID := p.UserID // *uuid.UUID; nil for non-user principals
 
-	results, nextCursor, err := h.Service.Search(r.Context(), tenantID, userID, q, types, cursor, limit)
+	results, nextCursor, err := h.Service.Search(r.Context(), organizationID, userID, q, types, cursor, limit)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

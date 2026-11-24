@@ -6,44 +6,23 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/principal/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/rotation"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Rotation overlaps: how long a replaced secret goes on working beside its
-// replacement, by default and at most.
-const (
-	DefaultRotationOverlap = 24 * time.Hour
-	MaxRotationOverlap     = 7 * 24 * time.Hour
-)
-
-// previousSecretWorks reports whether secret is the one replaced at the last
-// rotation and its overlap hasn't ended.
-func previousSecretWorks(hash *string, until pgtype.Timestamptz, secret string) bool {
-	if hash == nil || !until.Valid || !until.Time.After(time.Now()) {
-		return false
-	}
-	ok, _ := password.VerifySecret(*hash, secret)
-	return ok
-}
-
-// RotateSecret gives one of the tenant's service principals a new secret,
+// RotateSecret gives one of the organization's service principals a new secret,
 // returned only now, and leaves the old one working for overlap (0: it stops
 // at once). Recorded as actor's.
-func (s *Service) RotateSecret(ctx context.Context, tenantID, id uuid.UUID, overlap time.Duration, actor audit.Actor) (string, time.Time, error) {
-	if overlap < 0 || overlap > MaxRotationOverlap {
-		return "", time.Time{}, errs.ErrValidationFailed.WithFields([]errs.FieldError{{
-			Field: "overlap_hours", Code: "out_of_range", Message: "Keep the old secret working for 0 to 168 hours.",
-		}})
+func (s *Service) RotateSecret(ctx context.Context, organizationID, id uuid.UUID, overlap time.Duration, actor audit.Actor) (string, time.Time, error) {
+	if err := rotation.CheckOverlap(overlap, "secret"); err != nil {
+		return "", time.Time{}, err
 	}
 	raw, _, err := codes.URLToken()
 	if err != nil {
@@ -56,16 +35,16 @@ func (s *Service) RotateSecret(ctx context.Context, tenantID, id uuid.UUID, over
 	}
 	defer tx.Rollback(ctx)
 	name, err := s.q.WithTx(tx).RotateServicePrincipalSecret(ctx, dbgen.RotateServicePrincipalSecretParams{
-		PreviousExpiresAt: pgtype.Timestamptz{Time: until, Valid: true}, SecretHash: password.HashSecret(raw),
-		ID: id, TenantID: tenantID,
+		PreviousExpiresAt: &until, SecretHash: password.HashSecret(raw),
+		ID: id, OrganizationID: organizationID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", time.Time{}, errs.ErrPrincipalNotFound
+		return "", time.Time{}, ErrNotFound
 	}
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "service_principal.secret_rotated", "service_principal", id,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "service_principal.secret_rotated", "service_principal", id,
 		map[string]any{"name": name, "old_secret_ends": until})); err != nil {
 		return "", time.Time{}, err
 	}
@@ -75,92 +54,46 @@ func (s *Service) RotateSecret(ctx context.Context, tenantID, id uuid.UUID, over
 	return raw, until, nil
 }
 
-// Enable turns one of the tenant's disabled service principals back on,
+// Enable turns one of the organization's disabled service principals back on,
 // recorded as actor's. Enabling one that is on changes nothing.
-func (s *Service) Enable(ctx context.Context, tenantID, id uuid.UUID, actor audit.Actor) error {
+func (s *Service) Enable(ctx context.Context, organizationID, id uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	name, err := s.q.WithTx(tx).EnableServicePrincipal(ctx, dbgen.EnableServicePrincipalParams{ID: id, TenantID: tenantID})
+	name, err := s.q.WithTx(tx).EnableServicePrincipal(ctx, dbgen.EnableServicePrincipalParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrPrincipalNotFound
+		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "service_principal.enabled", "service_principal", id,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "service_principal.enabled", "service_principal", id,
 		map[string]any{"name": name})); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// overlapOf reads a rotation request's overlap_hours, the default when absent.
-func overlapOf(r *http.Request) (time.Duration, error) {
-	var in struct {
-		OverlapHours *int `json:"overlap_hours"`
-	}
-	if r.ContentLength != 0 {
-		if err := httpx.DecodeJSON(r, &in); err != nil {
-			return 0, err
-		}
-	}
-	if in.OverlapHours == nil {
-		return DefaultRotationOverlap, nil
-	}
-	return time.Duration(*in.OverlapHours) * time.Hour, nil
-}
-
-// pathIDs returns the tenant and service principal a request names.
+// pathIDs returns the organization and service principal a request names.
 func pathIDs(r *http.Request) (uuid.UUID, uuid.UUID, error) {
-	tid, err := httpx.PathTenantOr(r, errs.ErrPrincipalInvalidID, errs.ErrForbidden)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := httpx.PathUUID(r, "id", ErrInvalidID)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, errs.ErrPrincipalInvalidID
+		return uuid.Nil, uuid.Nil, err
 	}
 	return tid, id, nil
 }
 
-// rotateSecret handles POST /v1/tenants/{tenantID}/service-principals/{id}/rotate-secret.
-func (h *Handler) rotateSecret(w http.ResponseWriter, r *http.Request) {
-	tid, id, err := pathIDs(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
+// Scopes returns the scopes of service principal id of organizationID, or ErrPrincipalNotFound.
+func (s *Service) Scopes(ctx context.Context, organizationID, id uuid.UUID) ([]string, error) {
+	scopes, err := s.q.ServicePrincipalScopes(ctx, dbgen.ServicePrincipalScopesParams{ID: id, OrganizationID: organizationID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
 	}
-	overlap, err := overlapOf(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	secret, until, err := h.Service.RotateSecret(r.Context(), tid, id, overlap, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"client_id":                  id,
-		"client_secret":              secret,
-		"previous_secret_expires_at": until,
-		"warning":                    "secret shown once",
-	})
-}
-
-// enable handles POST /v1/tenants/{tenantID}/service-principals/{id}/enable.
-func (h *Handler) enable(w http.ResponseWriter, r *http.Request) {
-	tid, id, err := pathIDs(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := h.Service.Enable(r.Context(), tid, id, audit.ActorOf(r)); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	return scopes, err
 }

@@ -1,0 +1,81 @@
+get:
+  operationId: listPortalSamlConnections
+  summary: List connections (portal)
+  description: >-
+    Requires the link's capabilities to include "saml". Each connection carries
+    the service-provider addresses the IT admin enters at their IdP.
+  tags:
+    - Admin Portal
+  security:
+    - adminPortalCookie: []
+  responses:
+    "200":
+      description: Connections
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/AdminPortalSAMLConnection.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: createPortalSamlConnection
+  summary: Create connection (portal)
+  description: >-
+    Requires the link's capabilities to include "saml". A name alone creates a
+    draft whose service-provider addresses (sp_entity_id, acs_url,
+    sp_metadata_url) are in the answer, so the IT admin can give them to the IdP
+    before its details exist; the IdP's entity ID, SSO URL and certificate then
+    come together through the update endpoint. Any of them given brings the rest
+    (422 admin_portal.saml_fields_required otherwise). As on the organization-admin
+    endpoint, an IdP SSO URL that is not an absolute https URL answers 422
+    saml.sso_url_invalid, a certificate that does not parse 422
+    saml.certificate_invalid, and an organization whose plan does not include
+    enterprise SSO 402 billing.upgrade_required.
+  tags:
+    - Admin Portal
+  security:
+    - adminPortalCookie: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/SAMLConnectionCreate.yaml
+  responses:
+    "201":
+      description: >-
+        Connection created, with the service-provider addresses to enter at the
+        IdP
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/AdminPortalSAMLConnection.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "402":
+      description: >-
+        The organization's plan does not include enterprise SSO
+        (billing.upgrade_required).
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -6,11 +6,13 @@
   "files.eol": "\n",
   "files.insertFinalNewline": true,
   "files.trimTrailingWhitespace": true,
+  // bin/ holds the build, the local logs and the scan reports (git-ignored); only the binary is hidden.
   "files.exclude": {
-    "**/bin": true
+    "bin/qeet-id": true
   },
   "search.exclude": {
-    "**/go.sum": true
+    "**/go.sum": true,
+    "bin/**": true
   },
   // ── Go ───────────────────────────────────────────────────────────────────
   "[go]": {
@@ -21,12 +23,17 @@
     }
   },
   "go.useLanguageServer": true,
+  // The database tests (*_db_test.go) and tests/apitest build only with this tag; without it the
+  // language server finds no package for them.
+  "go.buildTags": "integration",
   "go.lintTool": "golangci-lint",
   "go.lintOnSave": "workspace",
-  "go.testFlags": [
-    "-race",
-    "-count=1"
-  ],
+  "go.testFlags": ["-race", "-count=1"],
+  // ── JavaScript, JSON, YAML, Markdown: Prettier, as make fmt runs it ─────────
+  "prettier.prettierPath": "./api/openapi/src/node_modules/prettier",
+  "[javascript][json][jsonc][yaml][markdown]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
   // ── SQL (migrations) ─────────────────────────────────────────────────────
   "[sql]": {
     "editor.tabSize": 4

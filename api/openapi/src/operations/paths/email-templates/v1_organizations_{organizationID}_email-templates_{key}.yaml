@@ -1,0 +1,129 @@
+delete:
+  operationId: resetEmailTemplate
+  summary: Reset to default
+  tags:
+    - Email Templates
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: key
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[^/\\]+$'
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Deletes the organization's version of an email template, so the default is
+    sent again. Requires branding.write.
+  responses:
+    "200":
+      description: Built-in default after removing the override and its options
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/EmailResolvedTemplate.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+get:
+  operationId: getEmailTemplate
+  summary: Get template
+  tags:
+    - Email Templates
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: key
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[^/\\]+$'
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Returns an email template as the organization sends it: its own version, or
+    the default. Requires branding.write.
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/EmailResolvedTemplate.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+put:
+  operationId: setEmailTemplate
+  summary: Override template
+  tags:
+    - Email Templates
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: key
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[^/\\]+$'
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/EmailEditorInput.yaml
+    description: >-
+      Subject, plain-text alternative, and optional rich HTML, preheader, design
+      and language variants. HTML is sanitized. Only catalogue variables are
+      accepted.
+  description: >-
+    Saves the template and options atomically with its audit event. Every
+    template's saved version is the one sent: email verification, password
+    reset, magic link, invitation and emailed sign-in codes. Removing it sends
+    the default again. A template must keep its link variable (a `*_url`) and,
+    for verification and sign-in codes, its `code` variable.
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/EmailResolvedTemplate.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,48 @@
+post:
+  operationId: testWebhook
+  summary: Test webhook
+  tags:
+    - Webhooks
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Queues a test.ping event for this subscription alone, whichever events it
+    names, and answers once it is queued. Its data is {subscription_id}.
+    Audited as webhook.test_sent.
+    Requires webhook.write.
+  responses:
+    "202":
+      description: Accepted
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - queued
+              - subscription
+            properties:
+              queued:
+                type: boolean
+              subscription:
+                type: string
+                format: uuid
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

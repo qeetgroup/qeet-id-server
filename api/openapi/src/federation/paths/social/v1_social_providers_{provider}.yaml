@@ -1,0 +1,134 @@
+patch:
+  operationId: updateSocialProvider
+  summary: Update a provider
+  tags:
+    - Social
+  parameters:
+    - name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[^/\\]+$'
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            enabled:
+              type:
+                - boolean
+                - "null"
+              description: >-
+                false switches the provider off — it is no longer offered and
+                sign-in through it is refused — until switched on again; other
+                saves keep it off.
+            client_id:
+              type:
+                - string
+                - "null"
+            client_secret:
+              type:
+                - string
+                - "null"
+              writeOnly: true
+              description: >-
+                Replaces the stored secret; omitted or empty keeps it. For
+                Apple, a new .p8 key, which must sign with the team and key IDs.
+            discovery_url:
+              type:
+                - string
+                - "null"
+              description: An OpenID Connect provider's alone; ignored for the others.
+            apple_team_id:
+              type:
+                - string
+                - "null"
+            apple_key_id:
+              type:
+                - string
+                - "null"
+  description: >-
+    Changes only the fields given on one of the caller's organization's social
+    providers — switch it off or on, replace its secret, or change its client ID
+    or discovery URL. Takes effect for the next sign-in; other providers are
+    unaffected. A switched-off provider reads to a signing-in user exactly like
+    one that was never set up. Audited as social_provider.updated (fields
+    changed, whether the secret was replaced), social_provider.disabled and
+    social_provider.enabled. 404 for a provider the organization does not have.
+    Switching it off is refused with 409 social.provider_in_use
+    (metadata.people: how many) while anyone in the organization can sign in
+    only through it, as removing it is; give them another way in first.
+    Changing what the connection trusts (an OpenID Connect provider's
+    discovery_url) is acting on every account linked to it, as the changed
+    connection could sign in as any of them: while an administrator is linked,
+    it needs a caller who outranks each one (403
+    rbac.trust_change_outranks_caller otherwise).
+  responses:
+    "200":
+      description: The provider (never its secret)
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Provider.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+delete:
+  operationId: deleteSocialProvider
+  summary: Remove a provider
+  tags:
+    - Social
+  parameters:
+    - name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[^/\\]+$'
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Removes one of the caller's organization's social providers. The identities
+    people linked through it are kept — they still show in those people's
+    connected accounts and work again if the provider is added back — but nobody
+    can sign in through it meanwhile. Refused with 409 social.provider_in_use
+    (metadata.people: how many) while anyone in the organization can sign in
+    only through it (no password, no passkey, no other linked identity); give
+    them another way in first. Audited as social_provider.deleted. 404 for a
+    provider the organization does not have.
+  responses:
+    "204":
+      description: Removed
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      $ref: ../../../shared/responses/Conflict.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

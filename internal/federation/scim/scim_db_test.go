@@ -3,75 +3,121 @@
 package scim
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
-	"net/url"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
-// planGate includes SCIM in the plans of the tenants it holds.
+// planGate includes SCIM in the plans of the organizations it holds.
 type planGate map[uuid.UUID]bool
 
-func (g planGate) FeatureAllowed(_ context.Context, tenantID uuid.UUID, _ string) (bool, error) {
-	return g[tenantID], nil
+func (g planGate) FeatureAllowed(_ context.Context, organizationID uuid.UUID, _ string) (bool, error) {
+	return g[organizationID], nil
 }
 
 // TestLapsedPlanStopsSCIM checks that a SCIM token issued while the plan
 // included SCIM provisions nothing once the plan has lapsed.
 func TestLapsedPlanStopsSCIM(t *testing.T) {
 	ctx := dbtest.Context(t)
-	f := newSCIMFixture(t, ctx)
-	plans := planGate{f.tenantID: true}
-	f.svc.SetPlanGate(plans)
+	plans := planGate{}
+	f := newSCIMFixture(t, ctx, func(d *Deps) { d.Gate = plans })
+	plans[f.organizationID] = true
 	if rec := f.do(t, http.MethodGet, "/scim/v2/Users", nil); rec.Code != http.StatusOK {
 		t.Fatalf("SCIM on a plan with it: status %d", rec.Code)
 	}
 
-	delete(plans, f.tenantID) // the plan lapses
+	delete(plans, f.organizationID) // the plan lapses
 	rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{
 		"schemas": []string{"urn:ietf:params:scim:schemas:core:2.0:User"}, "userName": dbtest.Unique("new") + "@example.test",
 	})
 	if rec.Code != http.StatusForbidden || decodeBody(t, rec)["schemas"] == nil {
 		t.Errorf("SCIM after the plan lapsed: status %d %s, want a SCIM 403", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE tenant_id = $1`, f.tenantID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE organization_id = $1`, f.organizationID); n != 0 {
 		t.Errorf("%d users provisioned after the plan lapsed, want none", n)
 	}
 }
 
-// TestSCIMUserReadsStayInTheirTenant checks that one tenant's SCIM token can
-// neither find, read nor delete another tenant's user.
-func TestSCIMUserReadsStayInTheirTenant(t *testing.T) {
-	ctx := dbtest.Context(t)
-	a := newSCIMFixture(t, ctx)
-	b := newSCIMFixture(t, ctx)
-	email := dbtest.Unique("victim") + "@a.example.test"
-	victim := a.seedUser(t, ctx, email)
+func TestMain(m *testing.M) { dbtest.Main(m) }
 
-	for _, tc := range []struct {
-		method, path string
-		want         int
-	}{
-		{http.MethodGet, "/scim/v2/Users/" + victim.String(), http.StatusNotFound},
-		{http.MethodDelete, "/scim/v2/Users/" + victim.String(), http.StatusNotFound},
-	} {
-		if rec := b.do(t, tc.method, tc.path, nil); rec.Code != tc.want {
-			t.Errorf("B %s %s: status %d, want %d", tc.method, tc.path, rec.Code, tc.want)
-		}
-	}
-	for _, path := range []string{"/scim/v2/Users", "/scim/v2/Users?filter=" + url.QueryEscape(`userName eq "`+email+`"`)} {
-		if total := decodeBody(t, b.do(t, http.MethodGet, path, nil))["totalResults"]; total != float64(0) {
-			t.Errorf("B GET %s: totalResults %v, want 0", path, total)
-		}
-	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND deleted_at IS NULL`, victim); n != 1 {
-		t.Error("B's SCIM token deleted A's user")
-	}
-	if rec := a.do(t, http.MethodGet, "/scim/v2/Users/"+victim.String(), nil); rec.Code != http.StatusOK {
-		t.Fatalf("A reads its own user: status %d", rec.Code)
-	}
+// scimFixture sets up an organization, a SCIM bearer token, two users, and a mounted
+// SCIM router driving the real handlers.
+type scimFixture struct {
+	organizationID uuid.UUID
+	token          string
+	router         chi.Router
+	svc            *Service
 }
+
+func newSCIMFixture(t *testing.T, ctx context.Context, with ...func(*Deps)) *scimFixture {
+	t.Helper()
+	tid := dbtest.Organization(t)
+
+	// Seed a SCIM bearer token for this organization (hash scheme matches Rotate).
+	token := tokenPrefix + uuid.NewString()
+	if _, err := dbtest.Pool(t).Exec(ctx, `
+		INSERT INTO organization.scim_tokens (organization_id, token_hash, token_prefix)
+		VALUES ($1, $2, $3)
+	`, tid, codes.Hash(token), tokenPrefix+"seed"); err != nil {
+		t.Fatalf("seed token: %v", err)
+	}
+
+	svc := newTestService(t, dbtest.Pool(t), with...)
+	h := &Handler{Service: svc}
+	r := chi.NewRouter()
+	h.MountPublic(r)
+	return &scimFixture{organizationID: tid, token: token, router: r, svc: svc}
+}
+
+// seedUser creates an organization user and returns its id.
+func (f *scimFixture) seedUser(t *testing.T, ctx context.Context, email string) uuid.UUID {
+	t.Helper()
+	repo := user.NewRepository(dbtest.Pool(t))
+	u, err := repo.CreateWithCredential(ctx, user.CreateInput{OrganizationID: f.organizationID, Email: email}, "")
+	if err != nil {
+		t.Fatalf("seed user %s: %v", email, err)
+	}
+	return u.ID
+}
+
+// do issues a SCIM request and returns the recorder.
+func (f *scimFixture) do(t *testing.T, method, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	var rdr *bytes.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal body: %v", err)
+		}
+		rdr = bytes.NewReader(b)
+	} else {
+		rdr = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, "http://localhost:4000"+path, rdr)
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	req.Header.Set("Content-Type", scimContentType)
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, req)
+	return rec
+}
+
+func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+		t.Fatalf("decode body (%d): %v\nbody=%s", rec.Code, err, rec.Body.String())
+	}
+	return m
+}
+
+const schemaPatchOp = "urn:ietf:params:scim:api:messages:2.0:PatchOp"

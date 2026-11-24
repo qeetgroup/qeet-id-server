@@ -17,10 +17,10 @@ type RbacPermission struct {
 }
 
 type RbacRole struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	Name        string
-	Description string
-	IsSystem    bool
-	CreatedAt   time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	IsSystem       bool
+	CreatedAt      time.Time
 }

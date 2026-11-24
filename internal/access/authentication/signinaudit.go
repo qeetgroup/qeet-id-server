@@ -1,4 +1,4 @@
-package auth
+package authentication
 
 import (
 	"context"
@@ -9,14 +9,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Failed sign-ins are recorded in the organisation's audit trail as
+// Failed sign-ins are recorded in the organization's audit trail as
 // auth.sign_in_failed, never with what was submitted; locks and throttles are
-// recorded too. Records are capped per organisation and network, and failures
+// recorded too. Records are capped per organization and network, and failures
 // past the cap are counted in sign_in_failures_unrecorded_total.
 
 // How a sign-in failed, as recorded.
@@ -28,15 +29,16 @@ const (
 	FailureCodeInvalid     = "code_invalid"
 )
 
-// SignInFailure is a failed sign-in, as recorded.
+// SignInFailure is a failed sign-in, as recorded. Its Actor is the attempt's
+// client address, user agent and request ID; the record names the account,
+// if one was found, as the actor.
 type SignInFailure struct {
-	TenantID  uuid.UUID      // the organisation signed in to (uuid.Nil: the account's own)
-	UserID    uuid.UUID      // the account, if one was found (uuid.Nil: none)
-	Method    string         // password, mfa or passkey
-	Reason    string         // a Failure* value, such as FailureWrongPassword
-	IP        string         // the client address
-	UserAgent string         // the client's User-Agent
-	Metadata  map[string]any // extra details, never anything submitted
+	OrganizationID uuid.UUID      // the organization signed in to (uuid.Nil: the account's own)
+	UserID         uuid.UUID      // the account, if one was found (uuid.Nil: none)
+	Method         string         // password, mfa or passkey
+	Reason         string         // a Failure* value, such as FailureWrongPassword
+	Metadata       map[string]any // extra details, never anything submitted
+	audit.Actor
 }
 
 var unrecordedFailures = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -53,22 +55,22 @@ func init() {
 
 // failureBound bounds how many failed sign-ins are recorded.
 type failureBound struct {
-	perSource, perTenant *ratelimit.Limiter
+	perSource, perOrganization *ratelimit.Limiter
 }
 
 func newFailureBound() failureBound {
 	return failureBound{
-		perSource: ratelimit.New(1.0/6, 20), // per organisation and source network: 20, then ten a minute
-		perTenant: ratelimit.New(2, 200),    // per organisation: 200, then two a second
+		perSource:       ratelimit.New(1.0/6, 20), // per organization and source network: 20, then ten a minute
+		perOrganization: ratelimit.New(2, 200),    // per organization: 200, then two a second
 	}
 }
 
 func (b failureBound) allow(ctx context.Context, f SignInFailure) bool {
-	org := f.TenantID.String()
+	org := f.OrganizationID.String()
 	if ok, _ := b.perSource.Take(ctx, org+"|"+httpx.SourceNetwork(f.IP)); !ok {
 		return false
 	}
-	ok, _ := b.perTenant.Take(ctx, org)
+	ok, _ := b.perOrganization.Take(ctx, org)
 	return ok
 }
 
@@ -78,9 +80,18 @@ func (b failureBound) allow(ctx context.Context, f SignInFailure) bool {
 func (s *Service) RecordSignInFailure(ctx context.Context, f SignInFailure) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	if f.TenantID == uuid.Nil && f.UserID != uuid.Nil {
-		f.TenantID = s.homeTenant(ctx, f.UserID)
+	if f.OrganizationID == uuid.Nil && f.UserID != uuid.Nil {
+		f.OrganizationID = s.homeOrganization(ctx, f.UserID)
 	}
+	method := f.Method
+	if method == "" {
+		method = "unknown"
+	}
+	reason := f.Reason
+	if reason == "" {
+		reason = "refused"
+	}
+	signIns.WithLabelValues(method, reason).Inc()
 	if !s.failures.allow(ctx, f) {
 		unrecordedFailures.WithLabelValues(f.Method).Inc()
 		return
@@ -92,13 +103,11 @@ func (s *Service) RecordSignInFailure(ctx context.Context, f SignInFailure) {
 	for k, v := range f.Metadata {
 		meta[k] = v
 	}
-	e := audit.Event{TenantID: orNil(f.TenantID), ActorType: "anonymous", Action: "auth.sign_in_failed",
-		IP: f.IP, UserAgent: f.UserAgent, Metadata: meta}
+	by, resourceType := as(f.Actor, "anonymous", nil), ""
 	if f.UserID != uuid.Nil {
-		user := f.UserID
-		e.ActorUserID, e.ActorType, e.ResourceType, e.ResourceID = &user, "user", "user", &user
+		by, resourceType = as(f.Actor, "user", &f.UserID), "user"
 	}
-	if err := s.auditTx(ctx, e); err != nil {
+	if err := audit.RecordAlone(ctx, s.pool, by.EventIn(orNil(f.OrganizationID), "auth.sign_in_failed", resourceType, f.UserID, meta)); err != nil {
 		slog.Warn("auth: record a failed sign-in", "method", f.Method, "reason", f.Reason, "err", err)
 	}
 }
@@ -111,51 +120,55 @@ func (s *Service) recordLocks(ctx context.Context, f SignInFailure, locks []Acco
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	if f.TenantID == uuid.Nil && f.UserID != uuid.Nil {
-		f.TenantID = s.homeTenant(ctx, f.UserID)
+	if f.OrganizationID == uuid.Nil && f.UserID != uuid.Nil {
+		f.OrganizationID = s.homeOrganization(ctx, f.UserID)
 	}
-	var user *uuid.UUID
+	system, resourceType := as(f.Actor, "system", nil), ""
 	if f.UserID != uuid.Nil {
-		id := f.UserID
-		user = &id
+		resourceType = "user"
 	}
 	for _, lock := range locks {
-		e := audit.Event{TenantID: orNil(f.TenantID), ActorType: "system", Action: "auth.account_locked",
-			IP: f.IP, UserAgent: f.UserAgent, Metadata: map[string]any{
+		if err := audit.RecordAlone(ctx, s.pool, system.EventIn(orNil(f.OrganizationID), "auth.account_locked", resourceType, f.UserID,
+			map[string]any{
 				"counter": lock.Counter, "network": lock.Network, "failures": lock.Failures, "threshold": lock.Threshold,
 				"window_seconds": int(lock.Window.Seconds()), "locked_until": lock.LockedUntil.UTC().Format(time.RFC3339),
-			}}
-		if user != nil {
-			e.ResourceType, e.ResourceID = "user", user
-		}
-		if err := s.auditTx(ctx, e); err != nil {
+			})); err != nil {
 			slog.Warn("auth: record a sign-in lock", "counter", lock.Counter, "err", err)
 		}
 	}
 	if throttle != nil {
-		if err := s.auditTx(ctx, audit.Event{TenantID: orNil(f.TenantID), ActorType: "system", Action: "auth.source_throttled",
-			IP: f.IP, UserAgent: f.UserAgent, Metadata: map[string]any{
+		if err := audit.RecordAlone(ctx, s.pool, system.EventIn(orNil(f.OrganizationID), "auth.source_throttled", "", uuid.Nil,
+			map[string]any{
 				"network": throttle.Network, "distinct_accounts": len(throttle.Accounts),
 				"window_seconds": int(throttle.Window.Seconds()), "throttled_until": throttle.ThrottledUntil.UTC().Format(time.RFC3339),
-			}}); err != nil {
+			})); err != nil {
 			slog.Warn("auth: record a source throttle", "err", err)
 		}
 	}
 }
 
-// homeTenant is the organisation an account belongs to (uuid.Nil: none, or
+// homeOrganization is the organization an account belongs to (uuid.Nil: none, or
 // it can't be read).
-func (s *Service) homeTenant(ctx context.Context, userID uuid.UUID) uuid.UUID {
-	var tenantID *uuid.UUID
-	if err := s.pool.QueryRow(ctx, `SELECT tenant_id FROM "user".users WHERE id = $1`, userID).Scan(&tenantID); err != nil || tenantID == nil {
+func (s *Service) homeOrganization(ctx context.Context, userID uuid.UUID) uuid.UUID {
+	organizationID, err := s.q.HomeOrganization(ctx, userID)
+	if err != nil || organizationID == nil {
 		return uuid.Nil
 	}
-	return *tenantID
+	return *organizationID
 }
 
-func orNil(id uuid.UUID) *uuid.UUID {
-	if id == uuid.Nil {
-		return nil
-	}
-	return &id
+// orNil is an organization as an audit event names its trail: nil (no
+// organization's) for uuid.Nil.
+func orNil(id uuid.UUID) *uuid.UUID { return postgres.NullIfZero(id) }
+
+// as is from's provenance (client address, user agent, request ID) recorded
+// as actorType acting as userID (nil: no one).
+func as(from audit.Actor, actorType string, userID *uuid.UUID) audit.Actor {
+	from.Type, from.UserID = actorType, userID
+	return from
+}
+
+// asUser is userID acting on their own account from ip with user agent ua.
+func asUser(userID uuid.UUID, ip, ua string) audit.Actor {
+	return audit.Actor{UserID: &userID, Type: "user", IP: ip, UserAgent: ua}
 }

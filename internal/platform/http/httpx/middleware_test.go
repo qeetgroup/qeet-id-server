@@ -1,9 +1,16 @@
 package httpx
 
 import (
+	"bytes"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 func TestSecurityHeaders_AllHeadersSet(t *testing.T) {
@@ -19,7 +26,7 @@ func TestSecurityHeaders_AllHeadersSet(t *testing.T) {
 		"X-Frame-Options":                   "DENY",
 		"X-Content-Type-Options":            "nosniff",
 		"Referrer-Policy":                   "strict-origin-when-cross-origin",
-		"Content-Security-Policy":           "default-src 'none'; frame-ancestors 'none'",
+		"Content-Security-Policy":           "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
 		"Cross-Origin-Opener-Policy":        "same-origin",
 		"Cross-Origin-Resource-Policy":      "cross-origin",
 		"X-DNS-Prefetch-Control":            "off",
@@ -64,19 +71,10 @@ func TestSecurityHeaders_PermissionsPolicyLeavesWebAuthnAllowed(t *testing.T) {
 		t.Fatal("Permissions-Policy header missing")
 	}
 	for _, banned := range []string{"publickey-credentials-get", "publickey-credentials-create"} {
-		if contains(pp, banned) {
+		if strings.Contains(pp, banned) {
 			t.Errorf("Permissions-Policy must not disable %s (would break WebAuthn): %s", banned, pp)
 		}
 	}
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
 
 func TestInFlight_CountsActiveRequests(t *testing.T) {
@@ -258,5 +256,87 @@ func TestSourceNetwork(t *testing.T) {
 		if got := SourceNetwork(ip); got != want {
 			t.Errorf("SourceNetwork(%q) = %q, want %q", ip, got, want)
 		}
+	}
+}
+
+// TestRefuseEncodedSeparators checks that a path with an encoded slash or
+// backslash, in either case, is refused before the handler, while other
+// encodings and a query carrying encoded slashes pass.
+func TestRefuseEncodedSeparators(t *testing.T) {
+	h := RefuseEncodedSeparators(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for target, want := range map[string]int{
+		"/v1/users/a%2Fb":       http.StatusBadRequest,
+		"/v1/users/a%2fb/roles": http.StatusBadRequest,
+		"/v1/users/a%5Cb":       http.StatusBadRequest,
+		"/v1/users/a%5cb":       http.StatusBadRequest,
+		"/v1/users/a%252Fb":     http.StatusNoContent,
+		"/v1/users/a%20b":       http.StatusNoContent,
+		"/v1/oauth/authorize?redirect_uri=https%3A%2F%2Fapp.example%2Fcb": http.StatusNoContent,
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		if rec.Code != want {
+			t.Errorf("%s: %d, want %d", target, rec.Code, want)
+		}
+	}
+}
+
+// TestAccessLogNamesThePrincipal checks that the access line carries the
+// principal an authentication middleware below it adds to the request.
+func TestAccessLogNamesThePrincipal(t *testing.T) {
+	var logs bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	userID, organizationID := uuid.New(), uuid.New()
+	router := chi.NewRouter()
+	router.Use(AccessLog)
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p := &Principal{UserID: &userID, OrganizationID: &organizationID, ActorType: "user"}
+			next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
+		})
+	})
+	router.Get("/v1/me", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/me", nil))
+
+	for _, want := range []string{`"user_id":"` + userID.String() + `"`, `"organization_id":"` + organizationID.String() + `"`, `"actor_type":"user"`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("access log lacks %s: %s", want, logs.String())
+		}
+	}
+}
+
+func TestAccessAndErrorLogsRedactAdminPortalToken(t *testing.T) {
+	const secret = "portal-capability-token-must-not-leak"
+	var logs bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	router := chi.NewRouter()
+	router.Use(AccessLog)
+	router.Get("/v1/admin-portal/{token}/context", func(w http.ResponseWriter, r *http.Request) {
+		WriteError(w, r, errors.New("forced failure"))
+	})
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/admin-portal/"+secret+"/context", nil))
+	if strings.Contains(logs.String(), secret) {
+		t.Fatalf("matched-route logs leaked portal token: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), `/v1/admin-portal/{token}/context`) {
+		t.Fatalf("logs should retain the safe route pattern: %s", logs.String())
+	}
+
+	logs.Reset()
+	request := httptest.NewRequest(http.MethodGet, "/v1/admin-portal/"+secret+"/context", nil)
+	WriteError(httptest.NewRecorder(), request, errors.New("forced unmatched failure"))
+	if strings.Contains(logs.String(), secret) {
+		t.Fatalf("unmatched-route error log leaked portal token: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "/v1/admin-portal/{redacted}/context") {
+		t.Fatalf("unmatched route should redact the capability segment: %s", logs.String())
 	}
 }

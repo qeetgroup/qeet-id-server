@@ -13,32 +13,33 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 )
 
-// tokenOrg is an organisation with an administrator managing its SCIM tokens
+// tokenOrg is an organization with an administrator managing its SCIM tokens
 // and the SCIM endpoint its identity provider calls.
 type tokenOrg struct {
-	id     uuid.UUID
-	admin  http.Handler
-	scim   chi.Router
-	tokens string // the admin path of its token list
+	id      uuid.UUID
+	adminID uuid.UUID
+	admin   http.Handler
+	scim    chi.Router
+	tokens  string // the admin path of its token list
 }
 
 func newTokenOrg(t *testing.T) *tokenOrg {
 	t.Helper()
-	id := dbtest.Tenant(t)
+	id := dbtest.Organization(t)
 	admin := dbtest.User(t, id, id)
-	h := &Handler{Service: NewService(dbtest.Pool(t), user.NewRepository(dbtest.Pool(t)))}
+	h := &Handler{Service: newTestService(t, dbtest.Pool(t))}
 	r := chi.NewRouter()
 	h.MountPublic(r)
 	return &tokenOrg{
-		id:     id,
-		admin:  dbtest.Serve(dbtest.Principal(admin.ID, id), h.Mount),
-		scim:   r,
-		tokens: "/tenants/" + id.String() + "/scim/tokens",
+		id:      id,
+		adminID: admin.ID,
+		admin:   dbtest.Serve(dbtest.Principal(admin.ID, id), h.Mount),
+		scim:    r,
+		tokens:  "/organizations/" + id.String() + "/scim/tokens",
 	}
 }
 
@@ -108,8 +109,11 @@ func TestSCIMTokenRotatesWithOverlap(t *testing.T) {
 	if first.SCIMToken.Status != TokenActive || first.SCIMToken.Name != "Okta" || first.Token == "" {
 		t.Fatalf("created %+v", first)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.scim_tokens WHERE id = $1 AND token_hash = $2`, first.SCIMToken.ID, codes.Hash(first.Token)); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.scim_tokens WHERE id = $1 AND token_hash = $2`, first.SCIMToken.ID, codes.Hash(first.Token)); n != 1 {
 		t.Fatal("the token is not stored as its hash")
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.scim_tokens WHERE id = $1 AND organization_id = $2 AND created_by = $3`, first.SCIMToken.ID, o.id, o.adminID); n != 1 {
+		t.Error("the token doesn't record who created it")
 	}
 	if !o.works(t, first.Token) {
 		t.Fatal("a new token is refused")
@@ -142,7 +146,7 @@ func TestSCIMTokenRotatesWithOverlap(t *testing.T) {
 	}
 
 	// The overlap ends.
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE tenant.scim_tokens SET expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`, first.SCIMToken.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE organization.scim_tokens SET expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`, first.SCIMToken.ID); err != nil {
 		t.Fatal(err)
 	}
 	if o.works(t, first.Token) {
@@ -181,7 +185,7 @@ func TestSCIMTokenRotatesWithOverlap(t *testing.T) {
 
 	var actions []string
 	rows, err := dbtest.Pool(t).Query(dbtest.Context(t), `
-		SELECT action FROM audit.events WHERE tenant_id = $1 AND resource_type = 'scim_token' AND resource_id IS NOT NULL
+		SELECT action FROM audit.events WHERE organization_id = $1 AND resource_type = 'scim_token' AND resource_id IS NOT NULL
 	`, o.id)
 	if err != nil {
 		t.Fatal(err)
@@ -200,10 +204,10 @@ func TestSCIMTokenRotatesWithOverlap(t *testing.T) {
 	}
 }
 
-// TestSCIMTokenStopsWithItsExpiryAndOrganisation checks that an expired token
-// is refused, and every token of an organisation that is suspended or due for
+// TestSCIMTokenStopsWithItsExpiryAndOrganization checks that an expired token
+// is refused, and every token of an organization that is suspended or due for
 // deletion, for as long as it is.
-func TestSCIMTokenStopsWithItsExpiryAndOrganisation(t *testing.T) {
+func TestSCIMTokenStopsWithItsExpiryAndOrganization(t *testing.T) {
 	o := newTokenOrg(t)
 	if rec := dbtest.Do(t, o.admin, http.MethodPost, o.tokens, map[string]any{"name": "Entra", "expires_at": time.Now().Add(-time.Minute)}); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("a token expiring in the past: %d, want 422", rec.Code)
@@ -218,7 +222,7 @@ func TestSCIMTokenStopsWithItsExpiryAndOrganisation(t *testing.T) {
 	if expiring.SCIMToken.ExpiresAt == nil || !o.works(t, expiring.Token) {
 		t.Fatalf("a token expiring in an hour: %+v", expiring.SCIMToken)
 	}
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE tenant.scim_tokens SET expires_at = NOW() WHERE id = $1`, expiring.SCIMToken.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE organization.scim_tokens SET expires_at = NOW() WHERE id = $1`, expiring.SCIMToken.ID); err != nil {
 		t.Fatal(err)
 	}
 	if o.works(t, expiring.Token) {
@@ -229,21 +233,21 @@ func TestSCIMTokenStopsWithItsExpiryAndOrganisation(t *testing.T) {
 	}
 
 	for _, tc := range []struct{ name, stop, resume string }{
-		{"suspended", `UPDATE tenant.tenants SET status = 'suspended' WHERE id = $1`, `UPDATE tenant.tenants SET status = 'active' WHERE id = $1`},
-		{"due for deletion", `UPDATE tenant.tenants SET deletion_due_at = NOW() + INTERVAL '30 days' WHERE id = $1`, `UPDATE tenant.tenants SET deletion_due_at = NULL WHERE id = $1`},
-		{"deleted", `UPDATE tenant.tenants SET deleted_at = NOW() WHERE id = $1`, `UPDATE tenant.tenants SET deleted_at = NULL WHERE id = $1`},
+		{"suspended", `UPDATE organization.organizations SET status = 'suspended' WHERE id = $1`, `UPDATE organization.organizations SET status = 'active' WHERE id = $1`},
+		{"due for deletion", `UPDATE organization.organizations SET deletion_due_at = NOW() + INTERVAL '30 days' WHERE id = $1`, `UPDATE organization.organizations SET deletion_due_at = NULL WHERE id = $1`},
+		{"deleted", `UPDATE organization.organizations SET deleted_at = NOW() WHERE id = $1`, `UPDATE organization.organizations SET deleted_at = NULL WHERE id = $1`},
 	} {
 		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), tc.stop, o.id); err != nil {
 			t.Fatal(err)
 		}
 		if o.works(t, lasting.Token) {
-			t.Errorf("a token of an organisation %s works", tc.name)
+			t.Errorf("a token of an organization %s works", tc.name)
 		}
 		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), tc.resume, o.id); err != nil {
 			t.Fatal(err)
 		}
 		if !o.works(t, lasting.Token) {
-			t.Errorf("a token of an organisation no longer %s is refused", tc.name)
+			t.Errorf("a token of an organization no longer %s is refused", tc.name)
 		}
 	}
 }
@@ -256,7 +260,7 @@ func TestSCIMTokenRecordsUseOncePerMinute(t *testing.T) {
 	lastUsed := func() time.Time {
 		t.Helper()
 		var at *time.Time
-		if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT last_used_at FROM tenant.scim_tokens WHERE id = $1`, tok.SCIMToken.ID).Scan(&at); err != nil {
+		if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT last_used_at FROM organization.scim_tokens WHERE id = $1`, tok.SCIMToken.ID).Scan(&at); err != nil {
 			t.Fatal(err)
 		}
 		if at == nil {
@@ -270,7 +274,7 @@ func TestSCIMTokenRecordsUseOncePerMinute(t *testing.T) {
 	if again := lastUsed(); !again.Equal(first) {
 		t.Errorf("a second use within the minute was written: %v, then %v", first, again)
 	}
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE tenant.scim_tokens SET last_used_at = NOW() - INTERVAL '2 minutes' WHERE id = $1`, tok.SCIMToken.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE organization.scim_tokens SET last_used_at = NOW() - INTERVAL '2 minutes' WHERE id = $1`, tok.SCIMToken.ID); err != nil {
 		t.Fatal(err)
 	}
 	o.works(t, tok.Token)
@@ -279,7 +283,7 @@ func TestSCIMTokenRecordsUseOncePerMinute(t *testing.T) {
 	}
 }
 
-// TestSCIMTokenLimit checks that an organisation can't hold more working
+// TestSCIMTokenLimit checks that an organization can't hold more working
 // tokens than the cap, and that a rotation, which replaces one, is not held to it.
 func TestSCIMTokenLimit(t *testing.T) {
 	o := newTokenOrg(t)
@@ -295,10 +299,10 @@ func TestSCIMTokenLimit(t *testing.T) {
 	}
 }
 
-// TestSCIMTokensStayInTheirOrganisation checks that an administrator can't
-// list, rotate or revoke another organisation's tokens, and that one
-// organisation's token reaches none of another's data.
-func TestSCIMTokensStayInTheirOrganisation(t *testing.T) {
+// TestSCIMTokensStayInTheirOrganization checks that an administrator can't
+// list, rotate or revoke another organization's tokens, and that one
+// organization's token reaches none of another's data.
+func TestSCIMTokensStayInTheirOrganization(t *testing.T) {
 	a, b := newTokenOrg(t), newTokenOrg(t)
 	mine := a.create(t, map[string]any{"name": "A"})
 	theirs := b.create(t, map[string]any{"name": "B"})
@@ -340,11 +344,11 @@ func TestSCIMTokensStayInTheirOrganisation(t *testing.T) {
 // rotation replaces every token at once, and a revocation stops them all.
 func TestSCIMSingleTokenRoutesMapOntoTokens(t *testing.T) {
 	o := newTokenOrg(t)
-	legacy := "/tenants/" + o.id.String() + "/scim/token"
+	legacy := "/organizations/" + o.id.String() + "/scim/token"
 	// A token from before several were possible, as the migration leaves it.
 	before := tokenPrefix + uuid.NewString()
 	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
-		INSERT INTO tenant.scim_tokens (tenant_id, token_hash, token_prefix) VALUES ($1, $2, $3)
+		INSERT INTO organization.scim_tokens (organization_id, token_hash, token_prefix) VALUES ($1, $2, $3)
 	`, o.id, codes.Hash(before), tokenPrefix+"before"); err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +394,7 @@ func TestSCIMSingleTokenRoutesMapOntoTokens(t *testing.T) {
 	if rec := dbtest.Do(t, o.admin, http.MethodDelete, legacy, nil); rec.Code != http.StatusNotFound {
 		t.Errorf("revoking with none left: %d, want 404", rec.Code)
 	}
-	rec := dbtest.Do(t, o.admin, http.MethodGet, "/tenants/"+o.id.String()+"/scim", nil)
+	rec := dbtest.Do(t, o.admin, http.MethodGet, "/organizations/"+o.id.String()+"/scim", nil)
 	var cfg ConfigView
 	dbtest.Decode(t, rec, &cfg)
 	if cfg.TokenSet || cfg.TokenCount != 0 {

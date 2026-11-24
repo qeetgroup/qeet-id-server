@@ -1,25 +1,19 @@
-// Package decisionlog keeps the access decisions an organisation asks of the
-// platform (the check, relationship check, AuthZEN and ABAC evaluate calls)
-// for 30 days, and lists them. Decisions are queued and written in batches in
-// the background, so a check never waits on its record; when the queue is
-// full a record is dropped, and counted in the log, rather than slow the check.
+// Package decisionlog keeps for 30 days, and lists, the access decisions an organization asks of the
+// platform (check, relationship check, AuthZEN and ABAC evaluate). Records are queued and written in
+// background batches so a check never waits; a full queue drops a record, counting it, rather than
+// slow the check.
 package decisionlog
 
 import (
 	"context"
 	"log/slog"
-	"net/http"
-	"strconv"
 	"sync/atomic"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
@@ -40,19 +34,19 @@ const (
 	maxWait    = 2 * time.Second // how long the last batch may take at shutdown
 )
 
-// Entry is one decision to keep: in TenantID, about Subject (a user id, or a
+// Entry is one decision to keep: in OrganizationID, about Subject (a user id, or a
 // type:id subject) doing Action on Resource, its answer, and the model, rule
 // and reason that decided it.
 type Entry struct {
-	TenantID   uuid.UUID
-	Source     string
-	Subject    string
-	Resource   string
-	Action     string
-	Allowed    bool
-	Model      string
-	Rule       string
-	ReasonCode string
+	OrganizationID uuid.UUID
+	Source         string
+	Subject        string
+	Resource       string
+	Action         string
+	Allowed        bool
+	Model          string
+	Rule           string
+	ReasonCode     string
 }
 
 type record struct {
@@ -77,7 +71,7 @@ func New(pool *pgxpool.Pool) *Log {
 
 // Record queues e, asked by ctx's caller, without waiting.
 func (l *Log) Record(ctx context.Context, e Entry) {
-	if l == nil || e.TenantID == uuid.Nil {
+	if l == nil || e.OrganizationID == uuid.Nil {
 		return
 	}
 	r := record{Entry: e, at: time.Now().UTC()}
@@ -132,36 +126,28 @@ func (l *Log) Run(ctx context.Context) {
 	}
 }
 
-// insertDecisions writes a batch of decisions given column by column. COPY
-// isn't allowed on a table with row-level security, so it is an INSERT.
-const insertDecisions = `INSERT INTO auth.authz_decisions
-	(tenant_id, decided_at, source, caller_type, caller_id, caller_client, subject, resource, action, allowed, model, rule, reason_code)
-SELECT * FROM unnest($1::uuid[], $2::timestamptz[], $3::text[], $4::text[], $5::uuid[], $6::text[], $7::text[],
-	$8::text[], $9::text[], $10::boolean[], $11::text[], $12::text[], $13::text[])`
-
 // write writes batch and returns it emptied.
 func (l *Log) write(ctx context.Context, batch []record) []record {
 	if len(batch) == 0 {
 		return batch
 	}
 	n := len(batch)
-	tenants, callers := make([]uuid.UUID, n), make([]pgtype.UUID, n)
-	at, allowed := make([]time.Time, n), make([]bool, n)
-	text := make([][]string, 9)
-	for i := range text {
-		text[i] = make([]string, n)
+	p := dbgen.InsertDecisionsParams{
+		OrganizationIds: make([]uuid.UUID, n), DecidedAt: make([]time.Time, n), Allowed: make([]bool, n),
+		Sources: make([]string, n), CallerTypes: make([]string, n), CallerIds: make([]string, n),
+		CallerClients: make([]string, n), Subjects: make([]string, n), Resources: make([]string, n),
+		Actions: make([]string, n), Models: make([]string, n), Rules: make([]string, n), ReasonCodes: make([]string, n),
 	}
 	for i, r := range batch {
-		tenants[i], at[i], allowed[i] = r.TenantID, r.at, r.Allowed
+		p.OrganizationIds[i], p.DecidedAt[i], p.Allowed[i] = r.OrganizationID, r.at, r.Allowed
+		p.Sources[i], p.CallerTypes[i], p.CallerClients[i] = r.Source, r.callerType, r.callerClient
+		p.Subjects[i], p.Resources[i], p.Actions[i] = r.Subject, r.Resource, r.Action
+		p.Models[i], p.Rules[i], p.ReasonCodes[i] = r.Model, r.Rule, r.ReasonCode
 		if r.callerID != nil {
-			callers[i] = pgtype.UUID{Bytes: *r.callerID, Valid: true}
-		}
-		for c, v := range []string{r.Source, r.callerType, r.callerClient, r.Subject, r.Resource, r.Action, r.Model, r.Rule, r.ReasonCode} {
-			text[c][i] = v
+			p.CallerIds[i] = r.callerID.String()
 		}
 	}
-	if _, err := l.pool.Exec(ctx, insertDecisions, tenants, at, text[0], text[1], callers, text[2],
-		text[3], text[4], text[5], allowed, text[6], text[7], text[8]); err != nil {
+	if err := l.q.InsertDecisions(ctx, p); err != nil {
 		slog.Warn("decision log: decisions not written", "count", n, "err", err)
 	}
 	return batch[:0]
@@ -184,39 +170,25 @@ type Decision struct {
 	ReasonCode   string     `json:"reason_code,omitempty"`
 }
 
-// Page is a page of decisions; NextCursor fetches the next, "" on the last.
-type Page struct {
-	Items      []Decision `json:"items"`
-	NextCursor string     `json:"next_cursor,omitempty"`
-}
-
 // Filter narrows a list: to a subject, a source and an answer when set, and
-// to decisions of the last Days days (1..30, default 30).
+// to decisions of the last Days days (1..30, default 30). After is where the
+// page starts, and Limit its size (50 when unset, at most 200).
 type Filter struct {
 	Subject, Source string
 	Allowed         *bool
 	Days, Limit     int
-	Cursor          string
+	After           paging.Cursor
 }
 
-// List returns a page of up to f.Limit (1..200, default 50) of the tenant's
-// decisions, newest first.
-func (l *Log) List(ctx context.Context, tenantID uuid.UUID, f Filter) (*Page, error) {
-	if f.Limit <= 0 || f.Limit > 200 {
-		f.Limit = 50
-	}
+// List returns a page of the organization's decisions, newest first.
+func (l *Log) List(ctx context.Context, organizationID uuid.UUID, f Filter) (paging.Result[Decision], error) {
+	f.Limit = paging.Clamp(f.Limit, 50, 200)
 	if f.Days <= 0 || f.Days > 30 {
 		f.Days = 30
 	}
-	before, beforeID := time.Now().Add(time.Hour), uuid.Max
-	if f.Cursor != "" {
-		var err error
-		if before, beforeID, err = paging.DecodeTimeUUID(f.Cursor); err != nil {
-			return nil, errs.ErrBadRequest.WithDetail("invalid cursor")
-		}
-	}
-	params := dbgen.ListDecisionsParams{TenantID: tenantID, Allowed: f.Allowed, Since: time.Now().AddDate(0, 0, -f.Days),
-		BeforeTs: before, BeforeID: beforeID, RowLimit: int32(f.Limit + 1)} // #nosec G115 -- limit is at most 200
+	params := dbgen.ListDecisionsParams{OrganizationID: organizationID, Allowed: f.Allowed, Since: time.Now().AddDate(0, 0, -f.Days),
+		RowLimit: int32(f.Limit + 1)} // #nosec G115 -- limit is at most 200
+	params.BeforeTs, params.BeforeID = f.After.Before()
 	if f.Subject != "" {
 		params.Subject = &f.Subject
 	}
@@ -225,58 +197,12 @@ func (l *Log) List(ctx context.Context, tenantID uuid.UUID, f Filter) (*Page, er
 	}
 	rows, err := l.q.ListDecisions(ctx, params)
 	if err != nil {
-		return nil, err
+		return paging.Result[Decision]{}, err
 	}
-	page := &Page{Items: make([]Decision, 0, len(rows))}
-	for _, r := range rows {
-		d := Decision{ID: r.ID, DecidedAt: r.DecidedAt, Source: r.Source, CallerType: r.CallerType, CallerClient: r.CallerClient,
-			Subject: r.Subject, Resource: r.Resource, Action: r.Action, Allowed: r.Allowed, Model: r.Model, Rule: r.Rule, ReasonCode: r.ReasonCode}
-		if r.CallerID.Valid {
-			id := uuid.UUID(r.CallerID.Bytes)
-			d.CallerID = &id
-		}
-		page.Items = append(page.Items, d)
+	items := make([]Decision, len(rows))
+	for i, r := range rows {
+		items[i] = Decision{ID: r.ID, DecidedAt: r.DecidedAt, Source: r.Source, CallerType: r.CallerType, CallerClient: r.CallerClient,
+			Subject: r.Subject, Resource: r.Resource, Action: r.Action, Allowed: r.Allowed, Model: r.Model, Rule: r.Rule, ReasonCode: r.ReasonCode, CallerID: r.CallerID}
 	}
-	if len(page.Items) > f.Limit {
-		page.Items = page.Items[:f.Limit]
-		last := page.Items[f.Limit-1]
-		page.NextCursor = paging.EncodeTimeUUID(last.DecidedAt, last.ID)
-	}
-	return page, nil
-}
-
-// Handler serves the decision log.
-type Handler struct {
-	Log *Log
-}
-
-// Mount registers GET /tenants/{tenantID}/authorization/decisions.
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/authorization/decisions", h.list)
-}
-
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	q := r.URL.Query()
-	f := Filter{Subject: q.Get("subject"), Source: q.Get("source"), Cursor: q.Get("cursor")}
-	f.Limit, _ = strconv.Atoi(q.Get("limit"))
-	f.Days, _ = strconv.Atoi(q.Get("days"))
-	if a := q.Get("allowed"); a != "" {
-		allowed, err := strconv.ParseBool(a)
-		if err != nil {
-			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid allowed"))
-			return
-		}
-		f.Allowed = &allowed
-	}
-	out, err := h.Log.List(r.Context(), tenantID, f)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	return paging.Page(paging.Next(items, f.Limit, func(d Decision) (time.Time, uuid.UUID) { return d.DecidedAt, d.ID })), nil
 }

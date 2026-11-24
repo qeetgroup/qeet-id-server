@@ -1,0 +1,79 @@
+post:
+  operationId: applyGroupTemplate
+  summary: Apply a group template
+  tags:
+    - Groups
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  description: >-
+    Creates every group in the template in one transaction, optionally under an
+    existing parent. The parent must belong to the caller's organization. Group names
+    are unique in an organization, ignoring case, so applying a template whose
+    groups already exist, including applying it a second time, answers 409
+    group.name_exists with the first colliding name in the error detail, and
+    creates nothing. To apply it again (say, for another office), give a prefix,
+    put before every group's name, and optionally a root_name for a template
+    with one top group; names are checked trimmed, at most 200 characters (422
+    validation_failed before anything is made), and the audit event records
+    both.
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            parent_id:
+              type:
+                - string
+                - "null"
+              format: uuid
+            prefix:
+              type:
+                - string
+                - "null"
+              description: Put before every group's name, such as "Pune · ".
+            root_name:
+              type:
+                - string
+                - "null"
+              description: A new name for the template's one top group.
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/Group.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,25 @@
+get:
+  operationId: checkReadiness
+  description: >-
+    Runs every registered dependency probe under a short shared timeout and
+    returns 200 only when all pass, otherwise 503 with a per-check breakdown (ok
+    or fail; the cause is logged, never answered). Requires no authentication.
+    Unlike the liveness probe, a failure here indicates the instance is
+    temporarily unable to serve traffic, so orchestrators route requests away
+    without restarting the process.
+  summary: Readiness
+  tags:
+    - Health
+  security: []
+  responses:
+    "200":
+      description: Ready
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+    "503":
+      description: Not ready (a dependency is down)

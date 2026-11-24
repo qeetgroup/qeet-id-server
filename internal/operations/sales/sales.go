@@ -1,22 +1,20 @@
 // Package sales captures in-app "Contact sales" leads. A lead is saved for
 // follow-up and, best-effort, emailed to the sales inbox. Any signed-in user may
-// submit one: tenant and user are recorded when known, since a lead can come
+// submit one: organization and user are recorded when known, since a lead can come
 // before an organization exists.
 package sales
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/sales/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/sales/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -40,34 +38,31 @@ type Service struct {
 }
 
 // NewService returns a Service that emails leads to salesInbox through sender;
-// an empty salesInbox or nil sender only saves them.
-func NewService(pool *pgxpool.Pool, sender notifier.Sender, salesInbox string) *Service {
-	return &Service{q: dbgen.New(pool), sender: sender, salesInbox: salesInbox}
-}
-
-func pgUUID(id *uuid.UUID) pgtype.UUID {
-	if id == nil {
-		return pgtype.UUID{}
+// with an empty salesInbox (none configured) it only saves them. It refuses a
+// nil sender.
+func NewService(pool *pgxpool.Pool, sender notifier.Sender, salesInbox string) (*Service, error) {
+	if sender == nil {
+		return nil, errors.New("sales: a sender is required to email the sales inbox")
 	}
-	return pgtype.UUID{Bytes: *id, Valid: true}
+	return &Service{q: dbgen.New(pool), sender: sender, salesInbox: salesInbox}, nil
 }
 
 // Submit saves the lead and, best-effort, emails the sales inbox. The email
 // address is required.
-func (s *Service) Submit(ctx context.Context, tenantID, userID *uuid.UUID, in Lead) error {
+func (s *Service) Submit(ctx context.Context, organizationID, userID *uuid.UUID, in Lead) error {
 	email := strings.TrimSpace(in.Email)
 	if email == "" {
 		return errs.ErrBadRequest.WithMessage("A work email is required.")
 	}
 	if _, err := s.q.InsertSalesLead(ctx, dbgen.InsertSalesLeadParams{
-		TenantID: pgUUID(tenantID),
-		UserID:   pgUUID(userID),
-		Name:     strings.TrimSpace(in.Name),
-		Email:    email,
-		Company:  strings.TrimSpace(in.Company),
-		TeamSize: strings.TrimSpace(in.TeamSize),
-		Message:  strings.TrimSpace(in.Message),
-		Source:   strings.TrimSpace(in.Source),
+		OrganizationID: organizationID,
+		UserID:         userID,
+		Name:           strings.TrimSpace(in.Name),
+		Email:          email,
+		Company:        strings.TrimSpace(in.Company),
+		TeamSize:       strings.TrimSpace(in.TeamSize),
+		Message:        strings.TrimSpace(in.Message),
+		Source:         strings.TrimSpace(in.Source),
 	}); err != nil {
 		return err
 	}
@@ -78,7 +73,7 @@ func (s *Service) Submit(ctx context.Context, tenantID, userID *uuid.UUID, in Le
 // notify emails the lead to the sales inbox, if one is configured. A failure is
 // only logged: the lead is already saved.
 func (s *Service) notify(ctx context.Context, in Lead, email string) {
-	if s.sender == nil || s.salesInbox == "" {
+	if s.salesInbox == "" {
 		return
 	}
 	body := fmt.Sprintf(
@@ -97,31 +92,4 @@ func (s *Service) notify(ctx context.Context, in Lead, email string) {
 	}); err != nil {
 		slog.Warn("sales lead notification failed", "err", err, "email", httpx.SanitizeForLog(email))
 	}
-}
-
-// Handler exposes the contact-sales endpoint.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers POST /sales/leads.
-func (h *Handler) Mount(r chi.Router) {
-	r.Post("/sales/leads", h.submit)
-}
-
-func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
-	var in Lead
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var tenantID, userID *uuid.UUID
-	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		tenantID, userID = p.TenantID, p.UserID
-	}
-	if err := h.Service.Submit(r.Context(), tenantID, userID, in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "received"})
 }

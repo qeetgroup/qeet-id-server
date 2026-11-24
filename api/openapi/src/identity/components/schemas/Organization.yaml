@@ -1,0 +1,67 @@
+type: object
+required:
+  - id
+  - slug
+  - name
+  - status
+  - plan
+  - region
+  - logo_url
+  - metadata
+  - created_at
+  - updated_at
+  - deletion_due_at
+properties:
+  id:
+    type: string
+    format: uuid
+  slug:
+    type: string
+  name:
+    type: string
+  status:
+    type: string
+    enum:
+      - active
+      - suspended
+  plan:
+    type: string
+    enum:
+      - free
+      - starter
+      - pro
+      - enterprise
+  region:
+    type: string
+    description: >-
+      The region this service is hosted in, where the organization's data is
+      held. It is the same for every organization of a deployment and isn't a
+      per-organization data-residency choice.
+  logo_url:
+    type: string
+    description: >-
+      The organization's logo, a hosted URL or a small inline data URL; empty
+      when none is set, and the console shows the name's initials.
+  metadata:
+    type:
+      - object
+      - "null"
+    additionalProperties: true
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time
+  deletion_due_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+    description: When a scheduled deletion takes effect; null when none is.
+  member_count:
+    type: integer
+    description: List-only. Distinct members (rbac.user_roles holders) in this org.
+  mfa_enabled_count:
+    type: integer
+    description: List-only. Members with at least one MFA factor enrolled.

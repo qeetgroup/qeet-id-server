@@ -1,0 +1,75 @@
+type: object
+description: >-
+  A test sign-in through a connection and what it found. The findings (name_id
+  to attributes) are present once the IdP's answer validated.
+required:
+  - connection_id
+  - created_at
+  - email_domain_verified
+  - expires_at
+  - id
+  - status
+properties:
+  id:
+    type: string
+    format: uuid
+  connection_id:
+    type: string
+    format: uuid
+  status:
+    type: string
+    enum:
+      - pending
+      - succeeded
+      - failed
+      - expired
+    description: >-
+      succeeded means a sign-in with the same answer would pass the IdP and
+      domain checks.
+  redirect_url:
+    type: string
+    format: uri
+    description: The IdP address to send the browser to. Only when the test begins.
+  expires_at:
+    type: string
+    format: date-time
+  created_at:
+    type: string
+    format: date-time
+  completed_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+  error_code:
+    type: string
+    description: Why the test failed, as the error code a sign-in would answer with.
+  error_message:
+    type: string
+  error_detail:
+    type: string
+    description: What the validation found, for the IT admin. Plain text.
+  name_id:
+    type: string
+  name_id_format:
+    type: string
+  email:
+    type: string
+    description: >-
+      The address a sign-in would use, from the connection's email attribute or
+      else the NameID.
+  name:
+    type: string
+    description: The name a sign-in would use, from the connection's name attribute.
+  attributes:
+    type: array
+    description: >-
+      The attributes the IdP asserted, by name; at most 64, each with at most 32
+      values.
+    items:
+      $ref: ./SAMLTestAttribute.yaml
+  email_domain_verified:
+    type: boolean
+    description: >-
+      Whether the address is on a domain the organization verified, without
+      which a sign-in is refused.

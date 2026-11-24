@@ -1,9 +1,10 @@
 //go:build integration
 
-package auth
+package authentication
 
 import (
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -55,7 +56,7 @@ func TestRefreshOverHTTP(t *testing.T) {
 		code        string
 	}{
 		{"no token", "", http.StatusUnprocessableEntity, errs.CodeValidation},
-		{"an unknown token", dbtest.Unique("token"), http.StatusUnauthorized, errs.CodeAuthRefreshTokenInvalid},
+		{"an unknown token", dbtest.Unique("token"), http.StatusUnauthorized, CodeRefreshTokenInvalid},
 		{"the spent token", first.RefreshToken, http.StatusUnauthorized, errs.CodeAuthSessionRevoked},
 		{"its replacement", second.RefreshToken, http.StatusUnauthorized, errs.CodeAuthSessionRevoked},
 	} {
@@ -70,7 +71,7 @@ func TestRefreshOverHTTP(t *testing.T) {
 }
 
 // TestRefreshRefusedOnceInactive checks that a session stops renewing once its
-// account is suspended or deleted, or its organisation suspended, though
+// account is suspended or deleted, or its organization suspended, though
 // neither ended it, and that an expired refresh token is refused.
 func TestRefreshRefusedOnceInactive(t *testing.T) {
 	ctx := dbtest.Context(t)
@@ -79,11 +80,11 @@ func TestRefreshRefusedOnceInactive(t *testing.T) {
 		name, change string
 		want         error
 	}{
-		{"suspended account", `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, errs.ErrAuthAccountSuspended},
-		{"deleted account", `UPDATE "user".users SET status = 'deleted', deleted_at = NOW() WHERE id = $1`, errs.ErrAuthAccountSuspended},
-		{"suspended organisation", `UPDATE tenant.tenants SET status = 'suspended' WHERE id = (SELECT tenant_id FROM "user".users WHERE id = $1)`, errs.ErrAuthTenantInactive},
+		{"suspended account", `UPDATE account.users SET status = 'suspended' WHERE id = $1`, errs.ErrAuthAccountSuspended},
+		{"deleted account", `UPDATE account.users SET status = 'deleted', deleted_at = NOW() WHERE id = $1`, errs.ErrAuthAccountSuspended},
+		{"suspended organization", `UPDATE organization.organizations SET status = 'suspended' WHERE id = (SELECT organization_id FROM account.users WHERE id = $1)`, ErrOrganizationInactive},
 		{"expired refresh token", `UPDATE auth.refresh_tokens SET expires_at = NOW() - INTERVAL '1 second'
-			WHERE session_id IN (SELECT id FROM auth.sessions WHERE user_id = $1)`, errs.ErrAuthRefreshTokenInvalid},
+			WHERE session_id IN (SELECT id FROM auth.sessions WHERE user_id = $1)`, ErrRefreshTokenInvalid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, _ := member(t)
@@ -116,8 +117,8 @@ func TestSessionTimeouts(t *testing.T) {
 				t.Fatal(err)
 			}
 			for i := range 2 {
-				if _, err := svc.Refresh(ctx, RefreshInput{RefreshToken: pair.RefreshToken}); !errors.Is(err, errs.ErrAuthSessionTimedOut) {
-					t.Fatalf("renewal %d: %v, want %v", i+1, err, errs.ErrAuthSessionTimedOut)
+				if _, err := svc.Refresh(ctx, RefreshInput{RefreshToken: pair.RefreshToken}); !errors.Is(err, ErrSessionTimedOut) {
+					t.Fatalf("renewal %d: %v, want %v", i+1, err, ErrSessionTimedOut)
 				}
 			}
 			if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.session_expired' AND resource_id = $1
@@ -155,12 +156,12 @@ type sessionPage struct {
 func TestSessionsOverHTTP(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	a, tenant := member(t)
+	a, organization := member(t)
 	stranger, _ := member(t)
 	oldest, older := signIn(t, svc, a), signIn(t, svc, a)
 	current := signIn(t, svc, a)
 	theirs := signIn(t, svc, stranger)
-	p := dbtest.Principal(a.ID, tenant)
+	p := dbtest.Principal(a.ID, organization)
 	p.SessionID = &current.SessionID
 	h := dbtest.Serve(p, newHandler(svc).MountAuthed)
 	call := func(method, path string, status int, code string) *httptest.ResponseRecorder {
@@ -173,13 +174,13 @@ func TestSessionsOverHTTP(t *testing.T) {
 	}
 
 	var me struct {
-		UserID    uuid.UUID `json:"user_id"`
-		TenantID  uuid.UUID `json:"tenant_id"`
-		SessionID uuid.UUID `json:"session_id"`
+		UserID         uuid.UUID `json:"user_id"`
+		OrganizationID uuid.UUID `json:"organization_id"`
+		SessionID      uuid.UUID `json:"session_id"`
 	}
 	dbtest.Decode(t, call(http.MethodGet, "/auth/me", http.StatusOK, ""), &me)
-	if me.UserID != a.ID || me.TenantID != tenant || me.SessionID != current.SessionID {
-		t.Errorf("me %+v, want %s in %s on %s", me, a.ID, tenant, current.SessionID)
+	if me.UserID != a.ID || me.OrganizationID != organization || me.SessionID != current.SessionID {
+		t.Errorf("me %+v, want %s in %s on %s", me, a.ID, organization, current.SessionID)
 	}
 
 	var first, second sessionPage
@@ -233,9 +234,9 @@ func TestSessionsOverHTTP(t *testing.T) {
 }
 
 // signedInEverywhere gives a two sessions, a hosted-login session, a
-// remembered device and an application grant in tenant, and returns the
+// remembered device and an application grant in organization, and returns the
 // first session.
-func signedInEverywhere(t *testing.T, svc *Service, a dbtest.Account, tenant uuid.UUID) *TokenPair {
+func signedInEverywhere(t *testing.T, svc *Service, a dbtest.Account, organization uuid.UUID) *TokenPair {
 	t.Helper()
 	ctx := dbtest.Context(t)
 	pair := signIn(t, svc, a)
@@ -243,13 +244,13 @@ func signedInEverywhere(t *testing.T, svc *Service, a dbtest.Account, tenant uui
 	if _, err := svc.CreateLoginSession(ctx, a.ID, "", testUserAgent); err != nil {
 		t.Fatalf("hosted-login session: %v", err)
 	}
-	if _, err := svc.CreateTrustedDevice(ctx, a.ID, tenant, testUserAgent, time.Hour); err != nil {
+	if _, err := svc.CreateTrustedDevice(ctx, a.ID, organization, testUserAgent, time.Hour); err != nil {
 		t.Fatalf("remembered device: %v", err)
 	}
 	if _, err := dbtest.Pool(t).Exec(ctx, `
-		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, expires_at)
+		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, organization_id, expires_at)
 		VALUES ($1, 'app', $2, $3, NOW() + INTERVAL '1 day')
-	`, dbtest.Unique("grant"), a.ID, tenant); err != nil {
+	`, dbtest.Unique("grant"), a.ID, organization); err != nil {
 		t.Fatalf("application grant: %v", err)
 	}
 	return pair
@@ -274,11 +275,11 @@ func signedInWays(t *testing.T, a dbtest.Account) [4]int {
 // repeated, and refuses a session that isn't the caller's.
 func TestSignOutEverywhere(t *testing.T) {
 	svc := newService(t)
-	a, tenant := member(t)
+	a, organization := member(t)
 	stranger, strangers := member(t)
-	current := signedInEverywhere(t, svc, a, tenant)
+	current := signedInEverywhere(t, svc, a, organization)
 	theirs := signedInEverywhere(t, svc, stranger, strangers)
-	p := dbtest.Principal(a.ID, tenant)
+	p := dbtest.Principal(a.ID, organization)
 	p.SessionID = &current.SessionID
 	b := newBrowser(t, dbtest.Serve(p, newHandler(svc).MountAuthed))
 	type ended struct {
@@ -324,17 +325,17 @@ func TestSignOutEverywhere(t *testing.T) {
 	}
 }
 
-// TestSessionLimitEvictsLeastRecentlyUsed checks that at the organisation's
+// TestSessionLimitEvictsLeastRecentlyUsed checks that at the organization's
 // session limit a new sign-in ends the least recently used session, not the
-// oldest, records why, and counts only sessions in that organisation.
+// oldest, records why, and counts only sessions in that organization.
 func TestSessionLimitEvictsLeastRecentlyUsed(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
-	a, tenant := member(t)
-	other := dbtest.Tenant(t)
+	a, organization := member(t)
+	other := dbtest.Organization(t)
 	dbtest.Assign(t, a.ID, other, dbtest.Role(t, other))
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.security_policies (tenant_id, max_sessions) VALUES ($1, 2)`, tenant); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.security_policies (organization_id, max_sessions) VALUES ($1, 2)`, organization); err != nil {
 		t.Fatal(err)
 	}
 	oldest, idle := signIn(t, svc, a), signIn(t, svc, a)
@@ -355,7 +356,7 @@ func TestSessionLimitEvictsLeastRecentlyUsed(t *testing.T) {
 		{"the oldest, recently used session", oldest.SessionID, true},
 		{"the least recently used session", idle.SessionID, false},
 		{"the new session", newest.SessionID, true},
-		{"the session in another organisation", elsewhere.SessionID, true},
+		{"the session in another organization", elsewhere.SessionID, true},
 	} {
 		if got := live(t, svc, tc.session, a.ID); got != tc.want {
 			t.Errorf("%s live %v, want %v", tc.name, got, tc.want)
@@ -409,7 +410,7 @@ func TestPurgeEndedSessions(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
-	a, tenant := member(t)
+	a, organization := member(t)
 	kept, endedLongAgo, endedRecently, expiredLongAgo := signIn(t, svc, a), signIn(t, svc, a), signIn(t, svc, a), signIn(t, svc, a)
 	if _, err := pool.Exec(ctx, `
 		UPDATE auth.sessions SET
@@ -426,9 +427,9 @@ func TestPurgeEndedSessions(t *testing.T) {
 			INSERT INTO auth.login_sessions (token_hash, user_id, expires_at)
 			VALUES ($2, $1, NOW() - INTERVAL '8 days'), ($3, $1, NOW() + INTERVAL '1 hour')
 		)
-		INSERT INTO auth.trusted_devices (user_id, tenant_id, token_hash, expires_at)
+		INSERT INTO auth.trusted_devices (user_id, organization_id, token_hash, expires_at)
 		VALUES ($1, $4, $2, NOW() - INTERVAL '8 days'), ($1, $4, $3, NOW() + INTERVAL '1 day')
-	`, a.ID, dbtest.Unique("old"), dbtest.Unique("live"), tenant); err != nil {
+	`, a.ID, dbtest.Unique("old"), dbtest.Unique("live"), organization); err != nil {
 		t.Fatal(err)
 	}
 
@@ -471,10 +472,10 @@ func TestPurgeEndedSessions(t *testing.T) {
 func TestPasswordOverHTTP(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	svc.SetRegistrationPolicy(anyPassword{})
+	svc.regPolicy = anyPassword{}
 	const next = "Nx8!rTq4-Lw2mZ"
-	serve := func(a dbtest.Account, tenant uuid.UUID, session *TokenPair) http.Handler {
-		p := dbtest.Principal(a.ID, tenant)
+	serve := func(a dbtest.Account, organization uuid.UUID, session *TokenPair) http.Handler {
+		p := dbtest.Principal(a.ID, organization)
 		p.SessionID = &session.SessionID
 		return dbtest.Serve(p, newHandler(svc).MountAuthed)
 	}
@@ -495,9 +496,9 @@ func TestPasswordOverHTTP(t *testing.T) {
 		return has, ok
 	}
 
-	a, tenant := member(t)
+	a, organization := member(t)
 	current, other := signIn(t, svc, a), signIn(t, svc, a)
-	h := serve(a, tenant, current)
+	h := serve(a, organization, current)
 	if !hasPassword(h) {
 		t.Error("password status: none, want one")
 	}
@@ -516,8 +517,8 @@ func TestPasswordOverHTTP(t *testing.T) {
 		code   string
 	}{
 		{"without a new password", map[string]string{"current_password": testPassword}, http.StatusUnprocessableEntity, errs.CodeValidation},
-		{"with the wrong current password", map[string]string{"current_password": "Wrong-password-1", "new_password": next}, http.StatusUnauthorized, errs.CodeAuthInvalidCredentials},
-		{"without the current password", map[string]string{"new_password": next}, http.StatusUnauthorized, errs.CodeAuthInvalidCredentials},
+		{"with the wrong current password", map[string]string{"current_password": "Wrong-password-1", "new_password": next}, http.StatusUnauthorized, CodeInvalidCredentials},
+		{"without the current password", map[string]string{"new_password": next}, http.StatusUnauthorized, CodeInvalidCredentials},
 	} {
 		if rec := dbtest.Do(t, h, http.MethodPost, "/auth/password", tc.body); !answered(rec, tc.status, tc.code) {
 			t.Errorf("change the password %s: %d %s, want %d %s", tc.name, rec.Code, rec.Body.String(), tc.status, tc.code)
@@ -539,12 +540,12 @@ func TestPasswordOverHTTP(t *testing.T) {
 		t.Error("the old password is still right")
 	}
 
-	passwordless := dbtest.User(t, tenant, tenant)
-	pair, err := svc.IssuePair(ctx, passwordless.ID, tenant, "", "test", "passkey")
+	passwordless := dbtest.User(t, organization, organization)
+	pair, err := svc.IssuePair(ctx, passwordless.ID, organization, "", "test", "passkey")
 	if err != nil {
 		t.Fatal(err)
 	}
-	h = serve(passwordless, tenant, pair)
+	h = serve(passwordless, organization, pair)
 	if has, _ := reauth(passwordless, ""); has || hasPassword(h) {
 		t.Fatal("an account without a password reports one")
 	}
@@ -557,7 +558,7 @@ func TestPasswordOverHTTP(t *testing.T) {
 }
 
 // TestSwitchStaysWithinMemberships checks that a switch enters only an active
-// organisation the person belongs to, from a live session of their own, and
+// organization the person belongs to, from a live session of their own, and
 // replaces that session with one ending no later, after which the old one
 // neither renews, lists nor switches again.
 func TestSwitchStaysWithinMemberships(t *testing.T) {
@@ -565,29 +566,29 @@ func TestSwitchStaysWithinMemberships(t *testing.T) {
 	svc := newService(t)
 	a, home := member(t)
 	stranger, _ := member(t)
-	joined, suspended := dbtest.Tenant(t), dbtest.Tenant(t)
-	for _, tenant := range []uuid.UUID{joined, suspended} {
-		dbtest.Assign(t, a.ID, tenant, dbtest.Role(t, tenant))
+	joined, suspended := dbtest.Organization(t), dbtest.Organization(t)
+	for _, organization := range []uuid.UUID{joined, suspended} {
+		dbtest.Assign(t, a.ID, organization, dbtest.Role(t, organization))
 	}
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.tenants SET status = 'suspended' WHERE id = $1`, suspended); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE organization.organizations SET status = 'suspended' WHERE id = $1`, suspended); err != nil {
 		t.Fatal(err)
 	}
 	pair, theirs := signIn(t, svc, a), signIn(t, svc, stranger)
-	switchTo := func(from *TokenPair, tenant uuid.UUID) (*TokenPair, error) {
-		return svc.SwitchTenant(ctx, SwitchTenantInput{UserID: a.ID, FromSessionID: from.SessionID, TenantID: tenant})
+	switchTo := func(from *TokenPair, organization uuid.UUID) (*TokenPair, error) {
+		return svc.SwitchOrganization(ctx, SwitchOrganizationInput{UserID: a.ID, FromSessionID: from.SessionID, OrganizationID: organization})
 	}
 
 	for _, tc := range []struct {
-		name   string
-		from   *TokenPair
-		tenant uuid.UUID
-		want   error
+		name         string
+		from         *TokenPair
+		organization uuid.UUID
+		want         error
 	}{
-		{"an organisation they don't belong to", pair, dbtest.Tenant(t), errs.ErrAuthNotTenantMember},
-		{"a suspended organisation", pair, suspended, errs.ErrAuthNotTenantMember},
+		{"an organization they don't belong to", pair, dbtest.Organization(t), ErrNotOrganizationMember},
+		{"a suspended organization", pair, suspended, ErrNotOrganizationMember},
 		{"from someone else's session", theirs, joined, errs.ErrUnauthorized},
 	} {
-		if next, err := switchTo(tc.from, tc.tenant); !errors.Is(err, tc.want) || next != nil {
+		if next, err := switchTo(tc.from, tc.organization); !errors.Is(err, tc.want) || next != nil {
 			t.Errorf("switch into %s: %+v, %v; want %v", tc.name, next, err, tc.want)
 		}
 	}
@@ -599,8 +600,8 @@ func TestSwitchStaysWithinMemberships(t *testing.T) {
 	if err != nil {
 		t.Fatalf("switch: %v", err)
 	}
-	if next.TenantID == nil || *next.TenantID != joined || next.SessionExpiresAt.After(pair.SessionExpiresAt) {
-		t.Errorf("switched into %v ending %s, want %s ending no later than %s", next.TenantID, next.SessionExpiresAt, joined, pair.SessionExpiresAt)
+	if next.OrganizationID == nil || *next.OrganizationID != joined || next.SessionExpiresAt.After(pair.SessionExpiresAt) {
+		t.Errorf("switched into %v ending %s, want %s ending no later than %s", next.OrganizationID, next.SessionExpiresAt, joined, pair.SessionExpiresAt)
 	}
 	if _, err := svc.Refresh(ctx, RefreshInput{RefreshToken: pair.RefreshToken}); !errors.Is(err, errs.ErrAuthSessionRevoked) {
 		t.Errorf("refresh the session switched from: %v, want %v", err, errs.ErrAuthSessionRevoked)
@@ -611,5 +612,56 @@ func TestSwitchStaysWithinMemberships(t *testing.T) {
 	}
 	if again, err := switchTo(pair, home); !errors.Is(err, errs.ErrUnauthorized) || again != nil {
 		t.Errorf("switch again from the replaced session: %+v, %v; want %v", again, err, errs.ErrUnauthorized)
+	}
+}
+
+// TestSignOut checks that signing out ends only that session, and its access
+// tokens with it, and that no one else can end it.
+func TestSignOut(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := newService(t)
+	a, _ := member(t)
+	stranger, _ := member(t)
+	ended, kept := signIn(t, svc, a), signIn(t, svc, a)
+
+	if err := svc.Logout(ctx, ended.SessionID, stranger.ID); err != nil {
+		t.Fatalf("sign out as someone else: %v", err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE id = $1 AND revoked_at IS NULL`, ended.SessionID); n != 1 {
+		t.Fatal("another user ended the session")
+	}
+	if err := svc.Logout(ctx, ended.SessionID, a.ID); err != nil {
+		t.Fatalf("sign out: %v", err)
+	}
+	if _, err := svc.Refresh(ctx, RefreshInput{RefreshToken: ended.RefreshToken}); !errors.Is(err, errs.ErrAuthSessionRevoked) {
+		t.Errorf("refresh after sign-out: %v, want %v", err, errs.ErrAuthSessionRevoked)
+	}
+	if _, err := svc.Refresh(ctx, RefreshInput{RefreshToken: kept.RefreshToken}); err != nil {
+		t.Errorf("the other session stopped renewing: %v", err)
+	}
+	for _, tc := range []struct {
+		name    string
+		session uuid.UUID
+		user    uuid.UUID
+		want    bool
+	}{
+		{"the ended session", ended.SessionID, a.ID, false},
+		{"the kept session", kept.SessionID, a.ID, true},
+		{"the kept session as someone else", kept.SessionID, stranger.ID, false},
+	} {
+		if live, err := svc.SessionLive(ctx, tc.session, tc.user); err != nil || live != tc.want {
+			t.Errorf("%s: live %v, %v; want %v", tc.name, live, err, tc.want)
+		}
+	}
+	sessions, err := svc.ListSessions(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	status := map[uuid.UUID]string{}
+	for _, s := range sessions {
+		status[s.ID] = s.Status
+	}
+	if want := map[uuid.UUID]string{ended.SessionID: "revoked", kept.SessionID: "active"}; !maps.Equal(status, want) {
+		t.Errorf("sessions %v, want %v", status, want)
 	}
 }

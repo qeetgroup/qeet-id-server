@@ -1,0 +1,29 @@
+type: object
+required:
+  - code
+  - description
+  - features
+  - id
+  - interval
+  - name
+  - prices
+properties:
+  code:
+    type: string
+  description:
+    type: string
+  features:
+    type: array
+    items:
+      type: string
+  id:
+    type: string
+    format: uuid
+  interval:
+    type: string
+  name:
+    type: string
+  prices:
+    type: object
+    additionalProperties:
+      type: integer

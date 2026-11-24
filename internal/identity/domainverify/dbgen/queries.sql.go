@@ -10,20 +10,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const deleteBreakGlassMember = `-- name: DeleteBreakGlassMember :execrows
-DELETE FROM tenant.break_glass_members WHERE tenant_id = $1 AND user_id = $2
+DELETE FROM organization.break_glass_members WHERE organization_id = $1 AND user_id = $2
 `
 
 type DeleteBreakGlassMemberParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
 func (q *Queries) DeleteBreakGlassMember(ctx context.Context, arg DeleteBreakGlassMemberParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteBreakGlassMember, arg.TenantID, arg.UserID)
+	result, err := q.db.Exec(ctx, deleteBreakGlassMember, arg.OrganizationID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}
@@ -31,16 +30,16 @@ func (q *Queries) DeleteBreakGlassMember(ctx context.Context, arg DeleteBreakGla
 }
 
 const deleteDomain = `-- name: DeleteDomain :execrows
-DELETE FROM tenant.domains WHERE id = $1 AND tenant_id = $2
+DELETE FROM organization.domains WHERE id = $1 AND organization_id = $2
 `
 
 type DeleteDomainParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteDomain(ctx context.Context, arg DeleteDomainParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteDomain, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, deleteDomain, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -48,8 +47,8 @@ func (q *Queries) DeleteDomain(ctx context.Context, arg DeleteDomainParams) (int
 }
 
 const emailDomainManager = `-- name: EmailDomainManager :one
-SELECT d.tenant_id, d.sso_enabled, d.jit_enabled
-FROM tenant.domains d
+SELECT d.organization_id, d.sso_enabled, d.jit_enabled
+FROM organization.domains d
 WHERE d.verified_at IS NOT NULL
   AND (lower(d.domain) = $1::text
        OR right($1::text, length(d.domain) + 1) = '.' || lower(d.domain))
@@ -58,69 +57,69 @@ LIMIT 1
 `
 
 type EmailDomainManagerRow struct {
-	TenantID   uuid.UUID
-	SsoEnabled bool
-	JitEnabled bool
+	OrganizationID uuid.UUID
+	SsoEnabled     bool
+	JitEnabled     bool
 }
 
-// EmailDomainManager returns the organisation managing accounts on @domain:
+// EmailDomainManager returns the organization managing accounts on @domain:
 // the one that verified it, or the closest domain above it, with that
 // domain's switches. @domain is lower-case.
 func (q *Queries) EmailDomainManager(ctx context.Context, domain string) (EmailDomainManagerRow, error) {
 	row := q.db.QueryRow(ctx, emailDomainManager, domain)
 	var i EmailDomainManagerRow
-	err := row.Scan(&i.TenantID, &i.SsoEnabled, &i.JitEnabled)
+	err := row.Scan(&i.OrganizationID, &i.SsoEnabled, &i.JitEnabled)
 	return i, err
 }
 
 const getCaptureExemption = `-- name: GetCaptureExemption :one
 WITH account AS (
-    SELECT u.id, u.tenant_id FROM "user".users u
+    SELECT u.id, u.organization_id FROM account.users u
     WHERE lower(u.email) = lower($3::text) AND u.deleted_at IS NULL
-      AND (u.tenant_id = $1::uuid OR EXISTS (
-          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1::uuid))
+      AND (u.organization_id = $1::uuid OR EXISTS (
+          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.organization_id = $1::uuid))
 )
 SELECT
-    (EXISTS (SELECT 1 FROM tenant.saml_connections s WHERE s.tenant_id = $1::uuid AND s.status = 'active')
-     OR EXISTS (SELECT 1 FROM tenant.ldap_connections l WHERE l.tenant_id = $1::uuid AND l.status = 'active')
-     OR EXISTS (SELECT 1 FROM tenant.oidc_connections o WHERE o.tenant_id = $1::uuid AND o.status = 'active'))::boolean AS sso,
+    (EXISTS (SELECT 1 FROM organization.saml_connections s WHERE s.organization_id = $1::uuid AND s.status = 'active')
+     OR EXISTS (SELECT 1 FROM organization.ldap_connections l WHERE l.organization_id = $1::uuid AND l.status = 'active')
+     OR EXISTS (SELECT 1 FROM organization.oidc_connections o WHERE o.organization_id = $1::uuid AND o.status = 'active'))::boolean AS sso,
     EXISTS (
         SELECT 1 FROM account a
-        JOIN tenant.break_glass_members b ON b.user_id = a.id AND b.tenant_id = $1::uuid
+        JOIN organization.break_glass_members b ON b.user_id = a.id AND b.organization_id = $1::uuid
     )::boolean AS break_glass,
     EXISTS (
         SELECT 1 FROM account a
         WHERE (EXISTS (
                   SELECT 1 FROM rbac.user_roles ur
-                  JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.tenant_id = ur.tenant_id
+                  JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.organization_id = ur.organization_id
                   LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
                   LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
-                  WHERE ur.user_id = a.id AND ur.tenant_id = $1::uuid
-                    AND ((ro.is_system AND ro.name = 'owner') OR p.key = ANY($2::text[])))
+                  WHERE ur.user_id = a.id AND ur.organization_id = $1::uuid
+                    AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY($2::text[])))))
                OR EXISTS (
-                  SELECT 1 FROM tenant.group_members gm
-                  JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
-                  JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
+                  SELECT 1 FROM organization.group_members gm
+                  JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+                  JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id
                   LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
                   LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
-                  WHERE gm.user_id = a.id AND gm.tenant_id = $1::uuid
-                    AND ((ro.is_system AND ro.name = 'owner') OR p.key = ANY($2::text[]))))
-          AND NOT (a.tenant_id IS NOT DISTINCT FROM $1::uuid AND EXISTS (
-                  SELECT 1 FROM "user".external_identities ei
-                  WHERE ei.user_id = a.id AND ei.tenant_id = $1::uuid
-                    AND (EXISTS (SELECT 1 FROM tenant.saml_connections s
-                                 WHERE s.id = ei.connection_id AND s.tenant_id = ei.tenant_id AND ei.provider = 'saml' AND s.status = 'active')
-                         OR EXISTS (SELECT 1 FROM tenant.ldap_connections l
-                                    WHERE l.id = ei.connection_id AND l.tenant_id = ei.tenant_id AND ei.provider = 'ldap' AND l.status = 'active')
-                         OR EXISTS (SELECT 1 FROM tenant.oidc_connections o
-                                    WHERE o.id = ei.connection_id AND o.tenant_id = ei.tenant_id AND ei.provider = 'oidc' AND o.status = 'active'))))
+                  WHERE gm.user_id = a.id AND gm.organization_id = $1::uuid
+                    AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY($2::text[]))))))
+          AND NOT (a.organization_id IS NOT DISTINCT FROM $1::uuid AND EXISTS (
+                  SELECT 1 FROM account.external_identities ei
+                  WHERE ei.user_id = a.id AND ei.organization_id = $1::uuid
+                    AND (EXISTS (SELECT 1 FROM organization.saml_connections s
+                                 WHERE s.id = ei.connection_id AND s.organization_id = ei.organization_id AND ei.provider = 'saml' AND s.status = 'active')
+                         OR EXISTS (SELECT 1 FROM organization.ldap_connections l
+                                    WHERE l.id = ei.connection_id AND l.organization_id = ei.organization_id AND ei.provider = 'ldap' AND l.status = 'active')
+                         OR EXISTS (SELECT 1 FROM organization.oidc_connections o
+                                    WHERE o.id = ei.connection_id AND o.organization_id = ei.organization_id AND ei.provider = 'oidc' AND o.status = 'active'))))
     )::boolean AS unadoptable_admin
 `
 
 type GetCaptureExemptionParams struct {
-	TenantID         uuid.UUID
-	AdminPermissions []string
-	Email            string
+	OrganizationID    uuid.UUID
+	MemberPermissions []string
+	Email             string
 }
 
 type GetCaptureExemptionRow struct {
@@ -129,14 +128,14 @@ type GetCaptureExemptionRow struct {
 	UnadoptableAdmin bool
 }
 
-// Whether the organisation has an active SAML, LDAP or OpenID Connect
+// Whether the organization has an active SAML, LDAP or OpenID Connect
 // connection, and whether
 // the address keeps its own sign-in methods there: its account is a
 // break-glass member, or an administrator single sign-on can't sign in (an
 // administrator is never adopted by address, so only a home account linked to
 // an active connection can). Every branch runs for every address.
 func (q *Queries) GetCaptureExemption(ctx context.Context, arg GetCaptureExemptionParams) (GetCaptureExemptionRow, error) {
-	row := q.db.QueryRow(ctx, getCaptureExemption, arg.TenantID, arg.AdminPermissions, arg.Email)
+	row := q.db.QueryRow(ctx, getCaptureExemption, arg.OrganizationID, arg.MemberPermissions, arg.Email)
 	var i GetCaptureExemptionRow
 	err := row.Scan(&i.Sso, &i.BreakGlass, &i.UnadoptableAdmin)
 	return i, err
@@ -144,24 +143,24 @@ func (q *Queries) GetCaptureExemption(ctx context.Context, arg GetCaptureExempti
 
 const getDomainForVerify = `-- name: GetDomainForVerify :one
 SELECT id, domain, verification_token, verified_at, created_at
-FROM tenant.domains WHERE id = $1 AND tenant_id = $2
+FROM organization.domains WHERE id = $1 AND organization_id = $2
 `
 
 type GetDomainForVerifyParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type GetDomainForVerifyRow struct {
 	ID                uuid.UUID
 	Domain            string
 	VerificationToken string
-	VerifiedAt        pgtype.Timestamptz
+	VerifiedAt        *time.Time
 	CreatedAt         time.Time
 }
 
 func (q *Queries) GetDomainForVerify(ctx context.Context, arg GetDomainForVerifyParams) (GetDomainForVerifyRow, error) {
-	row := q.db.QueryRow(ctx, getDomainForVerify, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getDomainForVerify, arg.ID, arg.OrganizationID)
 	var i GetDomainForVerifyRow
 	err := row.Scan(
 		&i.ID,
@@ -174,7 +173,7 @@ func (q *Queries) GetDomainForVerify(ctx context.Context, arg GetDomainForVerify
 }
 
 const getLoginDomainCheck = `-- name: GetLoginDomainCheck :one
-SELECT host, checked_at, result FROM tenant.login_domain_checks WHERE tenant_id = $1
+SELECT host, checked_at, result FROM organization.login_domain_checks WHERE organization_id = $1
 `
 
 type GetLoginDomainCheckRow struct {
@@ -183,27 +182,27 @@ type GetLoginDomainCheckRow struct {
 	Result    []byte
 }
 
-func (q *Queries) GetLoginDomainCheck(ctx context.Context, tenantID uuid.UUID) (GetLoginDomainCheckRow, error) {
-	row := q.db.QueryRow(ctx, getLoginDomainCheck, tenantID)
+func (q *Queries) GetLoginDomainCheck(ctx context.Context, organizationID uuid.UUID) (GetLoginDomainCheckRow, error) {
+	row := q.db.QueryRow(ctx, getLoginDomainCheck, organizationID)
 	var i GetLoginDomainCheckRow
 	err := row.Scan(&i.Host, &i.CheckedAt, &i.Result)
 	return i, err
 }
 
 const insertBreakGlassMember = `-- name: InsertBreakGlassMember :execrows
-INSERT INTO tenant.break_glass_members (tenant_id, user_id, created_by)
+INSERT INTO organization.break_glass_members (organization_id, user_id, created_by)
 VALUES ($1, $2, $3)
-ON CONFLICT (tenant_id, user_id) DO NOTHING
+ON CONFLICT (organization_id, user_id) DO NOTHING
 `
 
 type InsertBreakGlassMemberParams struct {
-	TenantID  uuid.UUID
-	UserID    uuid.UUID
-	CreatedBy pgtype.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	CreatedBy      *uuid.UUID
 }
 
 func (q *Queries) InsertBreakGlassMember(ctx context.Context, arg InsertBreakGlassMemberParams) (int64, error) {
-	result, err := q.db.Exec(ctx, insertBreakGlassMember, arg.TenantID, arg.UserID, arg.CreatedBy)
+	result, err := q.db.Exec(ctx, insertBreakGlassMember, arg.OrganizationID, arg.UserID, arg.CreatedBy)
 	if err != nil {
 		return 0, err
 	}
@@ -212,13 +211,13 @@ func (q *Queries) InsertBreakGlassMember(ctx context.Context, arg InsertBreakGla
 
 const insertDomain = `-- name: InsertDomain :one
 
-INSERT INTO tenant.domains (tenant_id, domain, verification_token)
+INSERT INTO organization.domains (organization_id, domain, verification_token)
 VALUES ($1, $2, $3)
 RETURNING id, domain, verification_token, verified_at, created_at
 `
 
 type InsertDomainParams struct {
-	TenantID          uuid.UUID
+	OrganizationID    uuid.UUID
 	Domain            string
 	VerificationToken string
 }
@@ -227,16 +226,16 @@ type InsertDomainRow struct {
 	ID                uuid.UUID
 	Domain            string
 	VerificationToken string
-	VerifiedAt        pgtype.Timestamptz
+	VerifiedAt        *time.Time
 	CreatedAt         time.Time
 }
 
 // Queries for the domain-verification domain.
 // All queries are static. Error handling for the unique-index violations
-// (uq_tenant_domain, uq_verified_domain) stays in the service layer via
+// (uq_organization_domain, uq_verified_domain) stays in the service layer via
 // strings.Contains checks preserved in domainverify.go.
 func (q *Queries) InsertDomain(ctx context.Context, arg InsertDomainParams) (InsertDomainRow, error) {
-	row := q.db.QueryRow(ctx, insertDomain, arg.TenantID, arg.Domain, arg.VerificationToken)
+	row := q.db.QueryRow(ctx, insertDomain, arg.OrganizationID, arg.Domain, arg.VerificationToken)
 	var i InsertDomainRow
 	err := row.Scan(
 		&i.ID,
@@ -248,38 +247,38 @@ func (q *Queries) InsertDomain(ctx context.Context, arg InsertDomainParams) (Ins
 	return i, err
 }
 
-const isTenantMember = `-- name: IsTenantMember :one
+const isOrganizationMember = `-- name: IsOrganizationMember :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users u
+    SELECT 1 FROM account.users u
     WHERE u.id = $1 AND u.deleted_at IS NULL
-      AND (u.tenant_id = $2::uuid OR EXISTS (
-          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2::uuid))
+      AND (u.organization_id = $2::uuid OR EXISTS (
+          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.organization_id = $2::uuid))
 )::boolean
 `
 
-type IsTenantMemberParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+type IsOrganizationMemberParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-// A member: the organisation is the account's home, or the account holds one
+// A member: the organization is the account's home, or the account holds one
 // of its roles.
-func (q *Queries) IsTenantMember(ctx context.Context, arg IsTenantMemberParams) (bool, error) {
-	row := q.db.QueryRow(ctx, isTenantMember, arg.UserID, arg.TenantID)
+func (q *Queries) IsOrganizationMember(ctx context.Context, arg IsOrganizationMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isOrganizationMember, arg.UserID, arg.OrganizationID)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
 }
 
 const listActiveSSOConnections = `-- name: ListActiveSSOConnections :many
-SELECT s.id, 'saml'::text AS protocol, s.name FROM tenant.saml_connections s
-WHERE s.tenant_id = $1::uuid AND s.status = 'active'
+SELECT s.id, 'saml'::text AS protocol, s.name FROM organization.saml_connections s
+WHERE s.organization_id = $1::uuid AND s.status = 'active'
 UNION ALL
-SELECT l.id, 'ldap'::text AS protocol, l.name FROM tenant.ldap_connections l
-WHERE l.tenant_id = $1::uuid AND l.status = 'active'
+SELECT l.id, 'ldap'::text AS protocol, l.name FROM organization.ldap_connections l
+WHERE l.organization_id = $1::uuid AND l.status = 'active'
 UNION ALL
-SELECT o.id, 'oidc'::text AS protocol, o.name FROM tenant.oidc_connections o
-WHERE o.tenant_id = $1::uuid AND o.status = 'active'
+SELECT o.id, 'oidc'::text AS protocol, o.name FROM organization.oidc_connections o
+WHERE o.organization_id = $1::uuid AND o.status = 'active'
 ORDER BY protocol DESC, name
 `
 
@@ -289,8 +288,8 @@ type ListActiveSSOConnectionsRow struct {
 	Name     string
 }
 
-func (q *Queries) ListActiveSSOConnections(ctx context.Context, tenantID uuid.UUID) ([]ListActiveSSOConnectionsRow, error) {
-	rows, err := q.db.Query(ctx, listActiveSSOConnections, tenantID)
+func (q *Queries) ListActiveSSOConnections(ctx context.Context, organizationID uuid.UUID) ([]ListActiveSSOConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, listActiveSSOConnections, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -311,22 +310,24 @@ func (q *Queries) ListActiveSSOConnections(ctx context.Context, tenantID uuid.UU
 
 const listBreakGlassMembers = `-- name: ListBreakGlassMembers :many
 SELECT b.user_id, u.email, u.display_name, b.created_by, b.created_at
-FROM tenant.break_glass_members b
-JOIN "user".users u ON u.id = b.user_id
-WHERE b.tenant_id = $1
+FROM organization.break_glass_members b
+JOIN account.users u ON u.id = b.user_id
+WHERE b.organization_id = $1
 ORDER BY lower(u.email)
+LIMIT 1001
 `
 
 type ListBreakGlassMembersRow struct {
 	UserID      uuid.UUID
 	Email       string
 	DisplayName *string
-	CreatedBy   pgtype.UUID
+	CreatedBy   *uuid.UUID
 	CreatedAt   time.Time
 }
 
-func (q *Queries) ListBreakGlassMembers(ctx context.Context, tenantID uuid.UUID) ([]ListBreakGlassMembersRow, error) {
-	rows, err := q.db.Query(ctx, listBreakGlassMembers, tenantID)
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
+func (q *Queries) ListBreakGlassMembers(ctx context.Context, organizationID uuid.UUID) ([]ListBreakGlassMembersRow, error) {
+	rows, err := q.db.Query(ctx, listBreakGlassMembers, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -352,20 +353,29 @@ func (q *Queries) ListBreakGlassMembers(ctx context.Context, tenantID uuid.UUID)
 }
 
 const listDomains = `-- name: ListDomains :many
-SELECT id, domain, verification_token, verified_at, created_at
-FROM tenant.domains WHERE tenant_id = $1 ORDER BY created_at DESC
+SELECT id, domain, verification_token, verified_at, created_at,
+       last_checked_at, COALESCE(last_error, '')::text AS last_error, sso_enabled, jit_enabled
+FROM organization.domains
+WHERE organization_id = $1
+ORDER BY domain
 `
 
 type ListDomainsRow struct {
 	ID                uuid.UUID
 	Domain            string
 	VerificationToken string
-	VerifiedAt        pgtype.Timestamptz
+	VerifiedAt        *time.Time
 	CreatedAt         time.Time
+	LastCheckedAt     *time.Time
+	LastError         string
+	SsoEnabled        bool
+	JitEnabled        bool
 }
 
-func (q *Queries) ListDomains(ctx context.Context, tenantID uuid.UUID) ([]ListDomainsRow, error) {
-	rows, err := q.db.Query(ctx, listDomains, tenantID)
+// ListDomains lists an organization's domains with their switches and the
+// outcome of their last check.
+func (q *Queries) ListDomains(ctx context.Context, organizationID uuid.UUID) ([]ListDomainsRow, error) {
+	rows, err := q.db.Query(ctx, listDomains, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -379,6 +389,10 @@ func (q *Queries) ListDomains(ctx context.Context, tenantID uuid.UUID) ([]ListDo
 			&i.VerificationToken,
 			&i.VerifiedAt,
 			&i.CreatedAt,
+			&i.LastCheckedAt,
+			&i.LastError,
+			&i.SsoEnabled,
+			&i.JitEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -390,27 +404,39 @@ func (q *Queries) ListDomains(ctx context.Context, tenantID uuid.UUID) ([]ListDo
 	return items, nil
 }
 
+const loginHost = `-- name: LoginHost :one
+SELECT COALESCE(custom_domain, '')::text FROM organization.branding WHERE organization_id = $1
+`
+
+// LoginHost is the organization's custom login hostname as stored; ” for none.
+func (q *Queries) LoginHost(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, loginHost, organizationID)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const markDomainVerified = `-- name: MarkDomainVerified :one
-UPDATE tenant.domains SET verified_at = NOW()
-WHERE id = $1 AND tenant_id = $2
+UPDATE organization.domains SET verified_at = NOW()
+WHERE id = $1 AND organization_id = $2
 RETURNING id, domain, verification_token, verified_at, created_at
 `
 
 type MarkDomainVerifiedParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type MarkDomainVerifiedRow struct {
 	ID                uuid.UUID
 	Domain            string
 	VerificationToken string
-	VerifiedAt        pgtype.Timestamptz
+	VerifiedAt        *time.Time
 	CreatedAt         time.Time
 }
 
 func (q *Queries) MarkDomainVerified(ctx context.Context, arg MarkDomainVerifiedParams) (MarkDomainVerifiedRow, error) {
-	row := q.db.QueryRow(ctx, markDomainVerified, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, markDomainVerified, arg.ID, arg.OrganizationID)
 	var i MarkDomainVerifiedRow
 	err := row.Scan(
 		&i.ID,
@@ -422,38 +448,107 @@ func (q *Queries) MarkDomainVerified(ctx context.Context, arg MarkDomainVerified
 	return i, err
 }
 
-const organisationName = `-- name: OrganisationName :one
-SELECT name FROM tenant.tenants WHERE id = $1 AND deleted_at IS NULL
+const organizationName = `-- name: OrganizationName :one
+SELECT name FROM organization.organizations WHERE id = $1 AND deleted_at IS NULL
 `
 
-// The name an organisation's people know it by, for its sign-in page.
-func (q *Queries) OrganisationName(ctx context.Context, tenantID uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, organisationName, tenantID)
+// The name an organization's people know it by, for its sign-in page.
+func (q *Queries) OrganizationName(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, organizationName, organizationID)
 	var name string
 	err := row.Scan(&name)
 	return name, err
 }
 
+const recordDomainCheck = `-- name: RecordDomainCheck :exec
+UPDATE organization.domains SET last_checked_at = NOW(), last_error = $1
+WHERE id = $2 AND organization_id = $3
+`
+
+type RecordDomainCheckParams struct {
+	LastError      *string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// RecordDomainCheck stamps a verification attempt: its failure, or NULL for
+// one that found the record.
+func (q *Queries) RecordDomainCheck(ctx context.Context, arg RecordDomainCheckParams) error {
+	_, err := q.db.Exec(ctx, recordDomainCheck, arg.LastError, arg.ID, arg.OrganizationID)
+	return err
+}
+
 const saveLoginDomainCheck = `-- name: SaveLoginDomainCheck :exec
-INSERT INTO tenant.login_domain_checks (tenant_id, host, checked_at, result)
+INSERT INTO organization.login_domain_checks (organization_id, host, checked_at, result)
 VALUES ($1, $2, $3, $4)
-ON CONFLICT (tenant_id) DO UPDATE
+ON CONFLICT (organization_id) DO UPDATE
 SET host = EXCLUDED.host, checked_at = EXCLUDED.checked_at, result = EXCLUDED.result
 `
 
 type SaveLoginDomainCheckParams struct {
-	TenantID  uuid.UUID
-	Host      string
-	CheckedAt time.Time
-	Result    []byte
+	OrganizationID uuid.UUID
+	Host           string
+	CheckedAt      time.Time
+	Result         []byte
 }
 
 func (q *Queries) SaveLoginDomainCheck(ctx context.Context, arg SaveLoginDomainCheckParams) error {
 	_, err := q.db.Exec(ctx, saveLoginDomainCheck,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Host,
 		arg.CheckedAt,
 		arg.Result,
 	)
 	return err
+}
+
+const updateDomainSettings = `-- name: UpdateDomainSettings :one
+UPDATE organization.domains SET
+    sso_enabled = COALESCE($1::boolean, sso_enabled),
+    jit_enabled = COALESCE($2::boolean, jit_enabled)
+WHERE id = $3 AND organization_id = $4
+RETURNING id, domain, verification_token, verified_at, created_at,
+          last_checked_at, COALESCE(last_error, '')::text AS last_error, sso_enabled, jit_enabled
+`
+
+type UpdateDomainSettingsParams struct {
+	SsoEnabled     *bool
+	JitEnabled     *bool
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+type UpdateDomainSettingsRow struct {
+	ID                uuid.UUID
+	Domain            string
+	VerificationToken string
+	VerifiedAt        *time.Time
+	CreatedAt         time.Time
+	LastCheckedAt     *time.Time
+	LastError         string
+	SsoEnabled        bool
+	JitEnabled        bool
+}
+
+// UpdateDomainSettings sets the switches given; a NULL one keeps its value.
+func (q *Queries) UpdateDomainSettings(ctx context.Context, arg UpdateDomainSettingsParams) (UpdateDomainSettingsRow, error) {
+	row := q.db.QueryRow(ctx, updateDomainSettings,
+		arg.SsoEnabled,
+		arg.JitEnabled,
+		arg.ID,
+		arg.OrganizationID,
+	)
+	var i UpdateDomainSettingsRow
+	err := row.Scan(
+		&i.ID,
+		&i.Domain,
+		&i.VerificationToken,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.LastCheckedAt,
+		&i.LastError,
+		&i.SsoEnabled,
+		&i.JitEnabled,
+	)
+	return i, err
 }

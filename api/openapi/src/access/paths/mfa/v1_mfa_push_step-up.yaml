@@ -1,0 +1,37 @@
+post:
+  operationId: startPushStepUp
+  summary: Step up with a linked phone
+  tags:
+    - MFA
+  security:
+    - bearerAuth: []
+  description: >-
+    Sends a step-up request for the calling session to every phone the caller
+    has linked, and answers 202 with its challenge_id, expires_at and the number
+    to show for the phone to send back when approving. Once the request is
+    approved on a phone, complete the step-up with the complete call. A caller
+    with no linked phone gets 404 mfa.push_device_not_found; a principal without
+    a session (an API key, agent) cannot step up. Requests are bounded as at
+    sign-in (429 mfa.push_limited).
+  responses:
+    "202":
+      description: Request sent
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              challenge_id:
+                type: string
+                format: uuid
+              expires_at:
+                type: string
+                format: date-time
+              number:
+                type: integer
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

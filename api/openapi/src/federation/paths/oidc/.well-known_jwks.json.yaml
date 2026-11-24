@@ -1,0 +1,23 @@
+get:
+  operationId: getJwks
+  description: >-
+    Publishes the issuer's public signing keys as a JWK Set so relying parties
+    and resource servers can verify Qeet-issued ID tokens and JWT access tokens,
+    with Qeet acting as the OpenID provider. Served unauthenticated at the root,
+    not under /v1, and advertised as jwks_uri in the discovery document. Keys
+    rotate, so callers should cache by key id and refetch when they encounter an
+    unknown one. Any origin may read it (CORS Access-Control-Allow-Origin: *,
+    without credentials).
+  summary: JWKS
+  tags:
+    - OIDC
+  security: []
+  responses:
+    "200":
+      description: JWK Set
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/JWKS.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

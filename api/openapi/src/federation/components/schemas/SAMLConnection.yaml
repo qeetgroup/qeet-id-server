@@ -1,0 +1,121 @@
+type: object
+required:
+  - sp_entity_id
+  - acs_url
+  - sp_metadata_url
+  - id
+  - organization_id
+  - name
+  - idp_entity_id
+  - idp_sso_url
+  - idp_certificate
+  - certificates
+  - metadata_url
+  - metadata_refreshed_at
+  - metadata_error
+  - email_attribute
+  - name_attribute
+  - groups_attribute
+  - status
+  - allow_idp_initiated
+  - created_at
+  - updated_at
+  - last_login_at
+properties:
+  sp_entity_id:
+    type: string
+    description: The connection's own entity ID, for the IdP.
+  acs_url:
+    type: string
+    description: Where the IdP posts assertions.
+  sp_metadata_url:
+    type: string
+    description: The connection's own metadata, for the IdP to import.
+  id:
+    type: string
+    format: uuid
+  organization_id:
+    type: string
+    format: uuid
+  name:
+    type: string
+  idp_entity_id:
+    type: string
+  idp_sso_url:
+    type: string
+    format: uri
+  idp_certificate:
+    type: string
+    description: The oldest of the signing certificates the connection trusts.
+  certificates:
+    type: array
+    description: >-
+      Every IdP signing certificate the connection trusts, oldest first. An
+      assertion signed with any of them is accepted, so an IdP can roll its key
+      over without a sign-in outage.
+    items:
+      $ref: ./SAMLCertificate.yaml
+  metadata_url:
+    type:
+      - string
+      - "null"
+    format: uri
+    description: >-
+      The IdP metadata URL the connection refreshes its SSO URL and certificates
+      from; null when it doesn't refresh.
+  metadata_refreshed_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+    description: When the connection last took its settings from the IdP's metadata.
+  metadata_error:
+    type:
+      - string
+      - "null"
+    description: Why the last refresh from metadata_url failed; null once one succeeds.
+  email_attribute:
+    type: string
+  name_attribute:
+    type: string
+    description: >-
+      The attribute carrying the person's display name. When it is empty or the
+      assertion lacks it, the common display-name attributes are read, else the
+      given and family names joined. Each sign-in sets the account's display
+      name to what the assertion carries.
+  groups_attribute:
+    type: string
+    maxLength: 256
+    description: >-
+      The attribute carrying the person's groups, matched against the
+      connection's group mappings and the external ids of groups SCIM
+      provisioned. Empty (the default) reads groups,
+      http://schemas.microsoft.com/ws/2008/06/identity/claims/groups and
+      memberOf. When Microsoft Entra ID leaves the groups out for being too
+      many, memberships stay as they are.
+  status:
+    type: string
+    enum:
+      - draft
+      - active
+      - disabled
+  allow_idp_initiated:
+    type: boolean
+    default: false
+    description: >-
+      Accept unsolicited assertions that carry no InResponseTo, i.e.
+      IdP-initiated SSO. Off by default. Enabling it relaxes only the
+      AuthnRequest correlation — signature, issuer, audience, destination and
+      time-condition validation are unchanged, and response and assertion IDs
+      are still consumed for replay protection.
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time
+  last_login_at:
+    type:
+      - string
+      - "null"
+    format: date-time

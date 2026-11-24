@@ -1,0 +1,74 @@
+post:
+  operationId: introspectToken
+  description: >-
+    Reports whether a supplied access or refresh token is currently active and
+    returns its associated claims when it is (RFC 7662), with Qeet acting as the
+    OAuth authorization server. Callers authenticate with OAuth client
+    credentials supplied as form parameters or via HTTP Basic. Mounted at the
+    root, not under /v1; it pairs with the revocation endpoint for token
+    lifecycle management. A public client can't call it: its client_id is in
+    every sign-in link and proves nothing, so the call answers 401
+    oidc.client_auth_failed. Wrong secrets are audited. An application only
+    learns about tokens it owns: an access token issued to it (its client_id
+    claim), or one issued for a registered resource it serves
+    (server_client_id), and a refresh token issued to it. Any other token,
+    including another application's in the same organization or one from another
+    organization, answers only {"active": false}, so the endpoint never confirms
+    a token exists; asking about another application's token is audited as
+    oidc.introspection_refused. An active access token reports its real aud (a
+    string for one audience, a list for several), its client_id, and resource
+    when it was issued for one. Introspection is the authoritative answer on
+    revocation: a signature-valid access token whose account is suspended or
+    deleted, whose membership of the organization has ended, whose sign-in has
+    ended, or whose agent is no longer active, answers {"active": false}. The
+    sign-in is the session the token names in sid: a person's own session, or
+    for an application's token the hosted-login session it was issued in, ended
+    by signing out of it (one that only expired still renews through its
+    grant). Device and backchannel tokens name no session. A verifier that checks tokens
+    offline (signature and expiry) accepts such a token until it expires
+    (ACCESS_TOKEN_TTL, 10 minutes by default); call introspection where
+    revocation must take effect at once. A browser may call it from an origin
+    one of the applications allows (web_origins), without credentials.
+  summary: Token introspect (RFC 7662)
+  tags:
+    - OIDC
+  security:
+    - clientCredentials: []
+  requestBody:
+    required: true
+    content:
+      application/x-www-form-urlencoded:
+        schema:
+          type: object
+          required:
+            - token
+          properties:
+            token:
+              type: string
+            token_type_hint:
+              type: string
+            client_id:
+              type: string
+              description: >-
+                The client's ID, when it authenticates in the form body rather
+                than with HTTP Basic.
+            client_secret:
+              type: string
+              description: >-
+                The client's secret, when it authenticates in the form body
+                (client_secret_post).
+  responses:
+    "200":
+      description: Introspection result
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Introspection.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,83 @@
+post:
+  operationId: createWebhook
+  summary: Create webhook
+  tags:
+    - Webhooks
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        example:
+          url: https://hooks.example.com/qeet
+          events:
+            - user.created
+            - user.updated
+        schema:
+          $ref: ../../components/schemas/WebhookCreateInput.yaml
+  description: >-
+    Subscribes an endpoint to the organization's events it names. The endpoint
+    must be an allowed outbound destination; the signing secret is shown only in
+    this answer. events must name at least one event (422
+    webhook.events_required), each from the event catalogue (422
+    webhook.event_unknown); a repeated name counts once. Requires webhook.write.
+    Needs a recent step-up. Send an Idempotency-Key header to retry it safely: a
+    retry with the same key and body within 24 hours gets the first answer,
+    marked Idempotent-Replayed: true; the same key with another body answers 422
+    idempotency.key_reused, one still being processed 409
+    idempotency.in_progress, and one whose first request stopped before
+    answering 409 idempotency.outcome_unknown: check whether it took effect,
+    then retry with a new key.
+  parameters:
+    - $ref: ../../../shared/parameters/IdempotencyKey.yaml
+  responses:
+    "201":
+      description: Created
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+        Idempotent-Replayed:
+          $ref: ../../../shared/headers/IdempotentReplayed.yaml
+      content:
+        application/json:
+          example:
+            id: "018f2a75-6a7b-7c8d-8e9f-0a1b2c3d4e5f"
+            organization_id: "018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00"
+            url: https://hooks.example.com/qeet
+            events:
+              - user.created
+              - user.updated
+            disabled_at: null
+            disabled_reason: null
+            failing_since: null
+            previous_secret_expires_at: null
+            created_at: "2026-09-24T10:25:00Z"
+            secret: Zr4nYbW8sLc0hQ2xK9mTpV7aE5uFi1oJd3gGt6yHw0q
+            last_delivered_at: null
+            last_status_code: null
+          schema:
+            $ref: ../../components/schemas/WebhookSubscription.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      description: >-
+        A request with this Idempotency-Key is still being processed
+        (idempotency.in_progress); retry shortly. Or the first request stopped
+        before answering and may have taken effect
+        (idempotency.outcome_unknown): check, then retry with a new key.
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,6 +1,6 @@
 //go:build integration
 
-package auth
+package authentication
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// captureDomain refuses every address on its domain, as an organisation that
+// captureDomain refuses every address on its domain, as an organization that
 // requires single sign-on there does.
 type captureDomain string
 
@@ -35,11 +35,11 @@ func (d captureDomain) RefuseCaptured(_ context.Context, email string) error {
 func TestCapturedAddressesSignInElsewhere(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	svc.SetRegistrationPolicy(anyPassword{})
-	tenant := dbtest.Tenant(t)
+	svc.regPolicy = anyPassword{}
+	organization := dbtest.Organization(t)
 	domain := dbtest.Unique("acme") + ".example.test"
-	svc.SetDomainCapture(captureDomain(domain))
-	captured := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
+	svc.capture = captureDomain(domain)
+	captured := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
 	dbtest.SetPassword(t, captured.ID, testPassword)
 	nobody := dbtest.Unique("nobody") + "@" + domain
 
@@ -64,25 +64,25 @@ func TestCapturedAddressesSignInElsewhere(t *testing.T) {
 		t.Errorf("%d failed sign-ins counted for a captured address", n)
 	}
 
-	h := &Handler{Service: svc, Validate: validator.New()}
+	h := &Handler{Service: svc, Throttle: passThrough, Bot: noBots{}, Validate: validator.New()}
 	srv := chi.NewRouter()
 	h.Mount(srv)
 	for path, body := range map[string]map[string]any{
 		"/auth/signup":   {"email": nobody, "password": testPassword},
-		"/auth/register": {"tenant_id": tenant, "email": nobody, "password": testPassword},
+		"/auth/register": {"organization_id": organization, "email": nobody, "password": testPassword},
 	} {
 		rec := dbtest.Do(t, srv, http.MethodPost, path, body)
 		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeAuthSSORequired) {
 			t.Errorf("%s on a captured domain: %d %s, want 403 %s", path, rec.Code, rec.Body.String(), errs.CodeAuthSSORequired)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, nobody); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, nobody); n != 0 {
 		t.Error("sign-up created an account on a captured domain")
 	}
 
 	a, _ := member(t)
 	signIn(t, svc, a)
 	// Once the domain is no longer captured, the account isn't locked.
-	svc.SetDomainCapture(nil)
+	svc.capture = noCapture{}
 	signIn(t, svc, captured)
 }

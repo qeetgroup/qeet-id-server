@@ -5,9 +5,6 @@ import (
 	"errors"
 	"html"
 	"io"
-	"net/http"
-	"net/mail"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -15,14 +12,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/microcosm-cc/bluemonday"
 	htmlparser "golang.org/x/net/html"
 	"golang.org/x/text/language"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
@@ -52,7 +47,7 @@ type EditorInput struct {
 	Options EditorOptions `json:"options"`
 }
 
-// EmailAppearanceSource returns a tenant's email branding: display name, logo
+// EmailAppearanceSource returns an organization's email branding: display name, logo
 // URL and primary colour.
 type EmailAppearanceSource interface {
 	EmailAppearance(context.Context, uuid.UUID) (name, logo, primary string, err error)
@@ -60,39 +55,42 @@ type EmailAppearanceSource interface {
 
 type templateSource interface {
 	Get(context.Context, uuid.UUID, string) (*Resolved, error)
-	RecipientLocale(ctx context.Context, tenantID uuid.UUID, address string) (string, error)
+	RecipientLocale(ctx context.Context, organizationID uuid.UUID, address string) (string, error)
 }
 
-// TemplateSender is a notifier.Sender that applies a tenant's customised invite
-// or magic-link template before passing the message to Next.
+// TemplateSender is a notifier.Sender that applies an organization's customised
+// catalog template before passing the message to Next.
 type TemplateSender struct {
 	Templates  templateSource
 	Appearance EmailAppearanceSource
 	Next       notifier.Sender
 }
 
-// Send renders the tenant's customised template into message, in the
+// Send renders the organization's customised template into message, in the
 // recipient's profile language when the template has it and else in the
 // template's default locale, and sends it through Next. Other messages,
 // uncustomised templates and render failures are sent unchanged.
 func (sender TemplateSender) Send(ctx context.Context, message notifier.Message) error {
-	if (message.Channel != "" && message.Channel != "email") || (message.TemplateKey != "invite" && message.TemplateKey != "magic_link") {
+	if message.Channel != "" && message.Channel != "email" {
 		return sender.Next.Send(ctx, message)
 	}
-	tenantID, err := uuid.Parse(message.TenantID)
-	if err != nil || tenantID == uuid.Nil {
+	if _, known := defByKey(message.TemplateKey); !known {
 		return sender.Next.Send(ctx, message)
 	}
-	template, err := sender.Templates.Get(ctx, tenantID, message.TemplateKey)
+	organizationID, err := uuid.Parse(message.OrganizationID)
+	if err != nil || organizationID == uuid.Nil {
+		return sender.Next.Send(ctx, message)
+	}
+	template, err := sender.Templates.Get(ctx, organizationID, message.TemplateKey)
 	if err != nil || !template.Custom {
 		return sender.Next.Send(ctx, message)
 	}
-	appearance := (&Handler{Appearance: sender.Appearance}).appearance(ctx, tenantID)
-	variables := map[string]string{"tenant_name": appearance.name}
+	appearance := (&Handler{Appearance: sender.Appearance}).appearance(ctx, organizationID)
+	variables := map[string]string{"organization_name": appearance.name}
 	for key, value := range message.TemplateVariables {
 		variables[key] = value
 	}
-	preferred, err := sender.Templates.RecipientLocale(ctx, tenantID, message.To)
+	preferred, err := sender.Templates.RecipientLocale(ctx, organizationID, message.To)
 	if err != nil {
 		preferred = "" // the template's default locale
 	}
@@ -152,9 +150,24 @@ func sanitizeTemplateHTML(markup string) string {
 	return strings.NewReplacer(replacements...).Replace(emailHTMLPolicy.Sanitize(protected))
 }
 
+// errActionLinkPlacement refuses a one-time link placed anywhere but as a whole
+// href, or on a line of its own in the text.
+var errActionLinkPlacement = errs.ErrBadRequest.WithDetail("action variables must be standalone links and cannot be used in images or text")
+
+// hasActionVariable reports whether value uses a *_url variable.
+func hasActionVariable(value string) bool {
+	for _, match := range varRe.FindAllStringSubmatch(value, -1) {
+		if strings.HasSuffix(match[1], "_url") {
+			return true
+		}
+	}
+	return false
+}
+
 // validateTemplateURLs allows a variable in href or src only as the whole href
-// of a *_url variable, so one-time links cannot leak through images or other
-// URLs.
+// of a *_url variable, and a *_url variable nowhere else in the markup, so a
+// one-time link can't leak through images or other URLs, or be dressed up in
+// the organization's words.
 func validateTemplateURLs(markup string) error {
 	tokenizer := htmlparser.NewTokenizer(strings.NewReader(markup))
 	for {
@@ -164,18 +177,42 @@ func validateTemplateURLs(markup string) error {
 				return nil
 			}
 			return errs.ErrBadRequest.WithDetail("invalid email markup")
+		case htmlparser.TextToken:
+			if hasActionVariable(string(tokenizer.Text())) {
+				return errActionLinkPlacement
+			}
 		case htmlparser.StartTagToken, htmlparser.SelfClosingTagToken:
 			for _, attribute := range tokenizer.Token().Attr {
-				if (attribute.Key != "href" && attribute.Key != "src") || !varRe.MatchString(attribute.Val) {
+				if attribute.Key != "href" && attribute.Key != "src" {
+					if hasActionVariable(attribute.Val) {
+						return errActionLinkPlacement
+					}
+					continue
+				}
+				if !varRe.MatchString(attribute.Val) {
 					continue
 				}
 				match := varRe.FindStringSubmatch(attribute.Val)
 				if attribute.Key == "src" || strings.TrimSpace(attribute.Val) != match[0] || !strings.HasSuffix(match[1], "_url") {
-					return errs.ErrBadRequest.WithDetail("action variables must be standalone links and cannot be used in images")
+					return errActionLinkPlacement
 				}
 			}
 		}
 	}
+}
+
+// validateTextLinks allows a *_url variable in the text only on a line of its
+// own, and never in the subject or preheader.
+func validateTextLinks(content LocalizedContent) error {
+	if hasActionVariable(content.Subject) || hasActionVariable(content.Preheader) {
+		return errActionLinkPlacement
+	}
+	for _, line := range strings.Split(content.Body, "\n") {
+		if line = strings.TrimSpace(line); hasActionVariable(line) && varRe.FindString(line) != line {
+			return errActionLinkPlacement
+		}
+	}
+	return nil
 }
 
 func normalizeContent(content *LocalizedContent, definition Definition) error {
@@ -183,7 +220,7 @@ func normalizeContent(content *LocalizedContent, definition Definition) error {
 	content.Body = strings.TrimSpace(content.Body)
 	content.Preheader = strings.TrimSpace(content.Preheader)
 	if content.Subject == "" || content.Body == "" || utf8.RuneCountInString(content.Subject) > 200 || utf8.RuneCountInString(content.Preheader) > 200 || len(content.Body) > 150000 || len(content.HTML) > 200000 || strings.ContainsAny(content.Subject+content.Preheader, "\r\n") {
-		return errs.ErrEmailTemplateContentRequired
+		return ErrTemplateContentRequired
 	}
 	allowed := map[string]bool{}
 	for _, name := range definition.Variables {
@@ -198,8 +235,17 @@ func normalizeContent(content *LocalizedContent, definition Definition) error {
 	if err := validateTemplateURLs(content.HTML); err != nil {
 		return err
 	}
+	if err := validateTextLinks(*content); err != nil {
+		return err
+	}
 	for _, name := range definition.Variables {
-		if !strings.HasSuffix(name, "_url") {
+		detail := ""
+		switch {
+		case strings.HasSuffix(name, "_url"):
+			detail = "template must retain its action URL variable"
+		case name == codeVariable:
+			detail = "template must retain its code variable"
+		default:
 			continue
 		}
 		contains := func(value string) bool {
@@ -211,11 +257,13 @@ func normalizeContent(content *LocalizedContent, definition Definition) error {
 			return false
 		}
 		if !contains(content.Body) || (content.HTML != "" && !contains(content.HTML)) {
-			return errs.ErrBadRequest.WithDetail("template must retain its action URL variable")
+			return errs.ErrBadRequest.WithDetail(detail)
 		}
 	}
 	return nil
 }
+
+const codeVariable = "code"
 
 func boundedRender(value string, variables map[string]string) (string, error) {
 	size := len(value)
@@ -268,27 +316,6 @@ func normalizeEditor(input *EditorInput, definition Definition) error {
 	return nil
 }
 
-func (h *Handler) appearance(ctx context.Context, tenantID uuid.UUID) emailAppearance {
-	appearance := emailAppearance{name: "Qeet ID", primary: "#f97316"}
-	if h.Appearance == nil {
-		return appearance
-	}
-	name, logo, primary, err := h.Appearance.EmailAppearance(ctx, tenantID)
-	if err != nil {
-		return appearance
-	}
-	if strings.TrimSpace(name) != "" {
-		appearance.name = name
-	}
-	if emailColor.MatchString(primary) {
-		appearance.primary = primary
-	}
-	if parsed, err := url.Parse(logo); err == nil && parsed.User == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") {
-		appearance.logo = logo
-	}
-	return appearance
-}
-
 func renderEditor(key string, input EditorInput, variables map[string]string, locale string, appearance emailAppearance) (editorPreview, error) {
 	if len(variables) > 32 {
 		return editorPreview{}, errs.ErrBadRequest.WithDetail("too many preview variables")
@@ -300,7 +327,7 @@ func renderEditor(key string, input EditorInput, variables map[string]string, lo
 	}
 	definition, exists := defByKey(key)
 	if !exists {
-		return editorPreview{}, errs.ErrEmailTemplateNotFound
+		return editorPreview{}, ErrTemplateNotFound
 	}
 	if err := normalizeEditor(&input, definition); err != nil {
 		return editorPreview{}, err
@@ -374,69 +401,4 @@ func (limit *testEmailLimits) allow(key string, now time.Time) bool {
 	}
 	limit.entries[key] = now.Add(time.Minute)
 	return true
-}
-
-// testEmail sends a rendered draft to the caller's own verified address, once a
-// minute at most. It is forbidden unless TestEmailEnabled is set and a Sender
-// is configured.
-func (h *Handler) testEmail(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	principal := httpx.PrincipalFromCtx(r.Context())
-	if principal == nil || principal.UserID == nil || !h.TestEmailEnabled || h.Sender == nil {
-		httpx.WriteError(w, r, errs.ErrForbidden)
-		return
-	}
-	var input struct {
-		Draft  EditorInput `json:"draft"`
-		Locale string      `json:"locale"`
-	}
-	if err := httpx.DecodeJSON(r, &input); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var recipient string
-	if err := h.Service.pool.QueryRow(r.Context(), `SELECT email FROM "user".users WHERE id=$1 AND email_verified_at IS NOT NULL AND status='active' AND deleted_at IS NULL`, *principal.UserID).Scan(&recipient); err != nil {
-		httpx.WriteError(w, r, errs.ErrForbidden)
-		return
-	}
-	parsed, err := mail.ParseAddress(recipient)
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest)
-		return
-	}
-	appearance := h.appearance(r.Context(), tenantID)
-	variables := map[string]string{"code": "482913", "ttl": "10 minutes", "tenant_name": appearance.name, "reset_url": "https://example.invalid/test/reset", "magic_url": "https://example.invalid/test/sign-in", "invite_url": "https://example.invalid/test/invite"}
-	preview, err := renderEditor(chi.URLParam(r, "key"), input.Draft, variables, input.Locale, appearance)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if !h.testLimits.allow(tenantID.String()+":"+principal.UserID.String(), time.Now()) {
-		w.Header().Set("Retry-After", "60")
-		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"error": map[string]any{"code": "rate_limited", "message": "Wait before sending another test email."}})
-		return
-	}
-	tx, err := h.Service.Pool().Begin(r.Context())
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(r.Context())
-	if err := h.audit(r.Context(), tx, r, tenantID, "email_template.test_requested", chi.URLParam(r, "key")); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := h.Sender.Send(r.Context(), notifier.Message{TenantID: tenantID.String(), Channel: "email", To: parsed.Address, Subject: "[Test] " + preview.Subject, Body: preview.Body, HTML: preview.HTML}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }

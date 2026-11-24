@@ -1,0 +1,45 @@
+type: object
+required:
+  - created_at
+  - disabled
+  - id
+  - name
+  - scopes
+  - status
+  - token_ttl_seconds
+properties:
+  created_at:
+    type: string
+    format: date-time
+  disabled:
+    type: boolean
+  id:
+    type: string
+    format: uuid
+  name:
+    type: string
+  scopes:
+    type: array
+    items:
+      type: string
+  secret:
+    type: string
+  sponsor_user_id:
+    type: string
+    format: uuid
+  status:
+    type: string
+  token_ttl_seconds:
+    type: integer
+  last_used_at:
+    type:
+      - string
+      - "null"
+    format: date-time
+    description: When the agent was last issued a token, to the minute.
+  previous_secret_expires_at:
+    type: string
+    format: date-time
+    description: >-
+      Present while the secret replaced at its last rotation still works, until
+      then.

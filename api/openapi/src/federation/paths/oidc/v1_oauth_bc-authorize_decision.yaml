@@ -1,0 +1,57 @@
+post:
+  operationId: submitBackchannelDecision
+  summary: Approve or deny a pending CIBA request
+  description: >-
+    Records the authenticated user's decision on one of their own pending
+    requests (the id from GET .../pending, not the raw auth_req_id). Approving
+    is a sign-in to the application, held to its organization's rules as
+    device approval is: the user must still be an active member of it (403
+    oidc.user_organization_mismatch), approve from an address its rules allow (403
+    auth.address_not_allowed, recorded as auth.address_refused with path
+    ciba_approval), and through a session that met the second factor it
+    requires (403 step_up_required or mfa.enrollment_required). A refused
+    approval leaves the request pending.
+  tags:
+    - OIDC
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - id
+            - approve
+          properties:
+            id:
+              type: string
+              format: uuid
+            approve:
+              type: boolean
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

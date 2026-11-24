@@ -2,9 +2,9 @@
 
 package saml
 
-// Database tests for what an organisation's IdP tells its service providers
+// Database tests for what an organization's IdP tells its service providers
 // about a person: the NameID each asks for, and the attributes it maps, from
-// that organisation's data only.
+// that organization's data only.
 
 import (
 	"context"
@@ -23,7 +23,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // asserted is what the assertion of a successful SSO response says.
@@ -62,8 +61,8 @@ func assertedIn(t *testing.T, rec *httptest.ResponseRecorder) asserted {
 	return out
 }
 
-// spWith registers an active service provider in tenant with in's settings.
-func spWith(t *testing.T, ctx context.Context, idp *IdP, tenant uuid.UUID, in CreateSPInput) *ServiceProvider {
+// spWith registers an active service provider in organization with in's settings.
+func spWith(t *testing.T, ctx context.Context, idp *IdP, organization uuid.UUID, in CreateSPInput) *ServiceProvider {
 	t.Helper()
 	in.Name, in.Status = "App", "active"
 	in.EntityID = "https://" + dbtest.Unique("sp") + ".example.test"
@@ -73,7 +72,7 @@ func spWith(t *testing.T, ctx context.Context, idp *IdP, tenant uuid.UUID, in Cr
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	sp, err := idp.CreateSP(ctx, tx, tenant, in)
+	sp, err := idp.createSP(ctx, tx, organization, in)
 	if err != nil {
 		t.Fatalf("CreateSP: %v", err)
 	}
@@ -91,16 +90,16 @@ func execSQL(t *testing.T, sql string, args ...any) {
 	}
 }
 
-// newGroup creates a group in tenant with members of it.
-func newGroup(t *testing.T, tenant uuid.UUID, name string, members ...uuid.UUID) uuid.UUID {
+// newGroup creates a group in organization with members of it.
+func newGroup(t *testing.T, organization uuid.UUID, name string, members ...uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	if err := dbtest.Pool(t).QueryRow(context.Background(),
-		`INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, $2) RETURNING id`, tenant, name).Scan(&id); err != nil {
+		`INSERT INTO organization.groups (organization_id, name) VALUES ($1, $2) RETURNING id`, organization, name).Scan(&id); err != nil {
 		t.Fatalf("create group: %v", err)
 	}
 	for _, member := range members {
-		execSQL(t, `INSERT INTO tenant.group_members (group_id, user_id, tenant_id) VALUES ($1, $2, $3)`, id, member, tenant)
+		execSQL(t, `INSERT INTO organization.group_members (group_id, user_id, organization_id) VALUES ($1, $2, $3)`, id, member, organization)
 	}
 	return id
 }
@@ -123,15 +122,15 @@ func roleName(t *testing.T, id uuid.UUID) string {
 func TestIdPNameIDFollowsTheSPFormat(t *testing.T) {
 	ctx := dbtest.Context(t)
 	s := newIdPSide(t)
-	tenant := dbtest.Tenant(t)
-	member := dbtest.User(t, tenant)
-	execSQL(t, `UPDATE "user".users SET display_name = 'Asha Rao' WHERE id = $1`, member.ID)
+	organization := dbtest.Organization(t)
+	member := dbtest.User(t, organization)
+	execSQL(t, `UPDATE account.users SET display_name = 'Asha Rao' WHERE id = $1`, member.ID)
 	cookie := s.signIn(member.ID)
 	sso := func(sp *ServiceProvider) *httptest.ResponseRecorder {
-		return idpGet(t, s.router, "/saml/idp/"+tenant.String()+"/sso?sp="+sp.ID.String(), cookie)
+		return idpGet(t, s.router, "/saml/idp/"+organization.String()+"/sso?sp="+sp.ID.String(), cookie)
 	}
 
-	byEmail := spWith(t, ctx, s.idp, tenant, CreateSPInput{})
+	byEmail := spWith(t, ctx, s.idp, organization, CreateSPInput{})
 	if byEmail.NameIDFormat != nameIDEmail || byEmail.NameIDAttribute != sourceEmail || !reflect.DeepEqual(byEmail.Attributes, defaultAttributes()) {
 		t.Errorf("default SP %+v, want an emailAddress NameID of the email and the default attributes", byEmail)
 	}
@@ -146,17 +145,17 @@ func TestIdPNameIDFollowsTheSPFormat(t *testing.T) {
 
 	var legacyID uuid.UUID
 	if err := dbtest.Pool(t).QueryRow(ctx, `
-		INSERT INTO tenant.saml_service_providers (tenant_id, name, entity_id, acs_url, name_id_format, name_id_attribute, status)
+		INSERT INTO organization.saml_service_providers (organization_id, name, entity_id, acs_url, name_id_format, name_id_attribute, status)
 		VALUES ($1, 'Old app', 'https://old.example.test', 'https://old.example.test/acs', $2, 'email', 'active') RETURNING id
-	`, tenant, nameIDPersistent).Scan(&legacyID); err != nil {
+	`, organization, nameIDPersistent).Scan(&legacyID); err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := s.idp.GetSP(ctx, legacyID, tenant)
+	legacy, err := s.idp.GetSP(ctx, legacyID, organization)
 	if err != nil || legacy.AssignmentRequired || !reflect.DeepEqual(legacy.Attributes, defaultAttributes()) {
 		t.Fatalf("an SP saved without the new settings = %+v, %v; want the default attributes, open to everyone", legacy, err)
 	}
 
-	persistent := spWith(t, ctx, s.idp, tenant, CreateSPInput{NameIDFormat: nameIDPersistent})
+	persistent := spWith(t, ctx, s.idp, organization, CreateSPInput{NameIDFormat: nameIDPersistent})
 	if persistent.NameIDAttribute != sourcePersistentID {
 		t.Errorf("a persistent SP's NameID comes from %q, want %q", persistent.NameIDAttribute, sourcePersistentID)
 	}
@@ -168,56 +167,56 @@ func TestIdPNameIDFollowsTheSPFormat(t *testing.T) {
 	if old := assertedIn(t, sso(legacy)); old.nameID == member.Email || old.format != nameIDPersistent || old.nameID == first.nameID {
 		t.Errorf("an SP saved as persistent with the email was told %q, want a persistent value of its own", old.nameID)
 	}
-	execSQL(t, `UPDATE "user".users SET email = $2 WHERE id = $1`, member.ID, dbtest.Unique("moved")+"@example.test")
+	execSQL(t, `UPDATE account.users SET email = $2 WHERE id = $1`, member.ID, dbtest.Unique("moved")+"@example.test")
 	if again := assertedIn(t, sso(persistent)); again.nameID != first.nameID {
 		t.Errorf("after an email change the persistent NameID is %q, want %q", again.nameID, first.nameID)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.saml_idp_persistent_ids WHERE tenant_id = $1 AND user_id = $2`, tenant, member.ID); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.saml_idp_persistent_ids WHERE organization_id = $1 AND user_id = $2`, organization, member.ID); n != 2 {
 		t.Errorf("%d persistent NameIDs kept, want one for each persistent SP", n)
 	}
 
-	byUserID := spWith(t, ctx, s.idp, tenant, CreateSPInput{NameIDFormat: nameIDUnspecified, NameIDAttribute: sourceUserID})
+	byUserID := spWith(t, ctx, s.idp, organization, CreateSPInput{NameIDFormat: nameIDUnspecified, NameIDAttribute: sourceUserID})
 	if got := assertedIn(t, sso(byUserID)); got.nameID != member.ID.String() || got.format != nameIDUnspecified {
 		t.Errorf("user-id SP was told %q (%s), want %s", got.nameID, got.format, member.ID)
 	}
 
-	byMetadata := spWith(t, ctx, s.idp, tenant, CreateSPInput{NameIDFormat: nameIDUnspecified, NameIDAttribute: "metadata.employee_id"})
+	byMetadata := spWith(t, ctx, s.idp, organization, CreateSPInput{NameIDFormat: nameIDUnspecified, NameIDAttribute: "metadata.employee_id"})
 	rec := sso(byMetadata)
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLNameIDUnavailable) || strings.Contains(rec.Body.String(), "SAMLResponse") {
-		t.Errorf("metadata NameID without the key: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLNameIDUnavailable)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), CodeNameIDUnavailable) || strings.Contains(rec.Body.String(), "SAMLResponse") {
+		t.Errorf("metadata NameID without the key: %d %s, want 403 %s", rec.Code, rec.Body.String(), CodeNameIDUnavailable)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'saml.idp_assertion_refused'
-		AND resource_id = $2 AND actor_user_id = $3 AND metadata->>'reason' = 'name_id_unavailable'`, tenant, byMetadata.ID, member.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'saml.idp_assertion_refused'
+		AND resource_id = $2 AND actor_user_id = $3 AND metadata->>'reason' = 'name_id_unavailable'`, organization, byMetadata.ID, member.ID); n != 1 {
 		t.Errorf("%d refusals audited, want 1", n)
 	}
-	execSQL(t, `UPDATE "user".users SET metadata = '{"employee_id": "E-7"}' WHERE id = $1`, member.ID)
+	execSQL(t, `UPDATE account.users SET metadata = '{"employee_id": "E-7"}' WHERE id = $1`, member.ID)
 	if got := assertedIn(t, sso(byMetadata)); got.nameID != "E-7" {
 		t.Errorf("metadata SP was told %q, want E-7", got.nameID)
 	}
 }
 
-// TestIdPSendsMappedAttributesOfItsOrganisationOnly checks that an SP gets
+// TestIdPSendsMappedAttributesOfItsOrganizationOnly checks that an SP gets
 // each attribute it maps under its name and format, with the groups, roles
-// and directory names of its own organisation, never those another
-// organisation the person belongs to holds.
-func TestIdPSendsMappedAttributesOfItsOrganisationOnly(t *testing.T) {
+// and directory names of its own organization, never those another
+// organization the person belongs to holds.
+func TestIdPSendsMappedAttributesOfItsOrganizationOnly(t *testing.T) {
 	ctx := dbtest.Context(t)
 	s := newIdPSide(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	member := dbtest.User(t, tenant)
-	direct, viaGroup := dbtest.Role(t, tenant), dbtest.Role(t, tenant)
-	dbtest.Assign(t, member.ID, tenant, direct)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	member := dbtest.User(t, organization)
+	direct, viaGroup := dbtest.Role(t, organization), dbtest.Role(t, organization)
+	dbtest.Assign(t, member.ID, organization, direct)
 	dbtest.Assign(t, member.ID, other, dbtest.Role(t, other))
-	newGroup(t, tenant, "Finance", member.ID)
-	admins := newGroup(t, tenant, "Admins", member.ID)
-	execSQL(t, `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`, tenant, admins, viaGroup)
+	newGroup(t, organization, "Finance", member.ID)
+	admins := newGroup(t, organization, "Admins", member.ID)
+	execSQL(t, `INSERT INTO rbac.group_roles (organization_id, group_id, role_id) VALUES ($1, $2, $3)`, organization, admins, viaGroup)
 	newGroup(t, other, "Elsewhere", member.ID)
-	profile := `INSERT INTO tenant.directory_profiles (tenant_id, user_id, connection_id, profile) VALUES ($1, $2, $3, $4)`
-	execSQL(t, profile, tenant, member.ID, "scim:"+tenant.String(), `{"first_name": "Asha", "last_name": "Rao"}`)
+	profile := `INSERT INTO organization.directory_profiles (organization_id, user_id, connection_id, profile) VALUES ($1, $2, $3, $4)`
+	execSQL(t, profile, organization, member.ID, "scim:"+organization.String(), `{"first_name": "Asha", "last_name": "Rao"}`)
 	execSQL(t, profile, other, member.ID, "scim:"+other.String(), `{"first_name": "Someone", "last_name": "Else"}`)
-	execSQL(t, `UPDATE "user".users SET metadata = '{"department": "Finance", "family_name": "Rao-Iyer", "api_key": "kept"}' WHERE id = $1`, member.ID)
+	execSQL(t, `UPDATE account.users SET metadata = '{"department": "Finance", "family_name": "Rao-Iyer", "api_key": "kept"}' WHERE id = $1`, member.ID)
 
-	sp := spWith(t, ctx, s.idp, tenant, CreateSPInput{Attributes: &[]AttributeMapping{
+	sp := spWith(t, ctx, s.idp, organization, CreateSPInput{Attributes: &[]AttributeMapping{
 		{Name: "mail", Source: sourceEmail},
 		{Name: "givenName", Source: sourceGivenName},
 		{Name: "urn:oid:2.5.4.4", Source: sourceFamilyName, NameFormat: "uri"},
@@ -227,7 +226,7 @@ func TestIdPSendsMappedAttributesOfItsOrganisationOnly(t *testing.T) {
 		{Name: "display", Source: sourceDisplayName},
 		{Name: "missing", Source: "metadata.none"},
 	}})
-	got := assertedIn(t, idpGet(t, s.router, "/saml/idp/"+tenant.String()+"/sso?sp="+sp.ID.String(), s.signIn(member.ID)))
+	got := assertedIn(t, idpGet(t, s.router, "/saml/idp/"+organization.String()+"/sso?sp="+sp.ID.String(), s.signIn(member.ID)))
 	roles := []string{roleName(t, direct), roleName(t, viaGroup)}
 	sort.Strings(roles)
 	want := map[string]assertionAttribute{
@@ -250,11 +249,11 @@ func TestIdPSendsMappedAttributesOfItsOrganisationOnly(t *testing.T) {
 // settings and attributes that don't fit, moves the NameID's source with its
 // format, and audits what a change set.
 func TestSPSettingsAreCheckedAndAudited(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	idp, _ := newIdPRouter(t, sessionsByCookie{})
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: &Service{}, IdP: idp}).Mount)
-	base := "/tenants/" + tenant.String() + "/saml-providers"
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: &Service{}, IdP: idp}).Mount)
+	base := "/organizations/" + organization.String() + "/saml-providers"
 	register := func(extra map[string]any) map[string]any {
 		body := map[string]any{"name": "App", "entity_id": "https://" + dbtest.Unique("sp") + ".example.test", "acs_url": "https://sp.example.test/acs"}
 		for k, v := range extra {
@@ -268,10 +267,10 @@ func TestSPSettingsAreCheckedAndAudited(t *testing.T) {
 		extra map[string]any
 		code  string
 	}{
-		{"a transient NameID", map[string]any{"name_id_format": "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"}, errs.CodeSAMLNameIDFormatInvalid},
-		{"an emailAddress NameID of the user id", map[string]any{"name_id_attribute": "user_id"}, errs.CodeSAMLNameIDAttributeInvalid},
-		{"a persistent NameID of the email", map[string]any{"name_id_format": nameIDPersistent, "name_id_attribute": "email"}, errs.CodeSAMLNameIDAttributeInvalid},
-		{"an attribute of a secret", map[string]any{"attributes": []map[string]any{{"name": "pw", "source": "password_hash"}}}, errs.CodeSAMLAttributesInvalid},
+		{"a transient NameID", map[string]any{"name_id_format": "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"}, CodeNameIDFormatInvalid},
+		{"an emailAddress NameID of the user id", map[string]any{"name_id_attribute": "user_id"}, CodeNameIDAttributeInvalid},
+		{"a persistent NameID of the email", map[string]any{"name_id_format": nameIDPersistent, "name_id_attribute": "email"}, CodeNameIDAttributeInvalid},
+		{"an attribute of a secret", map[string]any{"attributes": []map[string]any{{"name": "pw", "source": "password_hash"}}}, CodeAttributesInvalid},
 	} {
 		if rec := dbtest.Do(t, h, http.MethodPost, base, register(c.extra)); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), c.code) {
 			t.Errorf("registering %s: %d %s, want 422 %s", c.name, rec.Code, rec.Body.String(), c.code)
@@ -301,7 +300,7 @@ func TestSPSettingsAreCheckedAndAudited(t *testing.T) {
 	if rec, out := patch(map[string]any{"name_id_format": nameIDEmail}); rec.Code != http.StatusOK || out.NameIDAttribute != sourceEmail {
 		t.Errorf("switching to an emailAddress NameID: %d %s, want its source moved to the email", rec.Code, rec.Body.String())
 	}
-	if rec, _ := patch(map[string]any{"name_id_attribute": "user_id"}); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), errs.CodeSAMLNameIDAttributeInvalid) {
+	if rec, _ := patch(map[string]any{"name_id_attribute": "user_id"}); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), CodeNameIDAttributeInvalid) {
 		t.Errorf("an emailAddress NameID of the user id: %d %s, want 422", rec.Code, rec.Body.String())
 	}
 	rec, out := patch(map[string]any{"attributes": []any{}, "assignment_required": false})
@@ -311,7 +310,7 @@ func TestSPSettingsAreCheckedAndAudited(t *testing.T) {
 
 	var raw []byte
 	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT metadata FROM audit.events
-		WHERE tenant_id = $1 AND action = 'saml.sp_updated' AND resource_id = $2 AND metadata->'changed' @> '["attributes"]'`, tenant, sp.ID).Scan(&raw); err != nil {
+		WHERE organization_id = $1 AND action = 'saml.sp_updated' AND resource_id = $2 AND metadata->'changed' @> '["attributes"]'`, organization, sp.ID).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	var meta struct {
@@ -323,9 +322,9 @@ func TestSPSettingsAreCheckedAndAudited(t *testing.T) {
 		meta.Attributes == nil || len(meta.Attributes) != 0 || meta.AssignmentRequired == nil || *meta.AssignmentRequired {
 		t.Errorf("update audited as %s, want the attributes and assignment it changed", raw)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'saml.sp_created'
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'saml.sp_created'
 		AND resource_id = $2 AND metadata->>'name_id_format' = $3 AND metadata->'attributes'->0->>'name' = 'uid'
-		AND (metadata->>'assignment_required')::bool`, tenant, sp.ID, nameIDPersistent); n != 1 {
+		AND (metadata->>'assignment_required')::bool`, organization, sp.ID, nameIDPersistent); n != 1 {
 		t.Errorf("%d registrations audited with their NameID, attribute and assignment settings, want 1", n)
 	}
 }

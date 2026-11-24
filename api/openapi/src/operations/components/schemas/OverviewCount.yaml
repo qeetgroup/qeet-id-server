@@ -1,0 +1,10 @@
+type: object
+description: How many there are of something, and how many are in use.
+required:
+  - total
+  - active
+properties:
+  total:
+    type: integer
+  active:
+    type: integer

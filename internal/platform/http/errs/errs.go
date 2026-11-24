@@ -1,10 +1,35 @@
 // Package errs defines qeet-id's transport-agnostic errors. Each error has a
 // stable, namespaced code that clients branch and localize on, never the
-// message, and a shipped code never changes. The HTTP layer maps codes to statuses.
+// message, and a kind that the HTTP layer maps to a status. A package declares
+// its own errors; errors several packages return are declared here.
 package errs
 
 import (
 	"errors"
+	"sync"
+)
+
+// Kind is what kind of failure an error is. It says nothing about HTTP: the
+// transport maps each kind to a status.
+type Kind uint8
+
+// The kinds of failure.
+const (
+	KindInvalid          Kind = iota + 1 // the request is malformed
+	KindUnauthenticated                  // the caller isn't signed in, or the sign-in is no good
+	KindPaymentRequired                  // the organization's plan or payment stands in the way
+	KindForbidden                        // signed in, but not allowed
+	KindNotFound                         // no such thing, or not the caller's to see
+	KindConflict                         // the request clashes with what exists
+	KindGone                             // it existed and is gone for good
+	KindTooLarge                         // the request body is too large
+	KindUnsupportedMedia                 // the request body isn't in a format accepted
+	KindUnprocessable                    // well-formed, but the values aren't acceptable
+	KindTooManyRequests                  // slow down
+	KindInternal                         // the server failed
+	KindNotImplemented                   // the server doesn't do this
+	KindBadGateway                       // a service the server depends on failed
+	KindUnavailable                      // the server can't answer now; try again later
 )
 
 // FieldError is a structured per-field validation error. `Code` is a stable,
@@ -20,18 +45,16 @@ type FieldError struct {
 // optional detail, metadata and cause.
 type Error struct {
 	Code    string // stable machine identifier, e.g. "mfa.code_invalid"
+	Kind    Kind   // what kind of failure it is; the transport maps it to a status
 	Message string // human-facing text shown to the end user
 	Detail  string // optional developer context (never localized)
 	// TranslationKey is the i18n key a client SDK can localize on. Defaults to
 	// Code (which is already a stable `domain.reason` key); override only if a
 	// different key namespace is needed.
 	TranslationKey string
-	// Retryable tells the person they can try again, often by starting over
-	// (signing in again, asking for a new code, waiting a moment). It is not a
-	// promise that resending the same request will succeed: a revoked session
-	// is retryable in this sense and never comes back. Clients decide whether to
-	// resend from the status (429, 503 with Retry-After). Surfaced as
-	// `retryable: true`.
+	// Retryable (`retryable: true`) tells the person they can try again, often by starting over: signing
+	// in again, asking for a new code, waiting. It doesn't promise a resend succeeds (a revoked session is
+	// retryable and never comes back); clients decide resends from the status (429, 503 + Retry-After).
 	Retryable bool
 	// Fields carries structured per-field validation errors.
 	Fields []FieldError
@@ -70,7 +93,7 @@ func (e *Error) Is(target error) bool {
 // Wrap attaches err as the cause, kept for logs and never shown to users. It
 // returns e unchanged when err is nil:
 //
-//	return errs.ErrAuthSessionInvalid.Wrap(dbErr)
+//	return authentication.ErrSessionInvalid.Wrap(dbErr)
 func (e *Error) Wrap(err error) *Error {
 	if err == nil {
 		return e
@@ -135,11 +158,27 @@ func (e *Error) WithMetadata(m map[string]any) *Error {
 	return &cp
 }
 
-// New builds a canonical error. Status is intentionally NOT stored here — the
-// transport layer maps Code→status (see internal/platform/http statusByCode),
-// keeping domain errors transport-agnostic. TranslationKey defaults to Code.
-func New(code, msg string) *Error {
-	return &Error{Code: code, Message: msg, TranslationKey: code}
+// New declares an error: its stable code, its kind and the message people see.
+// Declare each error once, in a package-level var of the package that returns
+// it; New panics on a code declared before. TranslationKey defaults to Code.
+func New(code string, kind Kind, msg string) *Error {
+	e := &Error{Code: code, Kind: kind, Message: msg, TranslationKey: code}
+	if _, dup := declared.LoadOrStore(code, e); dup {
+		panic("errs: error code " + code + " is declared twice")
+	}
+	return e
+}
+
+// declared holds every error New made, by code.
+var declared sync.Map
+
+// Lookup returns the error declared with code.
+func Lookup(code string) (*Error, bool) {
+	e, ok := declared.Load(code)
+	if !ok {
+		return nil, false
+	}
+	return e.(*Error), true
 }
 
 // As returns the *Error in err's chain, or nil.

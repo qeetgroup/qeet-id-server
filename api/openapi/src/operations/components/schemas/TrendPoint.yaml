@@ -1,0 +1,9 @@
+type: object
+required:
+  - date
+  - value
+properties:
+  date:
+    type: string
+  value:
+    type: number

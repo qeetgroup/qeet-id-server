@@ -1,0 +1,56 @@
+type: object
+description: A person's request for one of the organization's roles, and its answer.
+required:
+  - id
+  - requester
+  - role
+  - reason
+  - status
+  - created_at
+  - expires_at
+properties:
+  id:
+    type: string
+    format: uuid
+  requester:
+    $ref: ./AccessRequestPerson.yaml
+  role:
+    $ref: ./AccessRequestRole.yaml
+  reason:
+    type: string
+  duration_hours:
+    type: integer
+    description: How long the role was asked for; absent means for good.
+  status:
+    type: string
+    enum:
+      - pending
+      - approved
+      - denied
+      - cancelled
+      - expired
+  created_at:
+    type: string
+    format: date-time
+  expires_at:
+    type: string
+    format: date-time
+    description: When the request lapses if nobody answers it.
+  decided_by:
+    $ref: ./AccessRequestPerson.yaml
+  decided_at:
+    type: string
+    format: date-time
+  decision_note:
+    type: string
+  access_ends_at:
+    type: string
+    format: date-time
+    description: >-
+      For an approved, time-limited request, when the role is taken back;
+      cleared once the role is given to the requester for good (assigned
+      directly, by a group or the directory), so it isn't taken back then.
+  ended_at:
+    type: string
+    format: date-time
+    description: When it was.

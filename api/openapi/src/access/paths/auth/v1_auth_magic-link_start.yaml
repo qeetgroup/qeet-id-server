@@ -1,0 +1,87 @@
+post:
+  operationId: sendMagicLink
+  description: >-
+    Begins passwordless email sign-in by emailing a single-use link to the
+    account holding the address. It answers the same whether or not the address
+    has an account, takes the same minimum time, and sends nothing when it has
+    none. The link is stored and emailed after the answer, so whether the email
+    could be delivered does not change the answer either. An empty email is
+    refused with 422 auth.email_required. Asked for from an organization's
+    sign-in page (organization_id), it is refused with 403 auth.method_disabled when
+    that organization has magic links off. Whichever organization asks, the
+    account's own organization decides: nothing is sent when it has magic links
+    off, a link lives for its magic_link_ttl_minutes, and a link stops working
+    once it switches them off. A link works once; it goes to the address as the account stores it, and ends the earlier
+    links to that address. With app hosted_login the link opens the hosted
+    login's magic page and, once exchanged at the magic-link session call,
+    continues the sign-in journey at return_to (kept only if it is this
+    service's authorize endpoint); otherwise it opens the console's, exchanged
+    at the consume call. Requests are bounded to three per address (then one
+    every five minutes) and ten per caller (then one a minute), counted whether
+    or not the address has an account: 429 past either. A link sent is recorded
+    as auth.magic_link_requested in the audit trail of the account's own
+    organization, and of the one that asked only if the account belongs to it,
+    which alone brands the email; for anyone else it is the console's link. On a domain whose organization requires single
+    sign-on, the request is refused with 403 auth.sso_required once counted
+    against the bounds, before any account is looked up, and no link is sent
+    (see the SSORequired response).
+  summary: Magic link start
+  tags:
+    - Auth
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - email
+          properties:
+            email:
+              type: string
+              format: email
+            organization_id:
+              type:
+                - string
+                - "null"
+              format: uuid
+              description: >-
+                The organization whose sign-in page asks; omitted from the
+                console. It brands the email and sees the request only for its
+                own members; it never changes the account's own rules.
+            app:
+              type:
+                - string
+                - "null"
+              description: >-
+                hosted_login opens the link in the hosted login; omitted for the
+                console.
+            return_to:
+              type:
+                - string
+                - "null"
+              description: Hosted login only — where the sign-in journey continues.
+  responses:
+    "200":
+      description: >-
+        Accepted (always, to avoid account enumeration); returns a neutral
+        confirmation message
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "403":
+      $ref: ../../components/responses/SSORequired.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,239 @@
+openapi: 3.1.0
+info:
+  title: Qeet ID — Developer API (keys, webhooks, secrets, agents)
+  version: 0.2.0
+  description: >-
+    Non-human identities and developer integrations for Qeet ID — API keys, AI
+    agents, webhooks, auth hooks, vaults, and verifiable credentials.
+
+
+    ## The non-human identity model
+
+
+    - **API keys** resolve to actor_type `api_key`.
+
+    - **Service principals** (defined in the Federation API) resolve to
+    actor_type `service`.
+
+    - **AI agents** resolve to actor_type `agent`.
+
+
+    ## Start here
+
+
+    1. Create an **API key** for simple machine access (`Authorization: ApiKey
+    <key>`), or register an **agent** for AI workloads.
+
+    2. **Agent tokens are re-minted, never refreshed** — call the mint endpoint
+    again to obtain a fresh short-lived token.
+
+    3. Wire up **webhooks** and **auth hooks** to react to events and customize
+    auth flows.
+
+    4. Store secrets in the **Secrets Vault** (organization secrets) or connect
+    third-party accounts via the **Token Vault** (external OAuth credentials,
+    refreshed for you).
+
+
+    ## Authentication
+
+
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization:
+    ApiKey <key>` — legacy scheme), `scimBearer` (per-organization SCIM token),
+    `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).
+    CSRF protection applies only to cookie sessions (`ssoCookie`): requests
+    authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the
+    token endpoint (POST /v1/oauth/token) and the directory
+    sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the
+    request. Basic credentials do not bypass it. A request that fails the check
+    is refused with 403 `csrf_failed`.
+
+
+    The responses of the token vault's access-token read, and of the
+    operations returning a new API key, agent or webhook
+    secret, a revealed secret or an issued credential, are sent with
+    `Cache-Control: no-store` and `Pragma: no-cache`.
+
+
+    Every response carries an `X-Request-Id` header naming the request; quote it
+    when reporting a problem. An error body repeats it as `error.request_id`.
+    A path with an encoded slash or backslash (`%2F`, `%5C`) is refused with
+    400 `bad_request`.
+
+
+    ## Related APIs
+
+
+    - **Authentication & Access API** — login, passkeys, MFA, authorization
+
+    - **Identity Management API** — organizations, users, groups, invitations
+
+    - **Federation API** — OIDC/OAuth provider, SAML, SCIM, LDAP, social
+
+    - **Operations API** — audit, analytics, billing
+
+
+    ## Contract maintenance
+
+
+    This document covers routes mounted by internal/bootstrap/router.go.
+    internal/bootstrap/openapi_coverage_test.go walks the production mount
+    helpers and fails when a mounted operation is undocumented, a documented
+    operation is stale, or API-auth security declarations disagree with runtime
+    classification.
+servers:
+  - url: https://api.id.qeet.in
+    description: Production
+  - url: http://localhost:4001
+    description: Local (make dev)
+tags:
+  - name: API Keys
+    description: Long-lived API keys for machine access.
+  - name: Agents
+    description: >-
+      AI agent identities — register agents, which get short-lived scoped
+      tokens at the token endpoint by client_credentials (re-minted, never
+      refreshed); manage sponsorship, suspension and decommissioning.
+  - name: Credentials
+    description: >-
+      Verifiable credentials — issue, list and revoke W3C / JWT-VC documents,
+      plus public verification.
+  - name: Auth Hooks
+    description: >-
+      Custom authentication hooks (actions) invoked during authentication
+      flows. Each call is a POST signed as a webhook delivery is: X-Qeet-Timestamp
+      (Unix seconds) and X-Qeet-Signature, "sha256=" and the hex HMAC-SHA256,
+      keyed by the hook's secret, of the timestamp, a ".", and the raw body. For
+      24 hours after the secret is changed the header holds two comma-separated
+      values, the new secret's first; accept the call if any one matches. Verify
+      in constant time before parsing, and refuse a timestamp more than a few
+      minutes old, so a captured call can't be replayed.
+  - name: Webhooks
+    description: >-
+      Outbound webhook endpoint management. A subscription names the events it
+      receives, from the event catalogue; an event's name is its version, so an
+      incompatible payload change comes as a new name, while new fields may be
+      added to any payload. Each delivery is a POST whose JSON body is the
+      envelope {id, type, organization_id, occurred_at, data}: id is the same in every
+      delivery of one event, retries included, so deduplicate on it, and data is
+      the event's own payload. Deliveries are at least once and in no guaranteed
+      order. Headers: X-Qeet-Event (the type), X-Qeet-Delivery-ID,
+      X-Qeet-Timestamp (Unix seconds) and X-Qeet-Signature, "sha256=" and the
+      hex HMAC-SHA256, keyed by the subscription's secret, of the timestamp, a
+      ".", and the raw body. For 24 hours after the secret is rotated the header
+      holds two comma-separated values, the new secret's first; accept the
+      delivery if any one matches. Verify in constant time before parsing, and
+      refuse a timestamp more than a few minutes old. Answer 2xx quickly: a
+      network error, a 5xx, 408 or 429 is retried with jittered backoff from 30
+      seconds up to an hour, for 60 attempts; any other 4xx dead-letters the
+      delivery at once. A dead-lettered delivery stays in the delivery list and
+      can be sent again. A subscription whose deliveries fail for 3 days with no
+      success is disabled (disabled_reason "failing") and the members who hold
+      webhook.write are alerted in-app; deliveries queued meanwhile are sent
+      once it is enabled again.
+  - name: Secrets
+    description: Per-organization encrypted secrets vault.
+  - name: Token Vault
+    description: >-
+      Third-party OAuth credential storage with transparent refresh, for calling
+      external services on a user's behalf — distinct from Secrets Vault (organization
+      secrets).
+paths:
+  /v1/api-keys:
+    $ref: paths/api-keys/v1_api-keys.yaml
+  /v1/api-keys/{id}:
+    $ref: paths/api-keys/v1_api-keys_{id}.yaml
+  /v1/organizations/{organizationID}/api-keys:
+    $ref: paths/api-keys/v1_organizations_{organizationID}_api-keys.yaml
+  /v1/organizations/{organizationID}/api-keys/{id}/rotate:
+    $ref: paths/api-keys/v1_organizations_{organizationID}_api-keys_{id}_rotate.yaml
+  /v1/organizations/{organizationID}/agents:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents.yaml
+  /v1/organizations/{organizationID}/agents/{id}:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_{id}.yaml
+  /v1/organizations/{organizationID}/agents/{id}/suspend:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_{id}_suspend.yaml
+  /v1/organizations/{organizationID}/agents/{id}/resume:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_{id}_resume.yaml
+  /v1/organizations/{organizationID}/agents/{id}/decommission:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_{id}_decommission.yaml
+  /v1/organizations/{organizationID}/agents/kill-all:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_kill-all.yaml
+  /v1/organizations/{organizationID}/agents/resume-all:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_resume-all.yaml
+  /v1/organizations/{organizationID}/agents/{id}/rotate-secret:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_{id}_rotate-secret.yaml
+  /v1/organizations/{organizationID}/agents/sponsored-by/{userID}:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_sponsored-by_{userID}.yaml
+  /v1/organizations/{organizationID}/agents/sponsored-by/{userID}/transfer:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_sponsored-by_{userID}_transfer.yaml
+  /v1/credentials/verify:
+    $ref: paths/credentials/v1_credentials_verify.yaml
+  /v1/organizations/{organizationID}/credentials:
+    $ref: paths/credentials/v1_organizations_{organizationID}_credentials.yaml
+  /v1/organizations/{organizationID}/credentials/{id}/revoke:
+    $ref: paths/credentials/v1_organizations_{organizationID}_credentials_{id}_revoke.yaml
+  /v1/organizations/{organizationID}/auth-hooks:
+    $ref: paths/auth-hooks/v1_organizations_{organizationID}_auth-hooks.yaml
+  /v1/organizations/{organizationID}/auth-hooks/{id}/test:
+    $ref: paths/auth-hooks/v1_organizations_{organizationID}_auth-hooks_{id}_test.yaml
+  /v1/organizations/{organizationID}/auth-hooks/{id}:
+    $ref: paths/auth-hooks/v1_organizations_{organizationID}_auth-hooks_{id}.yaml
+  /v1/organizations/{organizationID}/webhooks:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks.yaml
+  /v1/organizations/{organizationID}/webhooks/events:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks_events.yaml
+  /v1/organizations/{organizationID}/webhooks/{id}/enable:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks_{id}_enable.yaml
+  /v1/organizations/{organizationID}/webhooks/{id}:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks_{id}.yaml
+  /v1/organizations/{organizationID}/webhooks/{id}/deliveries/retry:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks_{id}_deliveries_retry.yaml
+  /v1/organizations/{organizationID}/webhooks/{id}/deliveries/{deliveryID}/attempts:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks_{id}_deliveries_{deliveryID}_attempts.yaml
+  /v1/organizations/{organizationID}/webhooks/{id}/rotate-secret:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks_{id}_rotate-secret.yaml
+  /v1/webhooks:
+    $ref: paths/webhooks/v1_webhooks.yaml
+  /v1/webhooks/{id}:
+    $ref: paths/webhooks/v1_webhooks_{id}.yaml
+  /v1/webhooks/{id}/deliveries:
+    $ref: paths/webhooks/v1_webhooks_{id}_deliveries.yaml
+  /v1/webhooks/{id}/deliveries/{deliveryID}/retry:
+    $ref: paths/webhooks/v1_webhooks_{id}_deliveries_{deliveryID}_retry.yaml
+  /v1/webhooks/{id}/test:
+    $ref: paths/webhooks/v1_webhooks_{id}_test.yaml
+  /v1/vault/{name}:
+    $ref: paths/secrets/v1_vault_{name}.yaml
+  /v1/organizations/{organizationID}/secrets:
+    $ref: paths/secrets/v1_organizations_{organizationID}_secrets.yaml
+  /v1/organizations/{organizationID}/secrets/{id}:
+    $ref: paths/secrets/v1_organizations_{organizationID}_secrets_{id}.yaml
+  /v1/organizations/{organizationID}/secrets/{id}/reveal:
+    $ref: paths/secrets/v1_organizations_{organizationID}_secrets_{id}_reveal.yaml
+  /v1/organizations/{organizationID}/vault/tokens/providers:
+    $ref: paths/token-vault/v1_organizations_{organizationID}_vault_tokens_providers.yaml
+  /v1/organizations/{organizationID}/vault/tokens/providers/{provider}:
+    $ref: paths/token-vault/v1_organizations_{organizationID}_vault_tokens_providers_{provider}.yaml
+  /v1/vault/tokens:
+    $ref: paths/token-vault/v1_vault_tokens.yaml
+  /v1/vault/tokens/{provider}/connect:
+    $ref: paths/token-vault/v1_vault_tokens_{provider}_connect.yaml
+  /v1/vault/tokens/callback:
+    $ref: paths/token-vault/v1_vault_tokens_callback.yaml
+  /v1/vault/tokens/{provider}/access-token:
+    $ref: paths/token-vault/v1_vault_tokens_{provider}_access-token.yaml
+  /v1/vault/tokens/{provider}:
+    $ref: paths/token-vault/v1_vault_tokens_{provider}.yaml
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: ../shared/securitySchemes/bearerAuth.yaml
+    apiKeyAuth:
+      $ref: ../shared/securitySchemes/apiKeyAuth.yaml
+    scimBearer:
+      $ref: ../shared/securitySchemes/scimBearer.yaml
+    clientCredentials:
+      $ref: ../shared/securitySchemes/clientCredentials.yaml
+    ssoCookie:
+      $ref: ../shared/securitySchemes/ssoCookie.yaml

@@ -7,9 +7,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -29,9 +29,9 @@ const (
 // enrolling a second phone isn't blocked by a fumbled first one.
 func PurposeOTPEnroll(factorID uuid.UUID) string { return "otp-enroll:" + factorID.String() }
 
-// Attempt is one reserved verification slot. ReserveAttempt commits it in its
-// own transaction so the count survives a rejected code's rollback. Callers
-// must reserve before opening the transaction they verify in and refund only
+// Attempt is one reserved verification slot. reserveAttempt commits it in its
+// own transaction so the count survives a rejected code's rollback. A flow
+// reserves before opening the transaction it verifies in and refunds only
 // after it ends; otherwise each verification holds two pool connections.
 type Attempt struct {
 	userID    uuid.UUID
@@ -39,42 +39,33 @@ type Attempt struct {
 	remaining int
 }
 
-// ReserveAttempt atomically claims one verification attempt. The fifth slot is
+// reserveAttempt atomically claims one verification attempt. The fifth slot is
 // allowed to proceed but locks subsequent attempts unless it succeeds and
 // clears the budget.
-func (s *Service) ReserveAttempt(ctx context.Context, userID uuid.UUID, purpose string) (Attempt, error) {
+func (s *Service) reserveAttempt(ctx context.Context, userID uuid.UUID, purpose string) (Attempt, error) {
 	claim := Attempt{userID: userID, purpose: purpose}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return claim, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO auth.mfa_attempt_budgets (user_id, purpose)
-		VALUES ($1, $2)
-		ON CONFLICT DO NOTHING
-	`, userID, purpose); err != nil {
+	q := s.q.WithTx(tx)
+	if err := q.EnsureAttemptBudget(ctx, dbgen.EnsureAttemptBudgetParams{UserID: userID, Purpose: purpose}); err != nil {
 		return claim, err
 	}
-	var failed int16
-	var windowStarted time.Time
-	var lockedUntil pgtype.Timestamptz
-	if err := tx.QueryRow(ctx, `
-		SELECT failed_attempts, window_started_at, locked_until
-		FROM auth.mfa_attempt_budgets
-		WHERE user_id = $1 AND purpose = $2
-		FOR UPDATE
-	`, userID, purpose).Scan(&failed, &windowStarted, &lockedUntil); err != nil {
+	budget, err := q.LockAttemptBudget(ctx, dbgen.LockAttemptBudgetParams{UserID: userID, Purpose: purpose})
+	if err != nil {
 		return claim, err
 	}
+	failed, windowStarted, lockedUntil := budget.FailedAttempts, budget.WindowStartedAt, budget.LockedUntil
 	now := time.Now().UTC()
-	if lockedUntil.Valid && now.Before(lockedUntil.Time) {
+	if lockedUntil != nil && now.Before(*lockedUntil) {
 		if err := tx.Commit(ctx); err != nil {
 			return claim, err
 		}
 		return claim, errs.ErrMFAAttemptsExceeded.WithMetadata(map[string]any{"remaining_attempts": 0})
 	}
-	if now.Sub(windowStarted) >= mfaAttemptWindow || (lockedUntil.Valid && !now.Before(lockedUntil.Time)) {
+	if now.Sub(windowStarted) >= mfaAttemptWindow || (lockedUntil != nil && !now.Before(*lockedUntil)) {
 		failed = 0
 		windowStarted = now
 	}
@@ -85,15 +76,13 @@ func (s *Service) ReserveAttempt(ctx context.Context, userID uuid.UUID, purpose 
 		return claim, errs.ErrMFAAttemptsExceeded.WithMetadata(map[string]any{"remaining_attempts": 0})
 	}
 	next := failed + 1
-	var lock any
+	var lock *time.Time
 	if next >= maxMFAAttempts {
-		lock = now.Add(mfaAttemptWindow)
+		lock = new(now.Add(mfaAttemptWindow))
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.mfa_attempt_budgets
-		SET failed_attempts = $3, window_started_at = $4, locked_until = $5
-		WHERE user_id = $1 AND purpose = $2
-	`, userID, purpose, next, windowStarted, lock); err != nil {
+	if err := q.SetAttemptBudget(ctx, dbgen.SetAttemptBudgetParams{
+		UserID: userID, Purpose: purpose, FailedAttempts: next, WindowStartedAt: windowStarted, LockedUntil: lock,
+	}); err != nil {
 		return claim, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -106,22 +95,30 @@ func (s *Service) ReserveAttempt(ctx context.Context, userID uuid.UUID, purpose 
 // clearMFAAttempt drops the budget after a successful verification. It runs in
 // the caller's transaction so the reset commits with the mutation it belongs to.
 func clearMFAAttempt(ctx context.Context, tx pgx.Tx, userID uuid.UUID, purpose string) error {
-	_, err := tx.Exec(ctx, `DELETE FROM auth.mfa_attempt_budgets WHERE user_id = $1 AND purpose = $2`, userID, purpose)
-	return err
+	return dbgen.New(tx).ClearAttemptBudget(ctx, dbgen.ClearAttemptBudgetParams{UserID: userID, Purpose: purpose})
 }
 
-// RefundAttempt hands back a slot consumed by an infrastructure failure rather
-// than a rejected credential. It takes its own connection, so callers must run
-// it only once their own transaction is finished — see Attempt.
-func (s *Service) RefundAttempt(ctx context.Context, claim Attempt) {
-	if claim.purpose == "" {
+// refund hands back a slot err did not spend: one consumed by an
+// infrastructure failure rather than a rejected credential. It takes its own
+// connection, so a flow runs it only once its transaction is finished — see
+// Attempt.
+func (s *Service) refund(ctx context.Context, claim Attempt, err error) {
+	if claim.purpose == "" || !refundable(err) {
 		return
 	}
-	_, _ = s.pool.Exec(ctx, `
-		UPDATE auth.mfa_attempt_budgets
-		SET failed_attempts = GREATEST(failed_attempts - 1, 0), locked_until = NULL
-		WHERE user_id = $1 AND purpose = $2
-	`, claim.userID, claim.purpose)
+	_ = s.q.RefundAttempt(ctx, dbgen.RefundAttemptParams{UserID: claim.userID, Purpose: claim.purpose})
+}
+
+// withAttempt reserves an attempt of userID's for purpose and runs verify with
+// it, handing the attempt back when verify fails for an infrastructure reason.
+func (s *Service) withAttempt(ctx context.Context, userID uuid.UUID, purpose string, verify func(Attempt) error) error {
+	attempt, err := s.reserveAttempt(ctx, userID, purpose)
+	if err != nil {
+		return err
+	}
+	err = verify(attempt)
+	s.refund(ctx, attempt, err)
+	return err
 }
 
 // refundable reports whether err is an infrastructure failure rather than a
@@ -134,21 +131,11 @@ func refundable(err error) bool {
 		return false
 	case errors.Is(err, errs.ErrMFAAttemptsExceeded),
 		errors.Is(err, errs.ErrMFACodeInvalid),
-		errors.Is(err, errs.ErrMFATOTPCodeInvalid),
-		errors.Is(err, errs.ErrMFAOTPCodeInvalid):
+		errors.Is(err, ErrTOTPCodeInvalid),
+		errors.Is(err, ErrOTPCodeInvalid):
 		return false
 	}
 	return true
-}
-
-// refund hands a reserved slot back when the request failed for an
-// infrastructure reason rather than a rejected credential. Handlers defer it
-// *before* opening their transaction, so it runs once that transaction has
-// closed and never needs a second connection alongside it.
-func (h *Handler) refund(ctx context.Context, attempt Attempt, err error) {
-	if refundable(err) {
-		h.Service.RefundAttempt(ctx, attempt)
-	}
 }
 
 // attemptError attaches the caller's remaining budget to a rejection so
@@ -168,15 +155,17 @@ const OTPCodeRetention = 24 * time.Hour
 // longer ago than retention, answered or not, and returns how many. Run on a
 // schedule.
 func PurgeExpiredPushChallenges(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
-	return postgres.PurgeInBatches(ctx, pool, `DELETE FROM auth.mfa_push_challenges WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM auth.mfa_push_challenges c WHERE c.expires_at < $1 LIMIT $2))`,
-		time.Now().UTC().Add(-retention))
+	q, cutoff := dbgen.New(pool), time.Now().UTC().Add(-retention)
+	return postgres.DeleteInBatches(ctx, func(ctx context.Context, limit int32) (int64, error) {
+		return q.PurgeExpiredPushChallenges(ctx, dbgen.PurgeExpiredPushChallengesParams{Cutoff: cutoff, MaxRows: limit})
+	})
 }
 
 // PurgeExpiredOTPCodes deletes the email and SMS codes that expired longer ago
 // than retention, used or not, and returns how many. Run on a schedule.
 func PurgeExpiredOTPCodes(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
-	return postgres.PurgeInBatches(ctx, pool, `DELETE FROM auth.mfa_otp_codes WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM auth.mfa_otp_codes c WHERE c.expires_at < $1 LIMIT $2))`,
-		time.Now().UTC().Add(-retention))
+	q, cutoff := dbgen.New(pool), time.Now().UTC().Add(-retention)
+	return postgres.DeleteInBatches(ctx, func(ctx context.Context, limit int32) (int64, error) {
+		return q.PurgeExpiredOTPCodes(ctx, dbgen.PurgeExpiredOTPCodesParams{Cutoff: cutoff, MaxRows: limit})
+	})
 }

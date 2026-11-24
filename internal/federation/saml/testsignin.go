@@ -17,6 +17,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -73,70 +74,86 @@ type TestAttribute struct {
 	Values       []string `json:"values"`
 }
 
-// BeginTestSignIn starts a test of tenantID's connection id in this browser,
-// on tx, and returns it with the IdP address to send the browser to. The IdP's
-// answer returns the browser to returnURL, the test's and the connection's IDs
-// in its fragment. A draft connection can be tested: the test signs nobody in.
-func (h *Handler) BeginTestSignIn(w http.ResponseWriter, r *http.Request, tx pgx.Tx, tenantID, id uuid.UUID, returnURL string) (*TestSignIn, error) {
-	ctx := r.Context()
-	row, err := h.Service.q.WithTx(tx).GetSamlConnection(ctx, dbgen.GetSamlConnectionParams{ID: id, TenantID: tenantID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrNotFound
-	}
+// BeginTestSignIn starts a test of organizationID's connection id in this browser, recorded as
+// actor's, and returns it with the IdP address to send the browser to; the answer returns to returnURL
+// with the test's and connection's IDs in its fragment. A draft can be tested: a test signs nobody in.
+func (h *Handler) BeginTestSignIn(w http.ResponseWriter, r *http.Request, organizationID, id uuid.UUID, returnURL string, actor audit.Actor) (*TestSignIn, error) {
+	t, requestID, err := h.Service.beginTestSignIn(r.Context(), h.publicBase(r), organizationID, id, returnURL, actor)
 	if err != nil {
-		return nil, err
-	}
-	conn := toConnection(row)
-	if !validIdPSSOURL(conn.IdpSSOURL) {
-		return nil, errs.ErrSAMLSSOURLInvalid
-	}
-	// The request carries no certificate; the answer is checked against them.
-	sp := h.Service.buildSP(h.publicBase(r), conn, nil)
-	doc, err := sp.BuildAuthRequestDocument()
-	if err != nil {
-		return nil, err
-	}
-	if doc.Root() == nil {
-		return nil, errs.ErrInternalServer
-	}
-	requestID := doc.Root().SelectAttrValue("ID", "")
-	if strings.TrimSpace(requestID) == "" || len(requestID) > 1024 {
-		return nil, errs.ErrSAMLRequestInvalid
-	}
-	authURL, err := sp.BuildAuthURLFromDocument("", doc)
-	if err != nil {
-		return nil, err
-	}
-	t := &TestSignIn{ConnectionID: conn.ID, Status: testPending, RedirectURL: authURL}
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO auth.saml_test_sign_ins (connection_id, request_id, return_url, expires_at)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, expires_at, created_at
-	`, conn.ID, requestID, returnURL, time.Now().UTC().Add(authnRequestTTL)).Scan(&t.ID, &t.ExpiresAt, &t.CreatedAt); err != nil {
 		return nil, err
 	}
 	h.binding().Add(w, r, requestID)
 	return t, nil
 }
 
-// TestSignIn returns test id of tenantID's connection connectionID.
-func (s *Service) TestSignIn(ctx context.Context, id, connectionID, tenantID uuid.UUID) (*TestSignIn, error) {
-	t := &TestSignIn{}
-	var result []byte
-	err := s.pool.QueryRow(ctx, `
-		SELECT t.id, t.connection_id, t.status, t.result, t.expires_at, t.created_at, t.completed_at
-		FROM auth.saml_test_sign_ins t
-		JOIN tenant.saml_connections c ON c.id = t.connection_id
-		WHERE t.id = $1 AND t.connection_id = $2 AND c.tenant_id = $3
-	`, id, connectionID, tenantID).Scan(&t.ID, &t.ConnectionID, &t.Status, &result, &t.ExpiresAt, &t.CreatedAt, &t.CompletedAt)
+// beginTestSignIn stores a test of organizationID's connection id, its SP on
+// base, recorded as actor's, and returns it with its AuthnRequest's ID.
+func (s *Service) beginTestSignIn(ctx context.Context, base string, organizationID, id uuid.UUID, returnURL string, actor audit.Actor) (*TestSignIn, string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
+	row, err := q.GetSamlConnection(ctx, dbgen.GetSamlConnectionParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrSAMLTestSignInNotFound
+		return nil, "", errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	conn := toConnection(row)
+	if !validIdPSSOURL(conn.IdpSSOURL) {
+		return nil, "", ErrSSOURLInvalid
+	}
+	// The request carries no certificate; the answer is checked against them.
+	sp := s.buildSP(base, conn, nil)
+	doc, err := sp.BuildAuthRequestDocument()
+	if err != nil {
+		return nil, "", err
+	}
+	if doc.Root() == nil {
+		return nil, "", errs.ErrInternalServer
+	}
+	requestID := doc.Root().SelectAttrValue("ID", "")
+	if strings.TrimSpace(requestID) == "" || len(requestID) > 1024 {
+		return nil, "", ErrRequestInvalid
+	}
+	authURL, err := sp.BuildAuthURLFromDocument("", doc)
+	if err != nil {
+		return nil, "", err
+	}
+	stored, err := q.InsertSamlTestSignIn(ctx, dbgen.InsertSamlTestSignInParams{
+		ConnectionID: conn.ID, RequestID: requestID, ReturnUrl: returnURL, ExpiresAt: time.Now().UTC().Add(authnRequestTTL),
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	t := &TestSignIn{ID: stored.ID, ConnectionID: conn.ID, Status: testPending, RedirectURL: authURL, ExpiresAt: stored.ExpiresAt, CreatedAt: stored.CreatedAt}
+	if err := recordChange(ctx, tx, actor, organizationID, id, "saml.test_sign_in_started", map[string]any{"test_sign_in_id": t.ID}); err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, "", err
+	}
+	return t, requestID, nil
+}
+
+// TestSignIn returns test id of organizationID's connection connectionID.
+func (s *Service) TestSignIn(ctx context.Context, id, connectionID, organizationID uuid.UUID) (*TestSignIn, error) {
+	row, err := s.q.GetSamlTestSignIn(ctx, dbgen.GetSamlTestSignInParams{ID: id, ConnectionID: connectionID, OrganizationID: organizationID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrTestSignInNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	if len(result) > 0 {
-		if err := json.Unmarshal(result, &t.TestSignInResult); err != nil {
+	t := &TestSignIn{
+		ID: row.ID, ConnectionID: row.ConnectionID, Status: row.Status,
+		ExpiresAt: row.ExpiresAt, CreatedAt: row.CreatedAt, CompletedAt: row.CompletedAt,
+	}
+	if len(row.Result) > 0 {
+		if err := json.Unmarshal(row.Result, &t.TestSignInResult); err != nil {
 			return nil, err
 		}
 	}
@@ -181,11 +198,8 @@ func (h *Handler) answerTestSignIn(w http.ResponseWriter, r *http.Request, conn 
 		return false
 	}
 	ctx := r.Context()
-	test := &answeredTest{requestID: unverified.InResponseTo}
-	err = h.Service.pool.QueryRow(ctx, `
-		SELECT id, return_url FROM auth.saml_test_sign_ins
-		WHERE connection_id = $1 AND request_id = $2
-	`, conn.ID, test.requestID).Scan(&test.id, &test.returnURL)
+	stored, err := h.Service.q.GetSamlTestSignInByRequest(ctx, dbgen.GetSamlTestSignInByRequestParams{ConnectionID: conn.ID, RequestID: unverified.InResponseTo})
+	test := &answeredTest{id: stored.ID, requestID: unverified.InResponseTo, returnURL: stored.ReturnUrl}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false
 	}
@@ -194,7 +208,7 @@ func (h *Handler) answerTestSignIn(w http.ResponseWriter, r *http.Request, conn 
 		return true
 	}
 	if !h.binding().Holds(r, test.requestID) {
-		httpx.WriteError(w, r, errs.ErrSAMLOtherBrowser)
+		httpx.WriteError(w, r, ErrOtherBrowser)
 		return true
 	}
 	h.binding().Remove(w, r, test.requestID)
@@ -215,7 +229,7 @@ func (h *Handler) answerTestSignIn(w http.ResponseWriter, r *http.Request, conn 
 // checkTestAnswer validates the answer to test requestID as the ACS validates
 // a sign-in's, and returns the test's status and findings. It finds and
 // creates no account, reporting only whether the asserted address is on a
-// domain the organisation verified. err is a fault, never a finding.
+// domain the organization verified. err is a fault, never a finding.
 func (s *Service) checkTestAnswer(ctx context.Context, base string, conn *Connection, requestID, encoded string) (string, TestSignInResult, error) {
 	var res TestSignInResult
 	fail := func(e *errs.Error, cause error) (string, TestSignInResult, error) {
@@ -230,14 +244,15 @@ func (s *Service) checkTestAnswer(ctx context.Context, base string, conn *Connec
 		return "", res, err
 	}
 	if len(certs) == 0 {
-		return fail(errs.ErrSAMLCertificateInvalid, nil)
+		return fail(ErrCertificateInvalid, nil)
 	}
 	// An unencrypted answer doesn't need the key; an encrypted one then fails.
 	key, err := s.decryptionKey(ctx, conn)
 	if err != nil {
 		slog.Error("saml test sign-in: SP encryption key unusable", "err", err, "connection", conn.ID)
 	}
-	response, info, err := s.validateResponse(base, conn, certs, key, encoded, time.Now())
+	now := time.Now()
+	response, info, err := s.validateResponse(base, conn, certs, key, encoded, now)
 	if info != nil {
 		res.NameID, res.NameIDFormat, res.Attributes = info.NameID, info.NameIDFormat, testAttributes(info.Values)
 	}
@@ -252,11 +267,11 @@ func (s *Service) checkTestAnswer(ctx context.Context, base string, conn *Connec
 		return fail(e, nil)
 	}
 	if trusted != requestID {
-		return fail(errs.ErrSAMLRequestCorrelation, nil)
+		return fail(ErrRequestCorrelation, nil)
 	}
 	// Reserving its IDs keeps the answer from being presented again anywhere.
 	// The test is its own correlation, so no AuthnRequest is consumed.
-	if _, err := s.ConsumeValidatedResponse(ctx, conn.ID, "", response.ID, assertionIDs, true); err != nil {
+	if _, err := s.ConsumeValidatedResponse(ctx, conn.ID, "", response.ID, assertionIDs, replayKeepUntil(response.Assertions, now), true); err != nil {
 		if e := errs.As(err); e != nil && e.Code != errs.CodeInternal {
 			return fail(e, nil)
 		}
@@ -275,15 +290,15 @@ func (s *Service) checkTestAnswer(ctx context.Context, base string, conn *Connec
 		res.Name = info.Values.Get(conn.NameAttribute)
 	}
 	if res.Email == "" {
-		return fail(errs.ErrSAMLAssertionNoEmail, nil)
+		return fail(ErrAssertionNoEmail, nil)
 	}
-	manager, managed, err := domainverify.ManagerOf(postgres.AcrossTenants(ctx), s.pool, res.Email)
+	manager, managed, err := domainverify.ManagerOf(postgres.AcrossOrganizations(ctx), s.pool, res.Email)
 	if err != nil {
 		return "", res, err
 	}
-	res.EmailDomainVerified = managed && manager == conn.TenantID
+	res.EmailDomainVerified = managed && manager == conn.OrganizationID
 	if !res.EmailDomainVerified {
-		return fail(errs.ErrSAMLEmailDomainUnverified, nil)
+		return fail(ErrEmailDomainUnverified, nil)
 	}
 	return testSucceeded, res, nil
 }
@@ -294,11 +309,7 @@ func (s *Service) finishTestSignIn(ctx context.Context, id uuid.UUID, status str
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `
-		UPDATE auth.saml_test_sign_ins SET status = $2, result = $3, completed_at = NOW()
-		WHERE id = $1 AND status = 'pending' AND expires_at > NOW()
-	`, id, status, raw)
-	return err
+	return s.q.FinishSamlTestSignIn(ctx, dbgen.FinishSamlTestSignInParams{ID: id, Status: status, Result: raw})
 }
 
 // testAttributes lists the asserted attributes by name, within a report's

@@ -1,12 +1,13 @@
 package verification
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -14,7 +15,7 @@ import (
 // Handler serves the verification HTTP API.
 type Handler struct {
 	Service *Service
-	// Throttle, if set, wraps the code-sending routes in a tighter per-user limit.
+	// Throttle wraps the code-sending routes in a tighter per-user limit.
 	Throttle func(http.Handler) http.Handler
 }
 
@@ -23,10 +24,7 @@ func (h *Handler) Mount(r chi.Router) {
 	// A code-sending route dispatches an SMS/email to a caller-supplied address,
 	// so it's throttled harder than the generic per-user bucket to prevent
 	// toll-fraud / bombing. Confirm routes stay on the default limiter.
-	sending := r
-	if h.Throttle != nil {
-		sending = r.With(h.Throttle)
-	}
+	sending := r.With(h.Throttle)
 	sending.Post("/users/{id}/verify/email/start", h.startEmail)
 	r.Post("/users/{id}/verify/email/confirm", h.confirmEmail)
 	sending.Post("/users/{id}/verify/phone/start", h.startPhone)
@@ -83,16 +81,11 @@ func (h *Handler) confirmEmailChange(w http.ResponseWriter, r *http.Request) {
 }
 
 // requesterOf is the signed-in caller, for the audit rows the service writes.
+// Every verification route needs a principal, so the actor is never the system.
 func requesterOf(r *http.Request) Requester {
-	who := Requester{Actor: audit.Actor{
-		Type: "user", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-	}}
+	who := Requester{Actor: audit.ActorOf(r)}
 	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		who.Actor.UserID = p.UserID
-		if p.ActorType != "" {
-			who.Actor.Type = p.ActorType
-		}
-		who.TenantID = p.TenantID
+		who.OrganizationID = p.OrganizationID
 	}
 	return who
 }
@@ -100,15 +93,15 @@ func requesterOf(r *http.Request) Requester {
 // selfID resolves the target user from the path and enforces that it's the
 // caller: verification is self-service only. Without this, any authenticated
 // user could start/confirm verification against another user's id (an IDOR) —
-// {id} is NOT a {tenantID}, so the central EnforceTenantScope guard never fires.
+// {id} is NOT a {organizationID}, so the central EnforceOrganizationScope guard never fires.
 func selfID(r *http.Request) (uuid.UUID, error) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		return uuid.Nil, errs.ErrUnauthorized
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := httpx.PathUUID(r, "id", errs.ErrBadRequest.WithDetail("invalid id"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid id")
+		return uuid.Nil, err
 	}
 	if id != *p.UserID {
 		return uuid.Nil, errs.ErrForbidden
@@ -198,4 +191,13 @@ func (h *Handler) confirmPhone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "Your phone number has been verified."})
+}
+
+// Check refuses a handler without the code-sending throttle, so bootstrap
+// stops at start rather than serve those routes unthrottled.
+func (h *Handler) Check() error {
+	if h.Throttle == nil {
+		return errors.New("verification: the handler needs a throttle")
+	}
+	return nil
 }

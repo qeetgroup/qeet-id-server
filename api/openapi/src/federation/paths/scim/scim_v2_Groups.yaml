@@ -1,0 +1,80 @@
+get:
+  operationId: listScimGroups
+  description: >-
+    Lists the groups SCIM provisioned for the organization identified by the SCIM
+    bearer token (a group an administrator made is neither listed nor readable
+    or changeable here, so a directory can't put anyone in a group that carries
+    roles), with optional SCIM filtering and pagination, returning a SCIM 2.0
+    ListResponse, with Qeet acting as the SCIM server. Mounted at the root under
+    /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope rather
+    than the standard Qeet error shape.
+  summary: "[scim] List groups"
+  tags:
+    - SCIM
+  parameters:
+    - in: query
+      name: filter
+      schema:
+        type: string
+    - in: query
+      name: startIndex
+      schema:
+        type: integer
+    - in: query
+      name: count
+      schema:
+        type: integer
+  security:
+    - scimBearer: []
+  responses:
+    "200":
+      description: ListResponse
+      content:
+        application/scim+json:
+          schema:
+            $ref: ../../components/schemas/SCIMListResponse.yaml
+    "400":
+      $ref: ../../components/responses/SCIMBadRequest.yaml
+    "401":
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: createScimGroup
+  description: >-
+    Provisions a new group in the organization identified by the SCIM bearer token,
+    with Qeet acting as the SCIM 2.0 server for an external IdP. The group, and
+    every later change to it and its members, is audited (group.created,
+    group.updated, group.member_added, group.member_removed, group.deleted;
+    actor scim). Mounted at the root under /scim/v2, not under /v1. Errors use
+    the RFC 7644 SCIM error envelope, not the standard Qeet error shape.
+  summary: "[scim] Create group"
+  tags:
+    - SCIM
+  security:
+    - scimBearer: []
+  requestBody:
+    required: true
+    content:
+      application/scim+json:
+        schema:
+          $ref: ../../components/schemas/SCIMGroup.yaml
+  responses:
+    "201":
+      description: Group created
+      content:
+        application/scim+json:
+          schema:
+            $ref: ../../components/schemas/SCIMGroup.yaml
+    "400":
+      $ref: ../../components/responses/SCIMBadRequest.yaml
+    "401":
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
+    "409":
+      $ref: ../../components/responses/SCIMConflict.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

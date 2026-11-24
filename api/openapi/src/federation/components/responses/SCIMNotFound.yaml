@@ -1,0 +1,9 @@
+description: >-
+  RFC 7644 error: the organization has no such user or group.
+headers:
+  X-Request-Id:
+    $ref: ../../../shared/headers/RequestId.yaml
+content:
+  application/scim+json:
+    schema:
+      $ref: ../schemas/SCIMError.yaml
